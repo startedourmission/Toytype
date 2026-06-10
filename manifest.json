@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "오탈자 레이더",
+  "version": "0.1.0",
+  "description": "골든래빗 교정 규칙으로 웹페이지와 구글 독스 원고의 오탈자를 표시합니다. 문서를 절대 수정하지 않습니다.",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "오탈자 레이더",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": ["https://docs.google.com/document/*"],
+      "js": ["engine.js", "content/generic.js"],
+      "css": ["content/highlight.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://docs.google.com/document/*"],
+      "js": ["engine.js", "content/docs.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/docs-panel.css"],
+      "matches": ["https://docs.google.com/*"]
+    }
+  ]
+}

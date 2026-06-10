@@ -1,0 +1,210 @@
+/* 오탈자 레이더 — 팝업 스타일 */
+html, body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  width: 360px;
+  max-height: 600px;
+  overflow-y: auto;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  color: #202124;
+  background: #fff;
+}
+
+/* ---- 상태 박스 (안내·오류) ---- */
+.state-box {
+  padding: 28px 16px;
+  text-align: center;
+}
+.state-box .msg {
+  margin: 0 0 12px;
+  color: #5f6368;
+  word-break: keep-all;
+}
+
+/* ---- 헤더 ---- */
+.header {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid #e8eaed;
+}
+.header .count {
+  font-size: 16px;
+  font-weight: 700;
+}
+.header .count.has-findings {
+  color: #d93025;
+}
+.header .meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #5f6368;
+}
+
+/* ---- 알림 줄 ---- */
+.notice {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 11px;
+  word-break: keep-all;
+}
+.notice.warn { background: #fef7e0; color: #b06000; }
+.notice.info { background: #e8f0fe; color: #1a56b8; }
+
+/* ---- 카테고리 토글 ---- */
+.cats {
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid #e8eaed;
+}
+.sec-title {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5f6368;
+}
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.cat-row input {
+  margin: 0;
+  flex: none;
+  accent-color: #d93025;
+}
+.cat-row .cat-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat-row .cat-count {
+  flex: none;
+  font-size: 11px;
+  color: #80868b;
+}
+.cat-row .cat-found {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: #d93025;
+}
+.cat-row .cat-found.zero {
+  font-weight: 400;
+  color: #bdc1c6;
+}
+
+/* ---- 발견 목록 ---- */
+.findings {
+  padding: 4px 0 8px;
+}
+.findings details {
+  border-bottom: 1px solid #f1f3f4;
+}
+.findings summary {
+  padding: 6px 16px;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.finding {
+  position: relative;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.finding:hover {
+  background: #f8f9fa;
+}
+.finding .snippet {
+  font-size: 12px;
+  color: #3c4043;
+  word-break: break-all;
+}
+.finding .fix {
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.finding .pair {
+  font-weight: 600;
+  word-break: break-all;
+}
+.finding .line {
+  font-size: 11px;
+  color: #80868b;
+}
+.finding .copied {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: #202124;
+  color: #fff;
+}
+
+/* 카테고리 색 계열: src 강조와 칩 */
+mark.src-mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  color: inherit;
+}
+.cat-red mark.src-mark    { background: rgba(217,48,37,.14);  text-decoration: underline wavy #d93025; }
+.cat-purple mark.src-mark { background: rgba(147,52,230,.12); text-decoration: underline wavy #9334e6; }
+.cat-orange mark.src-mark { background: rgba(232,113,10,.18); text-decoration: underline wavy #e8710a; }
+
+.chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.cat-red .chip    { background: rgba(217,48,37,.14);  color: #d93025; }
+.cat-purple .chip { background: rgba(147,52,230,.12); color: #9334e6; }
+.cat-orange .chip { background: rgba(232,113,10,.18); color: #b25500; }
+
+.empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: #5f6368;
+}
+
+/* ---- 버튼·푸터 ---- */
+.btn {
+  padding: 5px 14px;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover { background: #f8f9fa; }
+.btn.primary {
+  border-color: #d93025;
+  background: #d93025;
+  color: #fff;
+}
+.btn.primary:hover { background: #c5221f; }
+.btn.ghost { color: #5f6368; }
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid #e8eaed;
+  background: #fff;
+}

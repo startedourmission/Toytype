@@ -1,0 +1,8 @@
+::highlight(typo-convert)   { background-color: rgba(217,48,37,.14);  text-decoration: underline wavy #d93025; }
+::highlight(typo-spelling)  { background-color: rgba(217,48,37,.14);  text-decoration: underline wavy #d93025; }
+::highlight(typo-final)     { background-color: rgba(217,48,37,.14);  text-decoration: underline wavy #d93025; }
+::highlight(typo-plural)    { background-color: rgba(147,52,230,.12); text-decoration: underline wavy #9334e6; }
+::highlight(typo-honorific) { background-color: rgba(147,52,230,.12); text-decoration: underline wavy #9334e6; }
+::highlight(typo-space1)    { background-color: rgba(232,113,10,.18); text-decoration: underline wavy #e8710a; }
+::highlight(typo-space2)    { background-color: rgba(232,113,10,.18); text-decoration: underline wavy #e8710a; }
+::highlight(typo-space3)    { background-color: rgba(232,113,10,.18); text-decoration: underline wavy #e8710a; }
