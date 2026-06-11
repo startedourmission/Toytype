@@ -22,6 +22,7 @@
   const FETCH_MIN_INTERVAL = 10000; // export 남발 방지 rate limit
   const FETCH_TIMEOUT = 15000;
   const SNIPPET = 20;
+  const MATCH_CONTEXT = 80;
   const FALLBACK_CSS =
     '.trd-wrap{font-family:sans-serif;font-size:13px;color:#202124;line-height:1.45}' +
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
@@ -274,6 +275,8 @@
         textSource,
         before: snippetText(text.slice(Math.max(0, f.start - SNIPPET), f.start)),
         after: snippetText(text.slice(f.end, f.end + SNIPPET)),
+        contextBefore: text.slice(Math.max(0, f.start - MATCH_CONTEXT), f.start),
+        contextAfter: text.slice(f.end, f.end + MATCH_CONTEXT),
         line,
         textLine: nonEmptyLineByLine[line] || line
       });
@@ -675,20 +678,102 @@
 
     item.append(ctx, fix);
     item.addEventListener('click', () => {
-      if (f.selectable && Number.isFinite(f.start) && Number.isFinite(f.end)) {
-        selectDocsModelRange(f.start, f.end).then(() => {
-          copyText(f.dst).then(
-            () => showToast('문서 위치 선택 · 교정어 복사됨: ' + displayText(f.dst)),
-            () => showToast('문서 위치 선택됨')
-          );
-        }, () => {
-          fallbackFindingClick(f);
-        });
-        return;
-      }
-      fallbackFindingClick(f);
+      handleFindingClick(f);
     });
     return item;
+  }
+
+  function handleFindingClick(f) {
+    if (!f.selectable || !Number.isFinite(f.start) || !Number.isFinite(f.end)) {
+      fallbackFindingClick(f);
+      return;
+    }
+    enqueueScan(true).then(report => {
+      const fresh = report && report.ok && Array.isArray(report.findings)
+        ? findFreshFinding(f, report.findings)
+        : null;
+      if (!fresh || !fresh.selectable || !Number.isFinite(fresh.start) || !Number.isFinite(fresh.end)) {
+        fallbackFindingClick(f);
+        return;
+      }
+      selectAndCopyFinding(fresh);
+    }).catch(() => {
+      fallbackFindingClick(f);
+    });
+  }
+
+  function selectAndCopyFinding(f) {
+    selectDocsModelRange(f.start, f.end).then(() => {
+      copyText(f.dst).then(
+        () => showToast('문서 위치 선택 · 교정어 복사됨: ' + displayText(f.dst)),
+        () => showToast('문서 위치 선택됨')
+      );
+    }, () => {
+      fallbackFindingClick(f);
+    });
+  }
+
+  function findFreshFinding(target, findings) {
+    const groups = [
+      f => f.src === target.src && f.dst === target.dst && f.cat === target.cat,
+      f => f.src === target.src && f.dst === target.dst,
+      f => f.src === target.src && f.cat === target.cat,
+      f => f.src === target.src
+    ];
+    for (const matches of groups) {
+      const candidates = findings.filter(matches);
+      if (candidates.length > 0) return bestFindingMatch(target, candidates);
+    }
+    return null;
+  }
+
+  function bestFindingMatch(target, candidates) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const candidate of candidates) {
+      const score = findingMatchScore(target, candidate);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  function findingMatchScore(target, candidate) {
+    let score = 0;
+    if (candidate.src === target.src) score += 500;
+    if (candidate.dst === target.dst) score += 160;
+    if (candidate.cat === target.cat) score += 120;
+    if (candidate.idx === target.idx) score += 30;
+    if (candidate.before === target.before) score += 20;
+    if (candidate.after === target.after) score += 20;
+
+    const startDelta = Math.abs((candidate.start || 0) - (target.start || 0));
+    score += Math.max(0, 120 - startDelta / 4);
+
+    const textLineDelta = Math.abs((candidate.textLine || 0) - (target.textLine || 0));
+    score += Math.max(0, 60 - textLineDelta * 8);
+
+    score += suffixMatchLength(target.contextBefore || '', candidate.contextBefore || '') * 3;
+    score += prefixMatchLength(target.contextAfter || '', candidate.contextAfter || '') * 3;
+    return score;
+  }
+
+  function suffixMatchLength(a, b) {
+    const max = Math.min(MATCH_CONTEXT, a.length, b.length);
+    for (let len = max; len > 0; len--) {
+      if (a.slice(a.length - len) === b.slice(b.length - len)) return len;
+    }
+    return 0;
+  }
+
+  function prefixMatchLength(a, b) {
+    const max = Math.min(MATCH_CONTEXT, a.length, b.length);
+    for (let len = max; len > 0; len--) {
+      if (a.slice(0, len) === b.slice(0, len)) return len;
+    }
+    return 0;
   }
 
   function handleRulesJsonUpload(file) {
