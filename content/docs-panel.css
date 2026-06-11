@@ -113,6 +113,11 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   cursor: pointer;
 }
 .trd-item:hover { background: #f8f9fa; }
+.trd-item.trd-selected {
+  background: #e8f0fe;
+  box-shadow: inset 3px 0 0 #1a73e8;
+}
+.trd-item.trd-selected:hover { background: #e8f0fe; }
 
 .trd-ctx {
   font-size: 12px;

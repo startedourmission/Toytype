@@ -29,7 +29,7 @@
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-select{flex:1;min-width:80px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
-    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}' +
+    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
@@ -56,6 +56,7 @@
   let engineKey = null;
   let scanChain = Promise.resolve();
   let modelRequestSeq = 0;
+  let selectedFindingKey = null;
 
   let host = null;
   let shadowRoot = null;
@@ -144,6 +145,7 @@
     if (!nextRulesJson) throw new Error('rules source unavailable');
     rulesJson = nextRulesJson;
     rulesSourceLabel = sourceLabel;
+    selectedFindingKey = null;
     labelMap = Object.assign({}, FALLBACK_LABELS);
     for (const c of rulesJson.categories) {
       if (c && c.id) labelMap[c.id] = c.label || labelMap[c.id] || c.id;
@@ -313,6 +315,7 @@
       cachedTextSource = null;
       lastFetchAt = 0;
       lastModelAt = 0;
+      selectedFindingKey = null;
     }
     status = 'scanning';
     render();
@@ -662,6 +665,7 @@
 
   function buildItem(f) {
     const item = el('div', 'trd-item');
+    if (isSelectedFinding(f)) item.classList.add('trd-selected');
 
     const ctx = el('div', 'trd-ctx');
     if (f.before) ctx.appendChild(document.createTextNode('…' + f.before));
@@ -696,10 +700,27 @@
         fallbackFindingClick(f);
         return;
       }
+      selectedFindingKey = findingKey(fresh);
+      render();
       selectAndCopyFinding(fresh);
     }).catch(() => {
       fallbackFindingClick(f);
     });
+  }
+
+  function isSelectedFinding(f) {
+    return selectedFindingKey !== null && findingKey(f) === selectedFindingKey;
+  }
+
+  function findingKey(f) {
+    return JSON.stringify([
+      activeRulesSource,
+      f && f.cat,
+      f && f.src,
+      f && f.dst,
+      f && f.start,
+      f && f.end
+    ]);
   }
 
   function selectAndCopyFinding(f) {
