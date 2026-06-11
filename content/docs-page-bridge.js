@@ -43,6 +43,11 @@
           });
         });
       }
+      if (data.action === 'getSelection') {
+        return getSelection(obj).then(selection => {
+          postResponse(data, { ok: true, action: data.action, selection });
+        });
+      }
       if (data.action === 'setSelection') {
         const range = readRange(data);
         return setSelection(obj, range.start, range.end).then(result => {

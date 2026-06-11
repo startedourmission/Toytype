@@ -163,6 +163,22 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   box-shadow: inset 3px 0 0 #1a73e8;
 }
 .trd-item.trd-selected:hover { background: #e8f0fe; }
+.trd-cursor-marker {
+  height: 0;
+  border-top: 2px solid #1a73e8;
+  margin: 2px 0;
+  position: relative;
+}
+.trd-cursor-marker::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1a73e8;
+}
 
 .trd-ctx {
   font-size: 12px;

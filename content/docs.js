@@ -23,6 +23,7 @@
   const FETCH_TIMEOUT = 15000;
   const SNIPPET = 20;
   const MATCH_CONTEXT = 80;
+  const CURSOR_POLL_INTERVAL = 800;
   const FALLBACK_CSS =
     '.trd-wrap{font-family:sans-serif;font-size:13px;color:#202124;line-height:1.45}' +
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
@@ -30,6 +31,7 @@
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}' +
+    '.trd-cursor-marker{height:0;border-top:2px solid #1a73e8;margin:2px 0;position:relative}.trd-cursor-marker:before{content:"";position:absolute;left:12px;top:-4px;width:6px;height:6px;border-radius:50%;background:#1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
@@ -57,7 +59,10 @@
   let scanChain = Promise.resolve();
   let modelRequestSeq = 0;
   let selectedFindingKey = null;
-  let listMode = 'category';
+  let listMode = 'order';
+  let currentCursorOffset = null;
+  let cursorPollTimer = null;
+  let cursorPollBusy = false;
 
   let host = null;
   let shadowRoot = null;
@@ -317,6 +322,7 @@
       lastFetchAt = 0;
       lastModelAt = 0;
       selectedFindingKey = null;
+      currentCursorOffset = null;
     }
     status = 'scanning';
     render();
@@ -332,6 +338,7 @@
         cachedText = text;
         cachedTextSource = textSource;
         lastModelAt = Date.now();
+        updateCursorOffset(model.selection);
       } catch (e) {
         // 내부 모델 API가 막히면 기존 export 경로로 내려간다.
       }
@@ -343,6 +350,7 @@
           textSource = 'export';
           cachedText = text;
           cachedTextSource = textSource;
+          currentCursorOffset = null;
           lastFetchAt = Date.now();
         } catch (e) {
           status = 'error';
@@ -467,6 +475,7 @@
     expanded = false;
     clearTimeout(toastTimer);
     clearTimeout(cooldownTimer);
+    stopCursorWatcher();
   }
 
   function el(tag, className) {
@@ -525,6 +534,7 @@
     if (!shadowView) return;
     shadowView.textContent = '';
     shadowView.appendChild(expanded ? buildPanel() : buildBubble());
+    syncCursorWatcher();
   }
 
   function buildBubble() {
@@ -625,7 +635,7 @@
       const ordered = lastReport.findings.slice().sort((a, b) => {
         return (a.start - b.start) || (a.idx - b.idx);
       });
-      for (const f of ordered) body.appendChild(buildItem(f));
+      appendOrderedFindings(body, ordered);
     } else {
       const byCat = new Map();
       for (const f of lastReport.findings) {
@@ -663,6 +673,30 @@
     toast.id = 'trd-toast';
     panel.appendChild(toast);
     return panel;
+  }
+
+  function appendOrderedFindings(body, findings) {
+    let markerAdded = false;
+    for (const f of findings) {
+      if (!markerAdded && shouldShowCursorMarker() && currentCursorOffset <= f.start) {
+        body.appendChild(buildCursorMarker());
+        markerAdded = true;
+      }
+      body.appendChild(buildItem(f));
+    }
+    if (!markerAdded && shouldShowCursorMarker()) {
+      body.appendChild(buildCursorMarker());
+    }
+  }
+
+  function shouldShowCursorMarker() {
+    return listMode === 'order' && Number.isFinite(currentCursorOffset);
+  }
+
+  function buildCursorMarker() {
+    const marker = el('div', 'trd-cursor-marker');
+    marker.setAttribute('aria-hidden', 'true');
+    return marker;
   }
 
   function buildListModeToggle() {
@@ -733,6 +767,53 @@
     }
     showToast(activeRulesSource === 'uploaded' ? 'JSON 기준으로 검사' : 'rules.json 기준으로 검사');
     enqueueScan(cachedText === null);
+  }
+
+  function syncCursorWatcher() {
+    const shouldPoll = expanded && status === 'ready' && lastReport &&
+      lastReport.textSource === 'model' && listMode === 'order';
+    if (shouldPoll && !cursorPollTimer) {
+      cursorPollTimer = setInterval(() => { pollCursorSelection(); }, CURSOR_POLL_INTERVAL);
+      pollCursorSelection();
+      return;
+    }
+    if (!shouldPoll) stopCursorWatcher();
+  }
+
+  function stopCursorWatcher() {
+    if (!cursorPollTimer) return;
+    clearInterval(cursorPollTimer);
+    cursorPollTimer = null;
+    cursorPollBusy = false;
+  }
+
+  function pollCursorSelection() {
+    if (cursorPollBusy) return;
+    cursorPollBusy = true;
+    fetchDocsSelection().then(selection => {
+      if (updateCursorOffset(selection) && expanded && listMode === 'order') render();
+    }).catch(() => {
+      if (currentCursorOffset !== null) {
+        currentCursorOffset = null;
+        if (expanded && listMode === 'order') render();
+      }
+    }).finally(() => {
+      cursorPollBusy = false;
+    });
+  }
+
+  function updateCursorOffset(selection) {
+    const next = selectionOffset(selection);
+    if (next === currentCursorOffset) return false;
+    currentCursorOffset = next;
+    return true;
+  }
+
+  function selectionOffset(selection) {
+    if (!Array.isArray(selection) || selection.length === 0) return null;
+    const first = selection[0];
+    if (!first || typeof first.start !== 'number' || typeof first.end !== 'number') return null;
+    return Math.min(first.start, first.end);
   }
 
   function buildItem(f) {
@@ -967,6 +1048,13 @@
     return requestDocsModel('setSelection', { start, end, docId: getDocId() }).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'setSelection failed');
       return res;
+    });
+  }
+
+  function fetchDocsSelection() {
+    return requestDocsModel('getSelection', { docId: getDocId() }).then(res => {
+      if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'getSelection failed');
+      return res.selection || null;
     });
   }
 
