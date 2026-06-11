@@ -1,5 +1,5 @@
 // Toytype — 구글 독스 어댑터
-// 검사는 본문을 수정하지 않는다. 사용자가 누른 "적용" 버튼만 Google Docs 선택 영역 교체를 시도한다.
+// 검사는 본문을 수정하지 않는다. 사용자가 항목을 클릭하면 Google Docs 위치 선택과 교정어 복사만 시도한다.
 'use strict';
 (() => {
   const DEFAULT_SETTINGS = {
@@ -27,10 +27,9 @@
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
-    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-title{flex:1;font-weight:700}' +
-    '.trd-head .trd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
+    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-select{flex:1;min-width:80px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}' +
-    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix,.trd-action{font-size:12px}.trd-action{margin-top:3px;color:#5f6368}.trd-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px}.trd-apply{padding:2px 8px}.trd-line{color:#80868b;margin-left:6px}' +
+    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}';
@@ -40,6 +39,10 @@
   let status = 'init'; // 'init'|'disabled'|'scanning'|'ready'|'error'
   let errorCode = null;
   let lastReport = null;
+  let builtinRulesJson = null;
+  let uploadedRulesJson = null;
+  let uploadedRulesLabel = null;
+  let activeRulesSource = 'builtin';
   let rulesJson = null;
   let rulesSourceLabel = null;
   let settings = mergeSettings(null);
@@ -104,7 +107,9 @@
             return;
           }
           try {
-            applyRulesJson(res.rules, null);
+            validateRulesJson(res.rules);
+            builtinRulesJson = res.rules;
+            useRulesSource(activeRulesSource === 'uploaded' && uploadedRulesJson ? 'uploaded' : 'builtin');
             resolve(true);
           } catch (e) {
             resolve(false);
@@ -116,10 +121,28 @@
     });
   }
 
-  function applyRulesJson(nextRulesJson, sourceLabel) {
+  function setUploadedRulesJson(nextRulesJson, sourceLabel) {
     validateRulesJson(nextRulesJson);
+    uploadedRulesJson = nextRulesJson;
+    uploadedRulesLabel = sourceLabel || 'uploaded.json';
+    useRulesSource('uploaded');
+  }
+
+  function useRulesSource(source) {
+    let nextRulesJson = null;
+    let sourceLabel = null;
+    if (source === 'uploaded' && uploadedRulesJson) {
+      nextRulesJson = uploadedRulesJson;
+      sourceLabel = uploadedRulesLabel || 'uploaded.json';
+      activeRulesSource = 'uploaded';
+    } else {
+      nextRulesJson = builtinRulesJson;
+      sourceLabel = null;
+      activeRulesSource = 'builtin';
+    }
+    if (!nextRulesJson) throw new Error('rules source unavailable');
     rulesJson = nextRulesJson;
-    rulesSourceLabel = sourceLabel || null;
+    rulesSourceLabel = sourceLabel;
     labelMap = Object.assign({}, FALLBACK_LABELS);
     for (const c of rulesJson.categories) {
       if (c && c.id) labelMap[c.id] = c.label || labelMap[c.id] || c.id;
@@ -361,6 +384,8 @@
       ok: true,
       disabled: false,
       rulesVersion: rulesJson ? rulesJson.version : null,
+      rulesSource: activeRulesSource,
+      rulesSourceLabel,
       scannedAt: Date.now(),
       fetchedAt: textSource === 'model' ? (lastModelAt || null) : (lastFetchAt || null),
       cached,
@@ -464,7 +489,6 @@
   function buildBubble() {
     const b = el('div', 'trd-bubble');
     b.setAttribute('role', 'button');
-    b.title = 'Toytype';
     if (status === 'error') {
       b.textContent = '!';
       b.classList.add('trd-idle');
@@ -488,13 +512,12 @@
 
     // 헤더
     const head = el('div', 'trd-head');
-    const title = el('span', 'trd-title');
-    title.textContent = (status === 'ready' && lastReport)
-      ? 'Toytype · ' + lastReport.total + '건'
-      : 'Toytype';
-    const rescanBtn = el('button', 'trd-btn');
+    const rulesSelect = buildRulesSourceSelect();
+    const rescanBtn = el('button', 'trd-btn trd-icon-btn');
     rescanBtn.type = 'button';
-    rescanBtn.textContent = '다시 검사';
+    rescanBtn.textContent = '↻';
+    rescanBtn.setAttribute('aria-label', '다시 검사');
+    rescanBtn.title = '다시 검사';
     const remain = lastReport && lastReport.textSource === 'model' ? 0 : (lastFetchAt ? lastFetchAt + FETCH_MIN_INTERVAL - Date.now() : 0);
     if (remain > 0) {
       rescanBtn.disabled = true; // 스캔 직후 10초 비활성화 표시
@@ -515,7 +538,7 @@
     const jsonBtn = el('button', 'trd-btn');
     jsonBtn.type = 'button';
     jsonBtn.textContent = 'JSON';
-    jsonBtn.title = 'rules.json 파일을 현재 문서 검사 규칙으로 임시 적용합니다';
+    jsonBtn.title = 'rules.json 파일을 현재 페이지에 임시 업로드합니다';
     jsonBtn.addEventListener('click', () => { jsonInput.click(); });
     const closeBtn = el('button', 'trd-btn');
     closeBtn.type = 'button';
@@ -524,7 +547,8 @@
       expanded = false;
       render();
     });
-    head.append(title, rescanBtn, jsonBtn, closeBtn, jsonInput);
+    head.appendChild(rulesSelect);
+    head.append(rescanBtn, jsonBtn, closeBtn, jsonInput);
     panel.appendChild(head);
 
     // 알림 줄
@@ -532,13 +556,6 @@
       if (lastReport.truncated) {
         const n = el('div', 'trd-notice');
         n.textContent = '500건 초과 — 일부만 표시';
-        panel.appendChild(n);
-      }
-      if (lastReport.cached) {
-        const n = el('div', 'trd-notice');
-        n.textContent = lastReport.textSource === 'model'
-          ? '설정 변경 — 캐시된 문서 모델 기준'
-          : '10초 이내 재검사 — 캐시된 텍스트 기준';
         panel.appendChild(n);
       }
     }
@@ -587,7 +604,8 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    l2.textContent = '규칙 ' + ver + (rulesSourceLabel ? ' · JSON ' + rulesSourceLabel : '') + ' · 마지막 검사 ' + when;
+    const ruleSource = activeRulesSource === 'uploaded' ? 'JSON ' + (rulesSourceLabel || 'uploaded.json') : 'rules.json';
+    l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
     foot.append(l1, l2);
     panel.appendChild(foot);
 
@@ -597,11 +615,50 @@
     return panel;
   }
 
+  function buildRulesSourceSelect() {
+    const select = el('select', 'trd-select');
+    select.title = '검사 규칙 선택';
+    select.value = activeRulesSource;
+    const builtinOption = document.createElement('option');
+    builtinOption.value = 'builtin';
+    builtinOption.textContent = 'rules' + rulesVersionSuffix(builtinRulesJson);
+    select.appendChild(builtinOption);
+    if (uploadedRulesJson) {
+      const uploadedOption = document.createElement('option');
+      uploadedOption.value = 'uploaded';
+      uploadedOption.textContent = 'JSON' + rulesVersionSuffix(uploadedRulesJson);
+      uploadedOption.title = uploadedRulesLabel || 'uploaded.json';
+      select.appendChild(uploadedOption);
+    }
+    select.value = activeRulesSource;
+    select.addEventListener('click', ev => {
+      ev.stopPropagation();
+    });
+    select.addEventListener('change', () => {
+      handleRulesSourceChange(select.value);
+    });
+    return select;
+  }
+
+  function rulesVersionSuffix(json) {
+    return json && json.version ? ' ' + json.version : '';
+  }
+
+  function handleRulesSourceChange(source) {
+    if (source === activeRulesSource) return;
+    try {
+      useRulesSource(source);
+    } catch (e) {
+      showToast('규칙 선택 실패');
+      render();
+      return;
+    }
+    showToast(activeRulesSource === 'uploaded' ? 'JSON 기준으로 검사' : 'rules.json 기준으로 검사');
+    enqueueScan(cachedText === null);
+  }
+
   function buildItem(f) {
     const item = el('div', 'trd-item');
-    item.title = f.selectable
-      ? '클릭하면 문서 위치를 선택하고 교정어를 복사합니다'
-      : '클릭하면 검색어를 복사하고 구글 독스 검색창 열기를 시도합니다';
 
     const ctx = el('div', 'trd-ctx');
     if (f.before) ctx.appendChild(document.createTextNode('…' + f.before));
@@ -616,24 +673,7 @@
     ln.textContent = '¶' + f.line;
     fix.appendChild(ln);
 
-    const actions = el('div', 'trd-actions');
-    const action = el('div', 'trd-action');
-    action.textContent = f.selectable ? '클릭: 문서 위치 선택 + 교정어 복사' : '클릭: 검색어 복사 + 찾기 열기';
-    actions.appendChild(action);
-    if (f.selectable) {
-      const applyBtn = el('button', 'trd-btn trd-apply');
-      applyBtn.type = 'button';
-      applyBtn.textContent = '적용';
-      applyBtn.title = '문서에서 이 항목을 교정어로 바꿉니다';
-      applyBtn.addEventListener('click', ev => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        applyFinding(f);
-      });
-      actions.appendChild(applyBtn);
-    }
-
-    item.append(ctx, fix, actions);
+    item.append(ctx, fix);
     item.addEventListener('click', () => {
       if (f.selectable && Number.isFinite(f.start) && Number.isFinite(f.end)) {
         selectDocsModelRange(f.start, f.end).then(() => {
@@ -659,9 +699,9 @@
       } catch (e) {
         throw new Error('json_parse_failed');
       }
-      applyRulesJson(parsed, file.name || 'uploaded.json');
-      showToast('JSON 적용됨: ' + (file.name || 'uploaded.json'));
-      enqueueScan(true);
+      setUploadedRulesJson(parsed, file.name || 'uploaded.json');
+      showToast('JSON 선택됨: ' + (file.name || 'uploaded.json'));
+      enqueueScan(cachedText === null);
     }).catch(() => {
       showToast('JSON 업로드 실패');
     });
@@ -678,35 +718,6 @@
         showToast('검색어 복사 실패');
       }
     );
-  }
-
-  function applyFinding(f) {
-    if (!f.selectable || !Number.isFinite(f.start) || !Number.isFinite(f.end)) {
-      fallbackFindingClick(f);
-      return;
-    }
-    requestDocsModel('replaceSelection', {
-      start: f.start,
-      end: f.end,
-      text: f.dst,
-      docId: getDocId()
-    }).then(res => {
-      if (!res || !res.ok) return Promise.reject(new Error(res && res.errorMessage ? res.errorMessage : 'replace failed'));
-      cachedText = null;
-      cachedTextSource = null;
-      showToast('적용됨: ' + displayText(f.dst));
-      enqueueScan(true);
-      return null;
-    }).catch(() => {
-      selectDocsModelRange(f.start, f.end).then(() => {
-        copyText(f.dst).then(
-          () => showToast('자동 적용 실패 · 교정어 복사됨: ' + displayText(f.dst)),
-          () => showToast('자동 적용 실패 · 문서 위치 선택됨')
-        );
-      }, () => {
-        fallbackFindingClick(f);
-      });
-    });
   }
 
   function openDocsFind() {

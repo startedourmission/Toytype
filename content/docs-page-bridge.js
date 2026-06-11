@@ -46,16 +46,10 @@
       if (data.action === 'setSelection') {
         const range = readRange(data);
         return setSelection(obj, range.start, range.end).then(result => {
-          return getSelection(obj).then(selection => {
+          focusDocsEditor();
+          return delay(80).then(() => getSelection(obj)).then(selection => {
             postResponse(data, { ok: true, action: data.action, result, selection });
           });
-        });
-      }
-      if (data.action === 'replaceSelection') {
-        const range = readRange(data);
-        const replacement = typeof data.text === 'string' ? data.text : '';
-        return replaceSelection(obj, range.start, range.end, replacement).then(result => {
-          postResponse(data, Object.assign({ ok: true, action: data.action }, result));
         });
       }
       throw new Error('unknown page model action: ' + data.action);
@@ -135,83 +129,6 @@
     return callAnnotatedMethod(obj, 'setSelection', [start, end]);
   }
 
-  function replaceSelection(obj, start, end, replacement) {
-    let beforeText = '';
-    return getText(obj).then(text => {
-      beforeText = text;
-      return setSelection(obj, start, end);
-    }).then(() => {
-      focusDocsEditor();
-      replaceSelectedText(replacement);
-      const expected = beforeText.slice(0, start) + replacement + beforeText.slice(end);
-      return waitForText(obj, expected, 1500);
-    }).then(afterText => {
-      return {
-        start,
-        end: start + replacement.length,
-        textLength: afterText.length,
-        selection: [{ start, end: start + replacement.length }]
-      };
-    });
-  }
-
-  function waitForText(obj, expected, timeoutMs) {
-    const started = Date.now();
-    const poll = () => {
-      return delay(120).then(() => getText(obj)).then(text => {
-        if (text === expected) return text;
-        if (Date.now() - started >= timeoutMs) throw new Error('insertText did not update document');
-        return poll();
-      });
-    };
-    return poll();
-  }
-
-  function replaceSelectedText(text) {
-    for (const doc of commandDocuments()) {
-      try {
-        if (text === '') {
-          if (doc.execCommand('delete')) return true;
-        } else if (doc.execCommand('insertText', false, text)) {
-          return true;
-        }
-      } catch (e) { /* try next target */ }
-    }
-
-    const target = deepActiveElement() || document.querySelector('.kix-appview-editor') || document.body;
-    if (!target) return false;
-    try {
-      const before = new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: text === '' ? 'deleteContentBackward' : 'insertText',
-        data: text
-      });
-      target.dispatchEvent(before);
-      if (!before.defaultPrevented && text !== '') {
-        target.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          composed: true,
-          inputType: 'insertText',
-          data: text
-        }));
-      }
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function commandDocuments() {
-    const docs = [document];
-    const iframe = document.querySelector('iframe.docs-texteventtarget-iframe');
-    try {
-      if (iframe && iframe.contentDocument && !docs.includes(iframe.contentDocument)) docs.push(iframe.contentDocument);
-    } catch (e) { /* cross-origin or inaccessible */ }
-    return docs;
-  }
-
   function focusDocsEditor() {
     try { window.focus(); } catch (e) { /* best effort */ }
     const iframe = document.querySelector('iframe.docs-texteventtarget-iframe');
@@ -222,14 +139,6 @@
     try {
       if (editor && typeof editor.focus === 'function') editor.focus();
     } catch (e) { /* best effort */ }
-  }
-
-  function deepActiveElement() {
-    let active = document.activeElement;
-    try {
-      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
-    } catch (e) { /* best effort */ }
-    return active;
   }
 
   function callAnnotatedMethod(obj, name, args) {
