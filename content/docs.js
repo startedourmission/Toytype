@@ -28,7 +28,7 @@
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
-    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-select{flex:1;min-width:80px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
+    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
@@ -57,6 +57,7 @@
   let scanChain = Promise.resolve();
   let modelRequestSeq = 0;
   let selectedFindingKey = null;
+  let listMode = 'category';
 
   let host = null;
   let shadowRoot = null;
@@ -474,6 +475,40 @@
     return node;
   }
 
+  function uploadIcon() {
+    return strokedSvg(['M12 3v12', 'M7 8l5-5 5 5', 'M5 15v4h14v-4'], 'trd-svg-icon');
+  }
+
+  function viewModeIcon(mode) {
+    if (mode === 'order') {
+      return strokedSvg(['M8 6h10', 'M8 12h10', 'M8 18h10', 'M5 6h.01', 'M5 12h.01', 'M5 18h.01'], 'trd-view-icon');
+    }
+    return strokedSvg(['M5 5h6v6H5z', 'M13 5h6v6h-6z', 'M5 13h6v6H5z', 'M13 13h6v6h-6z'], 'trd-view-icon');
+  }
+
+  function closeIcon() {
+    return strokedSvg(['M6 6l12 12', 'M18 6L6 18'], 'trd-close-icon');
+  }
+
+  function strokedSvg(paths, className) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', className);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of paths) {
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
   // 표시 규약: 선두·후미 공백(U+0020)은 ␣로, 빈 dst는 ∅(삭제)로. 데이터는 변형하지 않는다.
   function displayText(s) {
     if (s === '') return '∅(삭제)';
@@ -519,6 +554,7 @@
     // 헤더
     const head = el('div', 'trd-head');
     const rulesSelect = buildRulesSourceSelect();
+    const viewToggle = buildListModeToggle();
     const rescanBtn = el('button', 'trd-btn trd-icon-btn');
     rescanBtn.type = 'button';
     rescanBtn.textContent = '↻';
@@ -541,20 +577,23 @@
       jsonInput.value = '';
       if (file) handleRulesJsonUpload(file);
     });
-    const jsonBtn = el('button', 'trd-btn');
+    const jsonBtn = el('button', 'trd-btn trd-icon-btn');
     jsonBtn.type = 'button';
-    jsonBtn.textContent = 'JSON';
-    jsonBtn.title = 'rules.json 파일을 현재 페이지에 임시 업로드합니다';
+    jsonBtn.appendChild(uploadIcon());
+    jsonBtn.setAttribute('aria-label', 'JSON 업로드');
+    jsonBtn.title = 'JSON 업로드';
     jsonBtn.addEventListener('click', () => { jsonInput.click(); });
-    const closeBtn = el('button', 'trd-btn');
+    const closeBtn = el('button', 'trd-btn trd-icon-btn');
     closeBtn.type = 'button';
-    closeBtn.textContent = '접기';
+    closeBtn.appendChild(closeIcon());
+    closeBtn.setAttribute('aria-label', '접기');
+    closeBtn.title = '접기';
     closeBtn.addEventListener('click', () => {
       expanded = false;
       render();
     });
     head.appendChild(rulesSelect);
-    head.append(rescanBtn, jsonBtn, closeBtn, jsonInput);
+    head.append(viewToggle, rescanBtn, jsonBtn, closeBtn, jsonInput);
     panel.appendChild(head);
 
     // 알림 줄
@@ -582,6 +621,11 @@
       const msg = el('div', 'trd-msg');
       msg.textContent = '발견된 오탈자가 없습니다.';
       body.appendChild(msg);
+    } else if (listMode === 'order') {
+      const ordered = lastReport.findings.slice().sort((a, b) => {
+        return (a.start - b.start) || (a.idx - b.idx);
+      });
+      for (const f of ordered) body.appendChild(buildItem(f));
     } else {
       const byCat = new Map();
       for (const f of lastReport.findings) {
@@ -619,6 +663,34 @@
     toast.id = 'trd-toast';
     panel.appendChild(toast);
     return panel;
+  }
+
+  function buildListModeToggle() {
+    const wrap = el('div', 'trd-view-toggle');
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', '보기 방식');
+    wrap.append(
+      buildListModeButton('category', '종류별 보기'),
+      buildListModeButton('order', '문서 순서 보기')
+    );
+    return wrap;
+  }
+
+  function buildListModeButton(mode, label) {
+    const btn = el('button', 'trd-view-btn' + (listMode === mode ? ' trd-active' : ''));
+    btn.type = 'button';
+    btn.appendChild(viewModeIcon(mode));
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', listMode === mode ? 'true' : 'false');
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (listMode === mode) return;
+      listMode = mode;
+      render();
+    });
+    return btn;
   }
 
   function buildRulesSourceSelect() {
@@ -677,7 +749,7 @@
     const fix = el('div', 'trd-fix');
     fix.textContent = displayText(f.src) + ' → ' + displayText(f.dst);
     const ln = el('span', 'trd-line');
-    ln.textContent = '¶' + f.line;
+    ln.textContent = '¶' + f.line + (listMode === 'order' ? ' · ' + labelOf(f.cat) : '');
     fix.appendChild(ln);
 
     item.append(ctx, fix);
