@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""어문 교정 마스터 시트 → rules.json 동기화.
+"""규칙 시트 → rules.json 동기화.
 
-골든래빗 어문 교정·맞춤법 마스터 시트(8개 탭, 오기→교정 2컬럼 쌍)를
-gws CLI로 읽어 확장 프로그램이 쓰는 rules.json(확장 루트)으로 변환한다.
+8개 탭, 오기→교정 2컬럼 쌍으로 구성된 규칙 시트를 gws CLI로 읽어
+확장 프로그램이 쓰는 rules.json(확장 루트)으로 변환한다.
 
 실행: python3 tools/sync_rules.py   (확장 루트에서)
 요구: gws CLI 인증 완료 상태

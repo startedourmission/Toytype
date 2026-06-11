@@ -1,4 +1,4 @@
-// 오탈자 레이더 — 팝업
+// Toytype — 팝업
 // settings 쓰기는 팝업만 한다(스펙 §3). content에는 typo:get / typo:rescan만 보낸다.
 'use strict';
 

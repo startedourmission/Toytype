@@ -1,4 +1,4 @@
-// 오탈자 레이더 — background service worker
+// Toytype — background service worker
 // 역할: 탭 배지 갱신 + rules.json 로드·배포. settings는 읽지도 쓰지도 않는다.
 'use strict';
 

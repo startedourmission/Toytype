@@ -1,4 +1,4 @@
-// 오탈자 레이더 — 매칭 엔진 (빌더2)
+// Toytype — 매칭 엔진 (빌더2)
 // content script(클래식 스크립트)와 Node CJS 양쪽에서 그대로 로드되므로
 // import/export·chrome.*·DOM 사용 금지. 부수효과는 globalThis.TypoEngine 할당 하나뿐.
 (function () {

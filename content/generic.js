@@ -1,4 +1,4 @@
-// 오탈자 레이더 — 일반 페이지 content script.
+// Toytype — 일반 페이지 content script.
 // DOM 무변형 원칙: 텍스트·속성을 절대 바꾸지 않고 CSS Custom Highlight API로만 표시한다.
 (() => {
   'use strict';

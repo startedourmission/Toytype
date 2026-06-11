@@ -1,6 +1,5 @@
-// 오탈자 레이더 — 구글 독스 어댑터 (표시 전용)
-// 무수정 invariant: 문서·캔버스(.kix-*)에 절대 접근하지 않는다.
-// 페이지 개입은 Shadow DOM 호스트 div(#typo-radar-root) 1개뿐이다.
+// Toytype — 구글 독스 어댑터
+// 검사는 본문을 수정하지 않는다. 사용자가 누른 "적용" 버튼만 Google Docs 선택 영역 교체를 시도한다.
 'use strict';
 (() => {
   const DEFAULT_SETTINGS = {
@@ -29,9 +28,9 @@
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-title{flex:1;font-weight:700}' +
-    '.trd-btn{font-size:12px;padding:4px 9px;cursor:pointer}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
+    '.trd-head .trd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}' +
-    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
+    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix,.trd-action{font-size:12px}.trd-action{margin-top:3px;color:#5f6368}.trd-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px}.trd-apply{padding:2px 8px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}';
@@ -44,11 +43,14 @@
   let rulesJson = null;
   let settings = mergeSettings(null);
   let labelMap = Object.assign({}, FALLBACK_LABELS);
-  let cachedText = null;  // 정규화된 export 텍스트
+  let cachedText = null;  // 모델 텍스트 또는 정규화된 export 텍스트
+  let cachedTextSource = null;
   let lastFetchAt = 0;
+  let lastModelAt = 0;
   let currentDocId = null;
   let engineKey = null;
   let scanChain = Promise.resolve();
+  let modelRequestSeq = 0;
 
   let host = null;
   let shadowRoot = null;
@@ -58,6 +60,8 @@
   let toastTimer = null;
   let cooldownTimer = null;
   let settingsTimer = null;
+  let pageBridgeReady = false;
+  let pageBridgeInjected = false;
 
   // ---------- 설정 ----------
 
@@ -161,6 +165,15 @@
       .finally(() => clearTimeout(timer));
   }
 
+  function fetchModelText(docId) {
+    return requestDocsModel('getText', { docId }).then(res => {
+      if (!res || !res.ok || typeof res.text !== 'string') {
+        throw new Error(res && res.errorMessage ? res.errorMessage : 'model text unavailable');
+      }
+      return { text: res.text, selection: res.selection || null };
+    });
+  }
+
   // ---------- 응답 빌더 ----------
 
   function baseFields() {
@@ -186,14 +199,15 @@
 
   // ---------- 스캔 ----------
 
-  function buildUIFindings(text, engineFindings) {
+  function buildUIFindings(text, engineFindings, textSource) {
     const out = [];
     let line = 1;
     let pos = 0;
+    const nonEmptyLineByLine = buildNonEmptyLineMap(text);
     for (let i = 0; i < engineFindings.length; i++) {
       const f = engineFindings[i];
       while (pos < f.start) {
-        if (text.charCodeAt(pos) === 10) line++;
+        if (isVisualLineBreakCode(text.charCodeAt(pos))) line++;
         pos++;
       }
       out.push({
@@ -202,12 +216,36 @@
         dst: f.dst,
         cat: f.cat,
         catLabel: labelOf(f.cat),
-        before: text.slice(Math.max(0, f.start - SNIPPET), f.start).replace(/\s+/g, ' '),
-        after: text.slice(f.end, f.end + SNIPPET).replace(/\s+/g, ' '),
-        line
+        start: f.start,
+        end: f.end,
+        selectable: textSource === 'model',
+        textSource,
+        before: snippetText(text.slice(Math.max(0, f.start - SNIPPET), f.start)),
+        after: snippetText(text.slice(f.end, f.end + SNIPPET)),
+        line,
+        textLine: nonEmptyLineByLine[line] || line
       });
     }
     return out;
+  }
+
+  function buildNonEmptyLineMap(text) {
+    const map = {};
+    const lines = text.split(/[\n\v]/);
+    let n = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (/\S/.test(lines[i])) n++;
+      map[i + 1] = n || 1;
+    }
+    return map;
+  }
+
+  function isVisualLineBreakCode(code) {
+    return code === 10 || code === 11;
+  }
+
+  function snippetText(s) {
+    return String(s || '').replace(/[\u0000-\u0008\u000e-\u001f]/g, '').replace(/\s+/g, ' ');
   }
 
   async function performScan(allowFetch) {
@@ -217,32 +255,52 @@
       // SPA 문서 전환 — 캐시 무효화 후 재초기화
       currentDocId = docId;
       cachedText = null;
+      cachedTextSource = null;
       lastFetchAt = 0;
+      lastModelAt = 0;
     }
     status = 'scanning';
     render();
 
     let text = null;
+    let textSource = null;
     let cached = false;
-    if (allowFetch && Date.now() - lastFetchAt >= FETCH_MIN_INTERVAL) {
+    if (allowFetch) {
       try {
-        text = await fetchExport(docId);
+        const model = await fetchModelText(docId);
+        text = model.text;
+        textSource = 'model';
         cachedText = text;
-        lastFetchAt = Date.now();
+        cachedTextSource = textSource;
+        lastModelAt = Date.now();
       } catch (e) {
-        status = 'error';
-        errorCode = 'export_failed';
-        sendCount(0);
-        render();
-        return errorResponse();
+        // 내부 모델 API가 막히면 기존 export 경로로 내려간다.
       }
-    } else if (cachedText !== null) {
-      text = cachedText;
-      cached = allowFetch; // rate limit으로 fetch를 건너뛴 경우만 true
-    } else {
-      status = 'init';
-      render();
-      return notReadyResponse();
+    }
+    if (text === null) {
+      if (allowFetch && Date.now() - lastFetchAt >= FETCH_MIN_INTERVAL) {
+        try {
+          text = await fetchExport(docId);
+          textSource = 'export';
+          cachedText = text;
+          cachedTextSource = textSource;
+          lastFetchAt = Date.now();
+        } catch (e) {
+          status = 'error';
+          errorCode = 'export_failed';
+          sendCount(0);
+          render();
+          return errorResponse();
+        }
+      } else if (cachedText !== null) {
+        text = cachedText;
+        textSource = cachedTextSource || 'cache';
+        cached = true;
+      } else {
+        status = 'init';
+        render();
+        return notReadyResponse();
+      }
     }
 
     try {
@@ -266,7 +324,7 @@
       return errorResponse();
     }
 
-    const findings = buildUIFindings(text, result.findings);
+    const findings = buildUIFindings(text, result.findings, textSource);
     const categoryCounts = {};
     for (const f of findings) categoryCounts[f.cat] = (categoryCounts[f.cat] || 0) + 1;
 
@@ -275,8 +333,9 @@
       disabled: false,
       rulesVersion: rulesJson ? rulesJson.version : null,
       scannedAt: Date.now(),
-      fetchedAt: lastFetchAt || null,
+      fetchedAt: textSource === 'model' ? (lastModelAt || null) : (lastFetchAt || null),
       cached,
+      textSource,
       total: findings.length,
       truncated: !!result.truncated,
       categoryCounts,
@@ -376,7 +435,7 @@
   function buildBubble() {
     const b = el('div', 'trd-bubble');
     b.setAttribute('role', 'button');
-    b.title = '오탈자 레이더';
+    b.title = 'Toytype';
     if (status === 'error') {
       b.textContent = '!';
       b.classList.add('trd-idle');
@@ -402,12 +461,12 @@
     const head = el('div', 'trd-head');
     const title = el('span', 'trd-title');
     title.textContent = (status === 'ready' && lastReport)
-      ? '오탈자 레이더 · ' + lastReport.total + '건'
-      : '오탈자 레이더';
+      ? 'Toytype · ' + lastReport.total + '건'
+      : 'Toytype';
     const rescanBtn = el('button', 'trd-btn');
     rescanBtn.type = 'button';
     rescanBtn.textContent = '다시 검사';
-    const remain = lastFetchAt ? lastFetchAt + FETCH_MIN_INTERVAL - Date.now() : 0;
+    const remain = lastReport && lastReport.textSource === 'model' ? 0 : (lastFetchAt ? lastFetchAt + FETCH_MIN_INTERVAL - Date.now() : 0);
     if (remain > 0) {
       rescanBtn.disabled = true; // 스캔 직후 10초 비활성화 표시
       rescanBtn.title = '10초 후 다시 검사할 수 있습니다';
@@ -434,7 +493,9 @@
       }
       if (lastReport.cached) {
         const n = el('div', 'trd-notice');
-        n.textContent = '10초 이내 재검사 — 캐시된 텍스트 기준';
+        n.textContent = lastReport.textSource === 'model'
+          ? '설정 변경 — 캐시된 문서 모델 기준'
+          : '10초 이내 재검사 — 캐시된 텍스트 기준';
         panel.appendChild(n);
       }
     }
@@ -444,7 +505,7 @@
     if (status === 'error') {
       const msg = el('div', 'trd-msg trd-error');
       msg.textContent = errorCode === 'rules_load_failed'
-        ? '교정 규칙을 불러오지 못했습니다. 확장 프로그램을 새로고침해 주세요.'
+        ? '검사 규칙을 불러오지 못했습니다. 확장 프로그램을 새로고침해 주세요.'
         : '문서 텍스트를 가져오지 못했습니다. 보기 권한·로그인 상태를 확인하세요.';
       body.appendChild(msg);
     } else if (status !== 'ready' || !lastReport) {
@@ -478,7 +539,8 @@
     // 푸터
     const foot = el('div', 'trd-foot');
     const l1 = document.createElement('div');
-    l1.textContent = '문서를 수정하지 않습니다 · 저장 스냅샷 기준';
+    const sourceLabel = lastReport && lastReport.textSource === 'model' ? '문서 모델 기준' : '저장 스냅샷 기준';
+    l1.textContent = '검사만으로는 수정하지 않습니다 · ' + sourceLabel;
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
@@ -494,7 +556,9 @@
 
   function buildItem(f) {
     const item = el('div', 'trd-item');
-    item.title = '클릭하면 교정어를 복사합니다';
+    item.title = f.selectable
+      ? '클릭하면 문서 위치를 선택하고 교정어를 복사합니다'
+      : '클릭하면 검색어를 복사하고 구글 독스 검색창 열기를 시도합니다';
 
     const ctx = el('div', 'trd-ctx');
     if (f.before) ctx.appendChild(document.createTextNode('…' + f.before));
@@ -509,14 +573,164 @@
     ln.textContent = '¶' + f.line;
     fix.appendChild(ln);
 
-    item.append(ctx, fix);
+    const actions = el('div', 'trd-actions');
+    const action = el('div', 'trd-action');
+    action.textContent = f.selectable ? '클릭: 문서 위치 선택 + 교정어 복사' : '클릭: 검색어 복사 + 찾기 열기';
+    actions.appendChild(action);
+    if (f.selectable) {
+      const applyBtn = el('button', 'trd-btn trd-apply');
+      applyBtn.type = 'button';
+      applyBtn.textContent = '적용';
+      applyBtn.title = '문서에서 이 항목을 교정어로 바꿉니다';
+      applyBtn.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        applyFinding(f);
+      });
+      actions.appendChild(applyBtn);
+    }
+
+    item.append(ctx, fix, actions);
     item.addEventListener('click', () => {
-      copyText(f.dst).then(
-        () => showToast('교정어 복사됨: ' + displayText(f.dst)),
-        () => showToast('복사에 실패했습니다')
-      );
+      if (f.selectable && Number.isFinite(f.start) && Number.isFinite(f.end)) {
+        selectDocsModelRange(f.start, f.end).then(() => {
+          copyText(f.dst).then(
+            () => showToast('문서 위치 선택 · 교정어 복사됨: ' + displayText(f.dst)),
+            () => showToast('문서 위치 선택됨')
+          );
+        }, () => {
+          fallbackFindingClick(f);
+        });
+        return;
+      }
+      fallbackFindingClick(f);
     });
     return item;
+  }
+
+  function fallbackFindingClick(f) {
+    const term = searchTermForFinding(f);
+    copyText(term).then(
+      () => {
+        openDocsFind();
+        showToast('검색어 복사됨: ' + displayText(term));
+      },
+      () => {
+        showToast('검색어 복사 실패');
+      }
+    );
+  }
+
+  function applyFinding(f) {
+    if (!f.selectable || !Number.isFinite(f.start) || !Number.isFinite(f.end)) {
+      fallbackFindingClick(f);
+      return;
+    }
+    requestDocsModel('replaceSelection', {
+      start: f.start,
+      end: f.end,
+      text: f.dst,
+      docId: getDocId()
+    }).then(res => {
+      if (!res || !res.ok) return Promise.reject(new Error(res && res.errorMessage ? res.errorMessage : 'replace failed'));
+      cachedText = null;
+      cachedTextSource = null;
+      showToast('적용됨: ' + displayText(f.dst));
+      enqueueScan(true);
+      return null;
+    }).catch(() => {
+      selectDocsModelRange(f.start, f.end).then(() => {
+        copyText(f.dst).then(
+          () => showToast('자동 적용 실패 · 교정어 복사됨: ' + displayText(f.dst)),
+          () => showToast('자동 적용 실패 · 문서 위치 선택됨')
+        );
+      }, () => {
+        fallbackFindingClick(f);
+      });
+    });
+  }
+
+  function openDocsFind() {
+    // 브라우저 보안상 확장이 "진짜" Cmd/Ctrl+F를 보낼 수는 없다.
+    // 구글 독스가 untrusted key event를 받아주는 환경에서는 내부 검색창이 열리고,
+    // 막히는 환경에서는 검색어 복사 fallback만 남는다.
+    const isMac = /\bMac\b/.test(navigator.platform || '');
+    const opts = {
+      key: 'f',
+      code: 'KeyF',
+      keyCode: 70,
+      which: 70,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      metaKey: isMac,
+      ctrlKey: !isMac
+    };
+    try {
+      window.focus();
+      const target = document.activeElement || document.body || document.documentElement;
+      target.dispatchEvent(new KeyboardEvent('keydown', opts));
+      target.dispatchEvent(new KeyboardEvent('keyup', opts));
+    } catch (e) { /* best effort */ }
+  }
+
+  function searchTermForFinding(f) {
+    const src = normalizeSearchText(f.src);
+    if (src) return src;
+    return normalizeSearchText((f.before || '').split(/\s+/).slice(-2).join(' ') + ' ' + (f.after || '').split(/\s+/).slice(0, 2).join(' '));
+  }
+
+  function normalizeSearchText(s) {
+    return typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function requestDocsModel(action, payload) {
+    return new Promise((resolve, reject) => {
+      injectPageBridgeScript();
+      const requestId = 'trd-' + Date.now() + '-' + (++modelRequestSeq);
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', onMessage);
+        reject(new Error('model request timeout'));
+      }, 4000);
+      function onMessage(event) {
+        if (event.source !== window || !event.data) return;
+        if (event.data.kind === 'typo-radar:page-bridge-ready') {
+          pageBridgeReady = true;
+          return;
+        }
+        if (event.data.kind !== 'typo-radar:page-model-response' || event.data.requestId !== requestId) return;
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        resolve(event.data);
+      }
+      window.addEventListener('message', onMessage);
+      setTimeout(() => {
+        window.postMessage(Object.assign({
+          kind: 'typo-radar:page-model-request',
+          requestId,
+          action,
+          extensionId: chrome.runtime.id
+        }, payload || {}), '*');
+      }, pageBridgeReady ? 0 : 80);
+    });
+  }
+
+  function selectDocsModelRange(start, end) {
+    return requestDocsModel('setSelection', { start, end, docId: getDocId() }).then(res => {
+      if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'setSelection failed');
+      return res;
+    });
+  }
+
+  function injectPageBridgeScript() {
+    if (pageBridgeInjected) return;
+    pageBridgeInjected = true;
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('content/docs-page-bridge.js');
+    script.async = false;
+    script.onload = () => { script.remove(); };
+    script.onerror = () => { pageBridgeInjected = false; };
+    (document.documentElement || document.head || document.body).appendChild(script);
   }
 
   function copyText(t) {

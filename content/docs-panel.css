@@ -1,4 +1,4 @@
-/* 오탈자 레이더 — 구글 독스 패널 (Shadow DOM 내부 전용, WAR fetch로 주입됨) */
+/* Toytype — 구글 독스 패널 (Shadow DOM 내부 전용, WAR fetch로 주입됨) */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -51,8 +51,15 @@
   border-bottom: 1px solid #e0e0e0;
 }
 .trd-title { flex: 1; font-weight: 700; }
+.trd-head .trd-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .trd-btn {
+  flex: none;
   border: 1px solid #dadce0;
   border-radius: 6px;
   background: #fff;
@@ -117,6 +124,21 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   word-break: break-all;
 }
 .trd-line { color: #80868b; margin-left: 6px; }
+.trd-action {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.trd-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+}
+.trd-apply {
+  padding: 2px 8px;
+}
 
 .trd-foot {
   flex: none;

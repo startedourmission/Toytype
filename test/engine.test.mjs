@@ -1,4 +1,4 @@
-// 오탈자 레이더 매칭 엔진 테스트 — 실행: node test/engine.test.mjs (Node 20+)
+// Toytype 매칭 엔진 테스트 — 실행: node test/engine.test.mjs (Node 20+)
 // 주의: '초기화 전' 테스트가 가장 먼저 돌아야 하므로 테스트 등록 순서를 바꾸지 말 것.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
