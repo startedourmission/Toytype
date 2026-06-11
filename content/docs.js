@@ -28,7 +28,7 @@
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-title{flex:1;font-weight:700}' +
-    '.trd-head .trd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
+    '.trd-head .trd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{padding:8px 12px;border-top:1px solid #f1f3f4;cursor:pointer}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix,.trd-action{font-size:12px}.trd-action{margin-top:3px;color:#5f6368}.trd-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px}.trd-apply{padding:2px 8px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
@@ -41,6 +41,7 @@
   let errorCode = null;
   let lastReport = null;
   let rulesJson = null;
+  let rulesSourceLabel = null;
   let settings = mergeSettings(null);
   let labelMap = Object.assign({}, FALLBACK_LABELS);
   let cachedText = null;  // 모델 텍스트 또는 정규화된 export 텍스트
@@ -102,13 +103,12 @@
             resolve(false);
             return;
           }
-          rulesJson = res.rules;
-          if (Array.isArray(rulesJson.categories)) {
-            for (const c of rulesJson.categories) {
-              if (c && c.id) labelMap[c.id] = c.label || labelMap[c.id] || c.id;
-            }
+          try {
+            applyRulesJson(res.rules, null);
+            resolve(true);
+          } catch (e) {
+            resolve(false);
           }
-          resolve(true);
         });
       } catch (e) {
         resolve(false);
@@ -116,8 +116,37 @@
     });
   }
 
+  function applyRulesJson(nextRulesJson, sourceLabel) {
+    validateRulesJson(nextRulesJson);
+    rulesJson = nextRulesJson;
+    rulesSourceLabel = sourceLabel || null;
+    labelMap = Object.assign({}, FALLBACK_LABELS);
+    for (const c of rulesJson.categories) {
+      if (c && c.id) labelMap[c.id] = c.label || labelMap[c.id] || c.id;
+    }
+    engineKey = null;
+  }
+
+  function validateRulesJson(value) {
+    if (!value || typeof value !== 'object' || !Array.isArray(value.categories) || value.categories.length === 0) {
+      throw new Error('invalid rules json');
+    }
+    for (let i = 0; i < value.categories.length; i++) {
+      const cat = value.categories[i];
+      if (!cat || typeof cat !== 'object' || typeof cat.id !== 'string' || cat.id === '' || !Array.isArray(cat.rules)) {
+        throw new Error('invalid category at index ' + i);
+      }
+      for (let j = 0; j < cat.rules.length; j++) {
+        const rule = cat.rules[j];
+        if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') {
+          throw new Error('invalid rule in category ' + cat.id + ' at index ' + j);
+        }
+      }
+    }
+  }
+
   function initEngine() {
-    const enabled = CATEGORY_ORDER.filter(id => settings.docsCategories[id]);
+    const enabled = categoryIdsInOrder().filter(id => settings.docsCategories[id] !== false);
     const key = enabled.join(',');
     if (key === engineKey) return;
     globalThis.TypoEngine.init(rulesJson, enabled);
@@ -474,6 +503,20 @@
       cooldownTimer = setTimeout(() => { if (expanded) render(); }, remain + 100);
     }
     rescanBtn.addEventListener('click', () => { handleRescan(); });
+    const jsonInput = document.createElement('input');
+    jsonInput.type = 'file';
+    jsonInput.accept = 'application/json,.json';
+    jsonInput.className = 'trd-file';
+    jsonInput.addEventListener('change', () => {
+      const file = jsonInput.files && jsonInput.files[0];
+      jsonInput.value = '';
+      if (file) handleRulesJsonUpload(file);
+    });
+    const jsonBtn = el('button', 'trd-btn');
+    jsonBtn.type = 'button';
+    jsonBtn.textContent = 'JSON';
+    jsonBtn.title = 'rules.json 파일을 현재 문서 검사 규칙으로 임시 적용합니다';
+    jsonBtn.addEventListener('click', () => { jsonInput.click(); });
     const closeBtn = el('button', 'trd-btn');
     closeBtn.type = 'button';
     closeBtn.textContent = '접기';
@@ -481,7 +524,7 @@
       expanded = false;
       render();
     });
-    head.append(title, rescanBtn, closeBtn);
+    head.append(title, rescanBtn, jsonBtn, closeBtn, jsonInput);
     panel.appendChild(head);
 
     // 알림 줄
@@ -544,7 +587,7 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    l2.textContent = '규칙 ' + ver + ' · 마지막 검사 ' + when;
+    l2.textContent = '규칙 ' + ver + (rulesSourceLabel ? ' · JSON ' + rulesSourceLabel : '') + ' · 마지막 검사 ' + when;
     foot.append(l1, l2);
     panel.appendChild(foot);
 
@@ -606,6 +649,22 @@
       fallbackFindingClick(f);
     });
     return item;
+  }
+
+  function handleRulesJsonUpload(file) {
+    file.text().then(text => {
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        throw new Error('json_parse_failed');
+      }
+      applyRulesJson(parsed, file.name || 'uploaded.json');
+      showToast('JSON 적용됨: ' + (file.name || 'uploaded.json'));
+      enqueueScan(true);
+    }).catch(() => {
+      showToast('JSON 업로드 실패');
+    });
   }
 
   function fallbackFindingClick(f) {

@@ -71,6 +71,7 @@
 }
 .trd-btn:hover:not(:disabled) { background: #f1f3f4; }
 .trd-btn:disabled { opacity: .45; cursor: default; }
+.trd-file { display: none; }
 
 .trd-notice {
   flex: none;
