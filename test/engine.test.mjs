@@ -123,6 +123,15 @@ test('실데이터: 타겟·초기 값·할때 검출', () => {
   assert.equal(f.cat, 'convert'); // convert·plural·space1·space2 중복 → 카테고리 순서 우선
 });
 
+test('실데이터: 요구사항 표기로 통일', () => {
+  initAll();
+  assert.equal(E.scan('요구사항을 정리한다').findings.length, 0);
+
+  const f = E.scan('요구 사항을 정리한다').findings.find((x) => x.src === '요구 사항');
+  assert.ok(f, "'요구 사항' 미검출");
+  assert.equal(f.dst, '요구사항');
+});
+
 test('T4 가드 A: ASCII 단어 경계 (합성)', () => {
   E.init(synth([cat('convert', [['Git', '깃']])]), ['convert']);
   assert.equal(E.scan('GitHub').findings.length, 0);
