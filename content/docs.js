@@ -7,7 +7,9 @@
     schemaVersion: 1,
     docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
     genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
-    disabledOrigins:   []
+    disabledOrigins:   [],
+    tocMaxLevel: 4, // 목차 추출에 포함할 최대 헤딩 레벨 (1~5)
+    copyOnSelect: true // 오탈자 선택 시 교정어 클립보드 자동 복사
   };
   const CATEGORY_ORDER = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
   const FALLBACK_LABELS = {
@@ -30,13 +32,14 @@
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
-    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;padding:0;font-size:17px;line-height:1}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
+    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:17px;line-height:1;vertical-align:top}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
     '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 44px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-apply-btn{position:absolute;right:10px;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-apply-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
     '.trd-cursor-marker{height:0;border-top:2px solid #1a73e8;margin:2px 0;position:relative}.trd-cursor-marker:before{content:"";position:absolute;left:12px;top:-4px;width:6px;height:6px;border-radius:50%;background:#1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
-    '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}';
+    '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
 
   const startedAt = Date.now();
 
@@ -65,12 +68,18 @@
   let cursorPollTimer = null;
   let cursorPollBusy = false;
   let applyingFindingKey = null;
+  let addonBusyActions = new Set();
+  let addonStatus = null;
+  let addonStatusTimer = null;
+  let generatedRulesFiles = [];
+  let generatedRulesLoadedDocId = null;
 
   let host = null;
   let shadowRoot = null;
   let shadowView = null;
   let panelCss = null;
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
+  let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
   let toastTimer = null;
   let cooldownTimer = null;
   let settingsTimer = null;
@@ -89,8 +98,15 @@
       schemaVersion: 1,
       docsCategories: Object.assign({}, DEFAULT_SETTINGS.docsCategories, s.docsCategories || {}),
       genericCategories: Object.assign({}, DEFAULT_SETTINGS.genericCategories, s.genericCategories || {}),
-      disabledOrigins: Array.isArray(s.disabledOrigins) ? s.disabledOrigins : []
+      disabledOrigins: Array.isArray(s.disabledOrigins) ? s.disabledOrigins : [],
+      tocMaxLevel: normalizeTocMaxLevel(s.tocMaxLevel),
+      copyOnSelect: s.copyOnSelect !== false
     };
+  }
+
+  function normalizeTocMaxLevel(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 1 ? Math.min(5, Math.floor(n)) : DEFAULT_SETTINGS.tocMaxLevel;
   }
 
   function readSettings() {
@@ -123,7 +139,7 @@
           try {
             validateRulesJson(res.rules);
             builtinRulesJson = res.rules;
-            useRulesSource(activeRulesSource === 'uploaded' && uploadedRulesJson ? 'uploaded' : 'builtin');
+            useRulesSource(canUseRulesSource(activeRulesSource) ? activeRulesSource : 'builtin');
             resolve(true);
           } catch (e) {
             resolve(false);
@@ -149,7 +165,19 @@
       nextRulesJson = uploadedRulesJson;
       sourceLabel = uploadedRulesLabel || 'uploaded.json';
       activeRulesSource = 'uploaded';
+    } else if (isGeneratedRulesSource(source)) {
+      const generated = findGeneratedRulesFile(source);
+      if (generated) {
+        nextRulesJson = generated.json;
+        sourceLabel = generated.displayName || generated.fileName;
+        activeRulesSource = source;
+      }
     } else {
+      nextRulesJson = builtinRulesJson;
+      sourceLabel = null;
+      activeRulesSource = 'builtin';
+    }
+    if (!nextRulesJson && source !== 'builtin') {
       nextRulesJson = builtinRulesJson;
       sourceLabel = null;
       activeRulesSource = 'builtin';
@@ -163,6 +191,30 @@
       if (c && c.id) labelMap[c.id] = c.label || labelMap[c.id] || c.id;
     }
     engineKey = null;
+  }
+
+  function canUseRulesSource(source) {
+    if (source === 'builtin') return !!builtinRulesJson;
+    if (source === 'uploaded') return !!uploadedRulesJson;
+    if (isGeneratedRulesSource(source)) return !!findGeneratedRulesFile(source);
+    return false;
+  }
+
+  function isGeneratedRulesSource(source) {
+    return typeof source === 'string' && source.indexOf('generated:') === 0;
+  }
+
+  function generatedRulesSourceValue(fileName) {
+    return 'generated:' + String(fileName || '');
+  }
+
+  function generatedFileNameFromSource(source) {
+    return String(source || '').slice('generated:'.length);
+  }
+
+  function findGeneratedRulesFile(source) {
+    const fileName = generatedFileNameFromSource(source);
+    return generatedRulesFiles.find(file => file.fileName === fileName) || null;
   }
 
   function validateRulesJson(value) {
@@ -179,8 +231,22 @@
         if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') {
           throw new Error('invalid rule in category ' + cat.id + ' at index ' + j);
         }
+        if (rule.length > 3 || (rule.length === 3 && !validRuleOptions(rule[2]))) {
+          throw new Error('invalid rule options in category ' + cat.id + ' at index ' + j);
+        }
       }
     }
+  }
+
+  function validRuleOptions(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return validStringList(value.rejectBefore) && validStringList(value.rejectAfter);
+  }
+
+  function validStringList(value) {
+    return value === undefined ||
+      typeof value === 'string' ||
+      (Array.isArray(value) && value.every(item => typeof item === 'string'));
   }
 
   function initEngine() {
@@ -320,6 +386,9 @@
   async function performScan(allowFetch, scanOpts) {
     const docId = getDocId();
     if (!docId) return notReadyResponse();
+    const renderScan = () => {
+      render({ preserveBodyScroll: !!(scanOpts && scanOpts.preserveBodyScroll) });
+    };
     if (docId !== currentDocId) {
       // SPA 문서 전환 — 캐시 무효화 후 재초기화
       currentDocId = docId;
@@ -334,7 +403,7 @@
     // 기존 패널을 유지한 채 결과만 갱신한다 (불필요한 전체 리렌더 2회 제거).
     if (!(scanOpts && scanOpts.quiet)) {
       status = 'scanning';
-      render();
+      renderScan();
     }
 
     const perf = { textSource: null, textLength: 0, fetchMs: null, scanMs: null, buildMs: null, renderMs: null, totalMs: null };
@@ -385,7 +454,7 @@
           status = 'error';
           errorCode = 'export_failed';
           sendCount(0);
-          render();
+          renderScan();
           return errorResponse();
         }
       } else if (cachedText !== null) {
@@ -394,7 +463,7 @@
         cached = true;
       } else {
         status = 'init';
-        render();
+        renderScan();
         return notReadyResponse();
       }
     }
@@ -405,7 +474,7 @@
       status = 'error';
       errorCode = 'rules_load_failed';
       sendCount(0);
-      render();
+      renderScan();
       return errorResponse();
     }
 
@@ -418,7 +487,7 @@
       status = 'error';
       errorCode = 'internal';
       sendCount(0);
-      render();
+      renderScan();
       return errorResponse();
     }
 
@@ -447,7 +516,7 @@
     errorCode = null;
     sendCount(lastReport.total);
     const renderStartedAt = Date.now();
-    render();
+    renderScan();
     perf.renderMs = Date.now() - renderStartedAt;
     perf.textSource = textSource;
     perf.textLength = text.length;
@@ -515,6 +584,7 @@
     expanded = false;
     clearTimeout(toastTimer);
     clearTimeout(cooldownTimer);
+    stopAddonStatusTicker();
     stopCursorWatcher();
   }
 
@@ -541,6 +611,104 @@
 
   function applyIcon() {
     return strokedSvg(['M20 6L9 17l-5-5'], 'trd-apply-icon');
+  }
+
+  // 추가기능 아이콘 — 격자 4칸(기능 묶음) 모양
+  function addonsIcon() {
+    return strokedSvg(['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h6v6h-6z'], 'trd-svg-icon');
+  }
+
+  function settingsIcon() {
+    return strokedSvg([
+      'M9.67 4.14a2.34 2.34 0 0 1 4.66 0 2.34 2.34 0 0 0 3.32 1.91 2.34 2.34 0 0 1 2.33 4.03 2.34 2.34 0 0 0 0 3.84 2.34 2.34 0 0 1-2.33 4.03 2.34 2.34 0 0 0-3.32 1.91 2.34 2.34 0 0 1-4.66 0 2.34 2.34 0 0 0-3.32-1.91 2.34 2.34 0 0 1-2.33-4.03 2.34 2.34 0 0 0 0-3.84 2.34 2.34 0 0 1 2.33-4.03 2.34 2.34 0 0 0 3.32-1.91z',
+      'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'
+    ], 'trd-svg-icon');
+  }
+
+  function addonActions() {
+    return [
+      { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
+      { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
+    ];
+  }
+
+  function isAddonBusy(actionId) {
+    return addonBusyActions.has(actionId);
+  }
+
+  function setAddonBusy(actionId, busy) {
+    if (busy) addonBusyActions.add(actionId);
+    else addonBusyActions.delete(actionId);
+  }
+
+  function buildAddonsButton() {
+    const wrap = el('div', 'trd-addons-wrap');
+    const btn = el('button', 'trd-btn trd-icon-btn trd-addons-btn' + (addonsMenuOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.appendChild(addonsIcon());
+    btn.setAttribute('aria-label', '추가기능');
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', addonsMenuOpen ? 'true' : 'false');
+    btn.title = '추가기능';
+    btn.disabled = applyingFindingKey !== null;
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addonsMenuOpen = !addonsMenuOpen;
+      render();
+    });
+    wrap.appendChild(btn);
+    if (addonsMenuOpen) wrap.appendChild(buildAddonsMenu());
+    return wrap;
+  }
+
+  function buildSettingsButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-settings-btn');
+    btn.type = 'button';
+    btn.appendChild(settingsIcon());
+    btn.setAttribute('aria-label', '설정');
+    btn.title = '설정';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addonsMenuOpen = false;
+      openSettingsPageFromDocs();
+    });
+    return btn;
+  }
+
+  function buildFooterActions() {
+    const wrap = el('div', 'trd-foot-actions');
+    wrap.append(buildSettingsButton(), buildAddonsButton());
+    return wrap;
+  }
+
+  function buildAddonsMenu() {
+    const menu = el('div', 'trd-addons-menu');
+    menu.setAttribute('role', 'menu');
+    const actions = addonActions();
+    if (!actions.length) {
+      const empty = el('div', 'trd-addons-empty');
+      empty.textContent = '추가된 기능이 없습니다';
+      menu.appendChild(empty);
+      return menu;
+    }
+    for (const action of actions) {
+      const item = el('button', 'trd-addons-item');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = action.label;
+      item.disabled = applyingFindingKey !== null || isAddonBusy(action.id);
+      item.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        addonsMenuOpen = false;
+        render();
+        action.run();
+      });
+      menu.appendChild(item);
+    }
+    return menu;
   }
 
   function strokedSvg(paths, className) {
@@ -574,10 +742,17 @@
     return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
-  function render() {
+  function render(options) {
     if (!shadowView) return;
+    const opts = options && typeof options === 'object' ? options : {};
+    const prevBody = opts.preserveBodyScroll ? shadowView.querySelector('.trd-body') : null;
+    const prevBodyScrollTop = prevBody ? prevBody.scrollTop : 0;
     shadowView.textContent = '';
     shadowView.appendChild(expanded ? buildPanel() : buildBubble());
+    if (opts.preserveBodyScroll) {
+      const nextBody = shadowView.querySelector('.trd-body');
+      if (nextBody) nextBody.scrollTop = prevBodyScrollTop;
+    }
     syncCursorWatcher();
   }
 
@@ -598,6 +773,7 @@
     b.addEventListener('click', () => {
       expanded = true;
       render();
+      refreshGeneratedRulesListQuiet();
     });
     return b;
   }
@@ -700,17 +876,23 @@
     }
     panel.appendChild(body);
 
-    // 푸터
+    // 푸터 (우측에 설정/추가기능 버튼)
     const foot = el('div', 'trd-foot');
-    const l1 = document.createElement('div');
-    const sourceLabel = lastReport && lastReport.textSource === 'model' ? '문서 모델 기준' : '저장 스냅샷 기준';
-    l1.textContent = '검사만으로는 수정하지 않습니다 · ' + sourceLabel;
+    const footText = el('div', 'trd-foot-text');
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    const ruleSource = activeRulesSource === 'uploaded' ? 'JSON ' + (rulesSourceLabel || 'uploaded.json') : 'rules.json';
+    const ruleSource = activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json');
     l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
-    foot.append(l1, l2);
+    const addonStatusText = addonStatusLineText();
+    if (addonStatusText) {
+      const statusLine = document.createElement('div');
+      statusLine.className = 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : '');
+      statusLine.textContent = addonStatusText;
+      footText.appendChild(statusLine);
+    }
+    footText.appendChild(l2);
+    foot.append(footText, buildFooterActions());
     panel.appendChild(foot);
 
     const toast = el('div', 'trd-toast');
@@ -779,6 +961,13 @@
     builtinOption.value = 'builtin';
     builtinOption.textContent = 'rules' + rulesVersionSuffix(builtinRulesJson);
     select.appendChild(builtinOption);
+    for (const file of generatedRulesFiles) {
+      const generatedOption = document.createElement('option');
+      generatedOption.value = generatedRulesSourceValue(file.fileName);
+      generatedOption.textContent = file.displayName || file.fileName;
+      generatedOption.title = file.outputPath || file.fileName;
+      select.appendChild(generatedOption);
+    }
     if (uploadedRulesJson) {
       const uploadedOption = document.createElement('option');
       uploadedOption.value = 'uploaded';
@@ -786,7 +975,7 @@
       uploadedOption.title = uploadedRulesLabel || 'uploaded.json';
       select.appendChild(uploadedOption);
     }
-    select.value = activeRulesSource;
+    select.value = canUseRulesSource(activeRulesSource) ? activeRulesSource : 'builtin';
     select.addEventListener('click', ev => {
       ev.stopPropagation();
     });
@@ -809,7 +998,7 @@
       render();
       return;
     }
-    showToast(activeRulesSource === 'uploaded' ? 'JSON 기준으로 검사' : 'rules.json 기준으로 검사');
+    showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
     enqueueScan(cachedText === null);
   }
 
@@ -904,7 +1093,8 @@
       fallbackFindingClick(f);
       return;
     }
-    enqueueScan(true).then(report => {
+    const preservePanelScroll = listMode === 'category';
+    enqueueScan(true, { quiet: true, preserveBodyScroll: preservePanelScroll }).then(report => {
       const fresh = report && report.ok && Array.isArray(report.findings)
         ? findFreshFinding(f, report.findings)
         : null;
@@ -913,7 +1103,7 @@
         return;
       }
       selectedFindingKey = findingKey(fresh);
-      render();
+      render({ preserveBodyScroll: preservePanelScroll });
       selectAndCopyFinding(fresh);
     }).catch(() => {
       fallbackFindingClick(f);
@@ -1091,6 +1281,10 @@
 
   function selectAndCopyFinding(f) {
     selectDocsModelRange(f.start, f.end).then(() => {
+      if (!settings.copyOnSelect) {
+        showToast('문서 위치 선택됨');
+        return;
+      }
       copyText(f.dst).then(
         () => showToast('문서 위치 선택 · 교정어 복사됨: ' + displayText(f.dst)),
         () => showToast('문서 위치 선택됨')
@@ -1163,6 +1357,762 @@
     return 0;
   }
 
+  async function handleAiProofreadAddon() {
+    const actionId = 'ai-proofread';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    startAiProofreadStatus('본문 읽는 중');
+    try {
+      const doc = await readCurrentDocumentTextForAddon();
+      updateAiProofreadStatus('AI 응답 대기 중');
+      const res = await sendAiBridge('proofread', {
+        document: {
+          id: doc.docId,
+          title: doc.title,
+          url: location.href,
+          text: doc.text,
+          textSource: doc.source
+        }
+      });
+      if (!res || !res.ok || !res.json) {
+        throw aiBridgeError(res, 'AI 교정 생성 실패');
+      }
+      updateAiProofreadStatus('JSON 저장/업로드 중');
+      setUploadedRulesJson(res.json, res.fileName || 'ai-proofread.json');
+      if (res.fileName) {
+        upsertGeneratedRulesFile({
+          fileName: res.fileName,
+          displayName: res.displayName || '',
+          outputPath: res.outputPath || '',
+          mtimeMs: Date.now(),
+          json: res.json
+        });
+        useRulesSource(generatedRulesSourceValue(res.fileName));
+      }
+      refreshGeneratedRulesListQuiet();
+      const n = countRulesInJson(res.json);
+      enqueueScan(cachedText === null, { quiet: true }).then(report => {
+        if (!report || report.ok !== true) {
+          console.error('[Toytype addons] post-AI scan failed', report || { error: 'empty report' });
+        }
+      }).catch(error => {
+        console.error('[Toytype addons] post-AI scan failed', error);
+      });
+      finalStatus = 'AI 교정 완료 · JSON 업로드됨' + (n ? ': ' + n + '건' : '');
+      if (res.compactedRules || res.droppedRules) {
+        finalStatus += ' · 축약 ' + (res.compactedRules || 0) + '건';
+        if (res.droppedRules) finalStatus += ' · 제외 ' + res.droppedRules + '건';
+      }
+      if (res.displayName || res.fileName) {
+        finalStatus += ' · ' + (res.displayName || res.fileName);
+      }
+    } catch (error) {
+      console.error('[Toytype addons] AI proofread failed', {
+        message: error && error.message ? error.message : String(error),
+        userMessage: error && error.userMessage ? error.userMessage : '',
+        response: error && error.response !== undefined ? error.response : null,
+        stack: error && error.stack ? error.stack : ''
+      });
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 교정 생성 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishAiProofreadStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 4200 });
+    }
+  }
+
+  function handleExtractTocAddon() {
+    const actionId = 'extract-toc';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    let finalToast = '';
+    let finalToastDuration = 1800;
+    render();
+    showToast('목차 추출 중...');
+    readCurrentDocumentTextForAddon().then(doc => extractTocFromDocument(doc).then(result => {
+      const title = doc.title || doc.docId || 'Google Docs';
+      const markdown = formatExtractedToc(title, result);
+      if (result.headings.length === 0) {
+        return copyText(markdown).then(
+          () => { finalToast = '목차 없음 안내가 클립보드에 복사되었습니다'; },
+          error => {
+            console.error('[Toytype addons] TOC clipboard copy failed', error);
+            finalToast = '목차 없음 · 클립보드 복사 실패 · 콘솔 확인';
+            finalToastDuration = 3600;
+          }
+        );
+      }
+      return copyText(markdown).then(
+        () => { finalToast = '목차가 클립보드에 복사되었습니다: ' + result.headings.length + '개'; },
+        error => {
+          console.error('[Toytype addons] TOC clipboard copy failed', error);
+          finalToast = '목차 추출됨 · 클립보드 복사 실패 · 콘솔 확인';
+          finalToastDuration = 3600;
+        }
+      );
+    })).catch(error => {
+      console.error('[Toytype addons] TOC extract failed', error);
+      finalToast = '목차 추출 실패 · 콘솔 확인';
+      finalToastDuration = 3600;
+    }).finally(() => {
+      setAddonBusy(actionId, false);
+      if (expanded) render();
+      if (finalToast) showToast(finalToast, { durationMs: finalToastDuration });
+    });
+  }
+
+  function startAiProofreadStatus(phase) {
+    addonStatus = {
+      type: 'ai-proofread',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateAiProofreadStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-proofread' || addonStatus.state !== 'running') {
+      startAiProofreadStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishAiProofreadStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'ai-proofread' ? addonStatus : null;
+    addonStatus = {
+      type: 'ai-proofread',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startAddonStatusTicker() {
+    stopAddonStatusTicker();
+    addonStatusTimer = setInterval(() => {
+      if (!addonStatus || addonStatus.state !== 'running') {
+        stopAddonStatusTicker();
+        return;
+      }
+      if (expanded) render({ preserveBodyScroll: true });
+    }, 1000);
+  }
+
+  function stopAddonStatusTicker() {
+    if (!addonStatusTimer) return;
+    clearInterval(addonStatusTimer);
+    addonStatusTimer = null;
+  }
+
+  function addonStatusLineText() {
+    if (!addonStatus || addonStatus.type !== 'ai-proofread') return '';
+    const now = addonStatus.state === 'running' ? Date.now() : (addonStatus.finishedAt || Date.now());
+    const elapsed = formatElapsed(now - (addonStatus.startedAt || now));
+    if (addonStatus.state === 'running') {
+      return ['AI 교정 중', elapsed + ' 경과', addonStatus.phase || '대기 중'].join(' · ');
+    }
+    if (addonStatus.state === 'error') {
+      return ['AI 교정 실패', elapsed + ' 경과', addonStatus.message || '오류 발생'].join(' · ');
+    }
+    return ['AI 교정 완료', elapsed + ' 경과', addonStatus.message || '완료'].join(' · ');
+  }
+
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const p = n => String(n).padStart(2, '0');
+    return h > 0 ? String(h) + ':' + p(m) + ':' + p(s) : p(m) + ':' + p(s);
+  }
+
+  function openSettingsPageFromDocs() {
+    try {
+      chrome.runtime.sendMessage({ type: 'typo:openOptions' }, res => {
+        if (chrome.runtime.lastError) {
+          const error = new Error(chrome.runtime.lastError.message || 'settings open message failed');
+          console.error('[Toytype settings] open failed', error);
+          showToast('설정 열기 실패 · 확장 프로그램 새로고침 필요', { durationMs: 4200 });
+          return;
+        }
+        if (!res || res.ok !== true) {
+          console.error('[Toytype settings] open failed', res || { error: 'empty response' });
+          showToast('설정 열기 실패 · 확장 프로그램 새로고침 필요', { durationMs: 4200 });
+        }
+      });
+    } catch (error) {
+      console.error('[Toytype settings] open failed', error);
+      showToast('설정 열기 실패 · 확장 프로그램 새로고침 필요', { durationMs: 4200 });
+    }
+  }
+
+  function readCurrentDocumentTextForAddon() {
+    const docId = getDocId();
+    if (!docId) return Promise.reject(new Error('document id unavailable'));
+    return requestDocsModel('getText', { docId, timeoutMs: 60000 }).then(res => {
+      if (!res || !res.ok || typeof res.text !== 'string') {
+        throw new Error(res && res.errorMessage ? res.errorMessage : 'model text unavailable');
+      }
+      cachedText = res.text;
+      cachedTextSource = 'model';
+      lastModelAt = Date.now();
+      updateCursorOffset(res.selection || null);
+      return {
+        docId,
+        title: documentTitleForAddon(),
+        text: res.text,
+        source: 'model'
+      };
+    }).catch(error => {
+      if (typeof cachedText === 'string' && cachedText.length > 0) {
+        return {
+          docId,
+          title: documentTitleForAddon(),
+          text: cachedText,
+          source: cachedTextSource || 'cache'
+        };
+      }
+      throw error;
+    });
+  }
+
+  function documentTitleForAddon() {
+    const raw = String(document.title || '').replace(/\s*-\s*Google Docs\s*$/i, '').trim();
+    return raw || getDocId() || 'Google Docs';
+  }
+
+  function sendAiBridge(action, payload) {
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'typo:aiBridge',
+          action,
+          payload: payload || {}
+        }, res => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: 'extension_message_failed', message: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(res);
+        });
+      } catch (e) {
+        resolve({ ok: false, error: 'extension_message_failed', message: e && e.message ? e.message : String(e) });
+      }
+    });
+  }
+
+  function refreshGeneratedRulesListQuiet() {
+    refreshGeneratedRulesList().catch(error => {
+      console.error('[Toytype addons] generated JSON list failed', error);
+    });
+  }
+
+  async function refreshGeneratedRulesList() {
+    const docId = getDocId();
+    if (!docId) {
+      generatedRulesFiles = [];
+      generatedRulesLoadedDocId = null;
+      return false;
+    }
+    const res = await sendAiBridge('listGenerated', {
+      document: {
+        id: docId,
+        title: documentTitleForAddon(),
+        url: location.href
+      }
+    });
+    if (!res || !res.ok || !Array.isArray(res.files)) {
+      if (res && res.error !== 'bridge_unavailable' && res.error !== 'extension_message_failed') {
+        console.error('[Toytype addons] generated JSON list failed', res);
+      }
+      return false;
+    }
+    const nextFiles = [];
+    for (const file of res.files) {
+      if (!file || typeof file.fileName !== 'string' || !file.json) continue;
+      try {
+        validateRulesJson(file.json);
+        nextFiles.push({
+          fileName: file.fileName,
+          displayName: typeof file.displayName === 'string' && file.displayName ? file.displayName : generatedRulesDisplayName(file.fileName),
+          outputPath: typeof file.outputPath === 'string' ? file.outputPath : '',
+          mtimeMs: Number.isFinite(Number(file.mtimeMs)) ? Number(file.mtimeMs) : 0,
+          json: file.json
+        });
+      } catch (error) {
+        console.error('[Toytype addons] generated JSON ignored', { fileName: file.fileName, error });
+      }
+    }
+    generatedRulesFiles = nextFiles;
+    generatedRulesLoadedDocId = docId;
+    if (isGeneratedRulesSource(activeRulesSource) && !findGeneratedRulesFile(activeRulesSource)) {
+      useRulesSource('builtin');
+      if (cachedText !== null) enqueueScan(false, { quiet: true });
+    }
+    if (expanded) render();
+    return true;
+  }
+
+  function upsertGeneratedRulesFile(file) {
+    if (!file || typeof file.fileName !== 'string' || !file.json) return;
+    try {
+      validateRulesJson(file.json);
+    } catch (error) {
+      console.error('[Toytype addons] generated JSON ignored', { fileName: file.fileName, error });
+      return;
+    }
+    const entry = {
+      fileName: file.fileName,
+      displayName: typeof file.displayName === 'string' && file.displayName ? file.displayName : generatedRulesDisplayName(file.fileName),
+      outputPath: typeof file.outputPath === 'string' ? file.outputPath : '',
+      mtimeMs: Number.isFinite(Number(file.mtimeMs)) ? Number(file.mtimeMs) : Date.now(),
+      json: file.json
+    };
+    generatedRulesFiles = [entry]
+      .concat(generatedRulesFiles.filter(existing => existing.fileName !== entry.fileName))
+      .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+    generatedRulesLoadedDocId = getDocId();
+    if (expanded) render();
+  }
+
+  function generatedRulesDisplayName(fileName) {
+    const stamp = String(fileName || '').match(/(?:-toytype)?-(\d{8}T\d{6}Z)\.json$/);
+    return stamp ? 'ai 검토-' + stamp[1] + '.json' : 'ai 검토.json';
+  }
+
+  function aiBridgeError(res, fallbackMessage) {
+    const code = res && (res.error || res.message);
+    let userMessage = fallbackMessage;
+    if (code === 'bridge_unavailable' || code === 'extension_message_failed') {
+      userMessage = '로컬 브리지가 꺼져 있습니다 · 터미널에서 브리지를 실행하세요';
+    } else if (code === 'bridge_timeout') {
+      userMessage = 'AI 응답 시간 초과';
+    } else if (res && res.error) {
+      userMessage = fallbackMessage + ': ' + String(res.error).slice(0, 120);
+    } else if (res && res.message) {
+      userMessage = fallbackMessage + ': ' + String(res.message).slice(0, 120);
+    } else {
+      userMessage = fallbackMessage;
+    }
+    const details = res && res.details && typeof res.details === 'object' ? res.details : null;
+    if (details && details.exitCode !== undefined) {
+      userMessage += ' · exitCode ' + String(details.exitCode);
+    }
+    const error = new Error(userMessage);
+    error.userMessage = userMessage;
+    error.response = res;
+    return error;
+  }
+
+  function countRulesInJson(json) {
+    if (!json || !Array.isArray(json.categories)) return 0;
+    return json.categories.reduce((sum, cat) => sum + (Array.isArray(cat.rules) ? cat.rules.length : 0), 0);
+  }
+
+  function extractTocFromDocument(doc) {
+    return extractTocFromMarkdownExport().catch(error => {
+      console.warn('[Toytype addons] TOC md export unavailable', error && error.message ? error.message : error);
+      return null;
+    }).then(exported => {
+      if (exported && exported.headings.length > 0) return exported;
+      const outline = extractTocFromDomOutline();
+      if (outline.headings.length > 0) return outline;
+      return extractTocFromText(doc && doc.text);
+    }).then(applyTocMaxLevel);
+  }
+
+  // 설정한 깊이보다 깊은 헤딩은 출처와 무관하게 마지막에 한 번만 거른다 — 복사 개수 토스트와 일치 보장
+  function applyTocMaxLevel(result) {
+    if (!result || !Array.isArray(result.headings)) return result;
+    const cap = normalizeTocMaxLevel(settings && settings.tocMaxLevel);
+    return Object.assign({}, result, {
+      headings: result.headings.filter(h => Number(h.level) <= cap)
+    });
+  }
+
+  // 헤딩 레벨의 1차 출처. 어노테이티드 모델 텍스트에는 단락 스타일이 없어
+  // 휴리스틱으로는 헤딩 1~5를 구분할 수 없고, md export의 #/##/### 개수가 정확한 레벨이다.
+  function extractTocFromMarkdownExport() {
+    const docId = getDocId();
+    if (!docId) return Promise.reject(new Error('document id unavailable'));
+    return fetchMarkdownExport(docId).then(parseMarkdownExportHeadings);
+  }
+
+  function fetchMarkdownExport(docId) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+    // 멀티 계정 세션 대응: /document/u/N/ 컨텍스트를 보존해야 두 번째 계정 문서도 권한이 맞는다
+    const um = location.pathname.match(/\/document\/u\/(\d+)\//);
+    const url = 'https://docs.google.com/document/' + (um ? 'u/' + um[1] + '/' : '') +
+      'd/' + docId + '/export?format=md';
+    return fetch(url, { signal: ctrl.signal })
+      .then(res => {
+        if (!res.ok) throw new Error('md export http ' + res.status);
+        // 로그인 리다이렉트 등이 200 + HTML로 떨어지면 본문으로 오인 스캔하게 된다 — 차단
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (ct.indexOf('text/html') !== -1) throw new Error('md export content-type: ' + ct);
+        return res.text();
+      })
+      .then(t => (t.charCodeAt(0) === 0xFEFF ? t.slice(1) : t).replace(/\r/g, ''))
+      .finally(() => clearTimeout(timer));
+  }
+
+  function parseMarkdownExportHeadings(markdown) {
+    const lines = String(markdown || '').split('\n');
+    const headings = [];
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (isFenceLine(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) continue;
+      const m = line.match(/^(#{1,6})\s+(\S.*)$/);
+      if (!m) continue;
+      const level = m[1].length;
+      if (level > 5) continue;
+      const text = cleanMarkdownHeadingText(m[2]);
+      if (!text || isBadTocText(text)) continue;
+      headings.push({ level, text, raw: line, line: i + 1 });
+    }
+    return { headings, lineCount: lines.length, source: 'md-export' };
+  }
+
+  function cleanMarkdownHeadingText(text) {
+    let s = String(text || '').trim();
+    s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1'); // 링크는 표시 텍스트만
+    // 강조 마커 제거 — \*처럼 이스케이프된 리터럴은 건드리지 않는다
+    s = s.replace(/(?<!\\)\*\*(.+?)\*\*/g, '$1');
+    s = s.replace(/(?<!\\)\*([^*]+)\*/g, '$1');
+    s = s.replace(/(?<!\\)~~(.+?)~~/g, '$1');
+    s = s.replace(/(?<!\\)`([^`]+)`/g, '$1');
+    s = s.replace(/\\([!-/:-@[-`{-~])/g, '$1'); // export가 이스케이프한 특수문자 복원
+    return normalizeTocLine(s);
+  }
+
+  function extractTocFromDomOutline() {
+    const selectors = [
+      '[aria-label="Document outline"] [role="treeitem"]',
+      '[aria-label="문서 개요"] [role="treeitem"]',
+      '[aria-label*="outline" i] [role="treeitem"]',
+      '[aria-label*="개요"] [role="treeitem"]',
+      '.navigation-widget .navigation-item',
+      '.navigation-item'
+    ];
+    for (const selector of selectors) {
+      let nodes = [];
+      try {
+        nodes = Array.prototype.slice.call(document.querySelectorAll(selector));
+      } catch (e) {
+        nodes = [];
+      }
+      const candidates = [];
+      const seen = new Set();
+      for (const node of nodes) {
+        if (!isDocsOutlineNode(node)) continue;
+        const text = normalizeTocLine(node.innerText || node.textContent || '');
+        if (!text || isBadTocText(text) || isMarkdownHeadingLine(text)) continue;
+        const key = text;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const level = readDocsOutlineLevel(node);
+        if (level > 5) continue;
+        candidates.push({
+          level,
+          text,
+          raw: text,
+          line: null,
+          indent: docsOutlineIndent(node)
+        });
+      }
+      if (candidates.length > 0 && candidates.length < 200) {
+        const levels = assignDocsOutlineLevels(candidates);
+        const headings = candidates.map((item, index) => ({
+          level: levels[index],
+          text: item.text,
+          raw: item.raw,
+          line: item.line
+        }));
+        return { headings, lineCount: 0, source: 'docs-outline' };
+      }
+    }
+    return { headings: [], lineCount: 0, source: 'docs-outline' };
+  }
+
+  function isDocsOutlineNode(node) {
+    if (!node || typeof node.closest !== 'function') return false;
+    return !!node.closest(
+      '[aria-label="Document outline"], [aria-label="문서 개요"], [aria-label*="outline" i], [aria-label*="개요"], .navigation-widget, [id*="outline" i], [class*="outline" i]'
+    );
+  }
+
+  function readDocsOutlineLevel(node) {
+    const ariaLevel = readPositiveIntAttr(node, 'aria-level');
+    if (ariaLevel) return ariaLevel;
+    const headingLevel = readPositiveIntAttr(node, 'data-heading-level');
+    if (headingLevel) return headingLevel;
+    const classLevel = readDocsOutlineLevelFromClassName(node);
+    if (classLevel) return classLevel;
+    const childClassLevel = readDocsOutlineChildClassLevel(node);
+    if (childClassLevel) return childClassLevel;
+    const dataLevel = readNonNegativeIntAttr(node, 'data-level');
+    if (dataLevel !== null) return dataLevel === 0 ? 1 : dataLevel;
+    return 0;
+  }
+
+  // 레벨 클래스(navigation-item-level-N)는 .navigation-item이 아니라
+  // 자식 .navigation-item-content에 붙는다. 0은 문서 제목 행, 1=헤딩1, 2=헤딩2 …
+  function readDocsOutlineChildClassLevel(node) {
+    if (!node || typeof node.querySelector !== 'function') return 0;
+    let child = null;
+    try {
+      child = node.querySelector('[class*="navigation-item-level-"]');
+    } catch (e) {
+      child = null;
+    }
+    if (!child) return 0;
+    const m = String(child.className || '').match(/navigation-item-level-(\d+)/);
+    if (!m) return 0;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n === 0 ? 1 : n;
+  }
+
+  function readDocsOutlineLevelFromClassName(node) {
+    const text = String((node && node.className || '') + ' ' + (node && node.id || ''));
+    const directPatterns = [
+      /(?:^|\s)[^\s]*(?:heading|header)[-_ ]?(?:level[-_ ]?)?([1-6])(?:\b|$)/i,
+      /(?:^|\s)[^\s]*\bh[-_ ]?([1-6])(?:\b|$)/i,
+      /(?:^|\s)[^\s]*level[-_ ]?([1-6])(?:\b|$)/i
+    ];
+    for (const pattern of directPatterns) {
+      const m = text.match(pattern);
+      if (m) return Number(m[1]);
+    }
+    if (/(?:^|\s)[^\s]*level[-_ ]?0(?:\b|$)/i.test(text)) return 1;
+    return 0;
+  }
+
+  function readPositiveIntAttr(node, name) {
+    if (!node || typeof node.getAttribute !== 'function') return 0;
+    const n = Number(node.getAttribute(name));
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  function readNonNegativeIntAttr(node, name) {
+    if (!node || typeof node.getAttribute !== 'function') return null;
+    const value = node.getAttribute(name);
+    if (value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  }
+
+  function docsOutlineIndent(node) {
+    try {
+      // 들여쓰기도 외부 행이 아니라 내부 콘텐츠 노드에 적용된다
+      let target = node;
+      try {
+        target = node.querySelector('[class*="navigation-item-level-"], .navigation-item-content') || node;
+      } catch (e) {
+        target = node;
+      }
+      const rect = target.getBoundingClientRect();
+      const style = window.getComputedStyle(target);
+      return Math.round((rect && Number.isFinite(rect.left) ? rect.left : 0) +
+        parseFloat(style.paddingLeft || '0') +
+        parseFloat(style.marginLeft || '0'));
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function assignDocsOutlineLevels(items) {
+    const direct = items.map(item => Number(item.level) || 0);
+    const directSet = new Set(direct.filter(level => level > 0));
+    // 모든 항목이 명시 레벨을 가지면 단일 레벨(예: 전부 헤딩2)이라도 그대로 신뢰한다
+    if (directSet.size > 1 || (directSet.size === 1 && direct.every(level => level > 0))) {
+      return direct.map(level => Math.max(1, Math.min(5, level || 1)));
+    }
+
+    const indents = items.map(item => Number(item.indent) || 0);
+    const sorted = Array.from(new Set(indents)).sort((a, b) => a - b);
+    const buckets = [];
+    for (const value of sorted) {
+      const last = buckets[buckets.length - 1];
+      if (last === undefined || Math.abs(value - last) > 4) buckets.push(value);
+    }
+    if (buckets.length > 1) {
+      return indents.map(value => {
+        let bucketIndex = 0;
+        for (let i = 0; i < buckets.length; i++) {
+          if (Math.abs(value - buckets[i]) <= 4) {
+            bucketIndex = i;
+            break;
+          }
+        }
+        return Math.max(1, Math.min(5, bucketIndex + 1));
+      });
+    }
+
+    return items.map(() => 1);
+  }
+
+  function extractTocFromText(text) {
+    const lines = String(text || '').replace(/\r/g, '').split(/\n|\v/);
+    const headings = [];
+    const seen = new Set();
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const normalized = normalizeTocLine(raw);
+      if (isFenceLine(normalized)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence || !normalized || isMarkdownHeadingLine(normalized) || isBadTocText(normalized)) continue;
+      let level = detectExplicitTocLevel(normalized);
+      if (!level) level = detectStandaloneTocLevel(lines, i, headings);
+      if (!normalized) continue;
+      if (!level) continue;
+      const textOnly = stripTocPrefix(normalized);
+      if (!textOnly || isBadTocText(textOnly)) continue;
+      const key = level + '\u0000' + textOnly;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      headings.push({
+        level,
+        text: textOnly,
+        raw: normalized,
+        line: i + 1
+      });
+    }
+    return { headings, lineCount: lines.length, source: 'text' };
+  }
+
+  function normalizeTocLine(line) {
+    const s = String(line || '')
+      .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!s || s.length > 90) return '';
+    if (/^[.\-_=*•·\s]+$/.test(s)) return '';
+    if (/^https?:\/\//i.test(s)) return '';
+    return s;
+  }
+
+  function isFenceLine(line) {
+    return /^(```|~~~)/.test(line || '');
+  }
+
+  function isMarkdownHeadingLine(line) {
+    return /^#{1,6}\s+\S/.test(line || '');
+  }
+
+  function isBadTocText(line) {
+    const s = String(line || '').trim();
+    if (!s) return true;
+    if (/^<\/?[^>]+>$/.test(s)) return true;
+    if (/^[{}[\]();,./\\|`~@$%^&*_+=-]+$/.test(s)) return true;
+    if (/^(양식|예시|예제|샘플|템플릿|출력|입력)$/.test(s)) return true;
+    if (/^(회의록 요약|1분 꿀팁)$/.test(s)) return true;
+    return false;
+  }
+
+  function detectExplicitTocLevel(line) {
+    if (/^(PART|Part|파트|부)\s*[0-9IVXLC가-힣]*[ .:：-]?\s*\S+/.test(line)) return 1;
+    if (/^\d{1,2}\s*(장|부)(?:\s|[.:：-]|$)/.test(line)) return 1;
+    if (/^제\s*\d{1,2}\s*장(?:\s|[.:：-]|$)/.test(line)) return 1;
+    if (/^(CHAPTER|Chapter|챕터|CH)\s*\d{1,2}(?:\s|[.:：-]|$)/.test(line)) return 1;
+    if (/^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d{1,2}\s+\S+/.test(line)) return 5;
+    if (/^\d{1,2}\.\d{1,2}\.\d{1,2}\s+\S+/.test(line)) return 4;
+    if (/^\d{1,2}\.\d{1,2}\s+\S+/.test(line)) return 3;
+    if (/^\d{1,2}\.\s+\S+/.test(line)) return 2;
+    if (/^\d{2}\s+[^\d\s].+/.test(line) && !/[.!?。]$/.test(line)) return 2;
+    return 0;
+  }
+
+  function detectStandaloneTocLevel(lines, index, headings) {
+    const line = normalizeTocLine(lines[index]);
+    if (!isTitleLikeTocLine(line)) return 0;
+    const prev = previousNonEmptyLine(lines, index);
+    const next = nextNonEmptyLine(lines, index);
+    const prevBlank = index === 0 || !normalizeTocLine(lines[index - 1]);
+    const nextBlank = index >= lines.length - 1 || !normalizeTocLine(lines[index + 1]);
+    const prevExplicit = prev && detectExplicitTocLevel(prev.text);
+    const nextExplicit = next && detectExplicitTocLevel(next.text);
+    if (prevExplicit || nextExplicit) return Math.min(5, (prevExplicit || nextExplicit) + 1);
+    if (headings.length > 0 && prevBlank && nextBlank) return Math.min(5, Math.max(2, headings[headings.length - 1].level + 1));
+    if (prevBlank && nextBlank && line.length <= 32) return 2;
+    return 0;
+  }
+
+  function isTitleLikeTocLine(line) {
+    const s = String(line || '').trim();
+    if (!s || s.length < 2 || s.length > 54) return false;
+    if (isBadTocText(s) || isMarkdownHeadingLine(s)) return false;
+    if (/^[\-*•·]\s+/.test(s)) return false;
+    if (/[.!?。]$/.test(s)) return false;
+    if (/(습니다|합니다|됩니다|입니다|이었다|했다|한다|된다|이다|였다)[”"')\]]?$/.test(s)) return false;
+    if (/[{}[\];]/.test(s)) return false;
+    if (/^\S+\s*[:：]\s+\S+/.test(s)) return false;
+    if (!/[가-힣A-Za-z0-9]/.test(s)) return false;
+    return true;
+  }
+
+  function previousNonEmptyLine(lines, index) {
+    for (let i = index - 1; i >= Math.max(0, index - 4); i--) {
+      const text = normalizeTocLine(lines[i]);
+      if (text) return { index: i, text };
+    }
+    return null;
+  }
+
+  function nextNonEmptyLine(lines, index) {
+    for (let i = index + 1; i <= Math.min(lines.length - 1, index + 4); i++) {
+      const text = normalizeTocLine(lines[i]);
+      if (text) return { index: i, text };
+    }
+    return null;
+  }
+
+  function stripTocPrefix(line) {
+    return String(line || '').trim();
+  }
+
+  function formatExtractedToc(title, result) {
+    const lines = [];
+    if (!result.headings.length) {
+      lines.push('목차를 찾지 못했습니다.');
+      return lines.join('\n');
+    }
+    for (const h of result.headings) {
+      const rawLevel = Math.max(1, Number(h.level) || 1);
+      if (rawLevel > 5) continue;
+      const level = Math.min(5, rawLevel);
+      lines.push(tocIndentPrefix(level) + h.text);
+    }
+    return lines.join('\n');
+  }
+
+  function tocIndentPrefix(level) {
+    return level <= 1 ? '' : '_'.repeat(level - 1);
+  }
+
   function handleRulesJsonUpload(file) {
     file.text().then(text => {
       let parsed;
@@ -1174,13 +2124,19 @@
       setUploadedRulesJson(parsed, file.name || 'uploaded.json');
       showToast('JSON 선택됨: ' + (file.name || 'uploaded.json'));
       enqueueScan(cachedText === null);
-    }).catch(() => {
-      showToast('JSON 업로드 실패');
+    }).catch(error => {
+      console.error('[Toytype rules] JSON upload failed', error);
+      showToast('JSON 업로드 실패 · 콘솔 확인', { durationMs: 3600 });
     });
   }
 
   function fallbackFindingClick(f) {
     const term = searchTermForFinding(f);
+    if (!settings.copyOnSelect) {
+      openDocsFind();
+      showToast('문서 위치 선택 실패 · 검색어: ' + displayText(term));
+      return;
+    }
     copyText(term).then(
       () => {
         openDocsFind();
@@ -2100,14 +3056,17 @@
     });
   }
 
-  function showToast(text) {
+  function showToast(text, options) {
     if (!shadowRoot) return;
     const toast = shadowRoot.getElementById('trd-toast');
     if (!toast) return;
+    const opts = options && typeof options === 'object' ? options : {};
     toast.textContent = text;
     toast.classList.add('trd-show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove('trd-show'), 1500);
+    if (opts.persist === true) return;
+    const durationMs = Number.isFinite(Number(opts.durationMs)) ? Math.max(500, Number(opts.durationMs)) : 1500;
+    toastTimer = setTimeout(() => toast.classList.remove('trd-show'), durationMs);
   }
 
   // ---------- 상태 전환 ----------
@@ -2141,6 +3100,7 @@
     }
     await injectPanel();
     injectPageBridgeScript();
+    refreshGeneratedRulesListQuiet();
     return enqueueScan(true);
   }
 
@@ -2208,6 +3168,7 @@
     }
     await injectPanel();
     injectPageBridgeScript();
+    refreshGeneratedRulesListQuiet();
     // document_idle + 3000ms 후 1회 자동 스캔. 이후 자동 폴링 없음.
     const delay = Math.max(0, 3000 - (Date.now() - startedAt));
     setTimeout(() => { enqueueScan(true); }, delay);

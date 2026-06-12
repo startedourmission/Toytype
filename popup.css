@@ -197,13 +197,27 @@ mark.src-mark {
 }
 .btn.primary:hover { background: #c5221f; }
 .btn.ghost { color: #5f6368; }
+.icon-btn {
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
 
 .footer {
   position: sticky;
   bottom: 0;
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 8px 16px;
   border-top: 1px solid #e8eaed;
   background: #fff;

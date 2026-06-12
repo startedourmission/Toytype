@@ -1,5 +1,5 @@
 // Toytype — 팝업
-// settings 쓰기는 팝업만 한다(스펙 §3). content에는 typo:get / typo:rescan만 보낸다.
+// 카테고리/사이트 설정을 저장한다. AI 연결 설정은 options 페이지가 저장한다.
 'use strict';
 
 const DEFAULT_SETTINGS = {
@@ -42,6 +42,32 @@ function el(tag, className, text) {
   return node;
 }
 
+function strokedSvg(paths, className) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', className);
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of paths) {
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+function settingsIcon() {
+  return strokedSvg([
+    'M9.67 4.14a2.34 2.34 0 0 1 4.66 0 2.34 2.34 0 0 0 3.32 1.91 2.34 2.34 0 0 1 2.33 4.03 2.34 2.34 0 0 0 0 3.84 2.34 2.34 0 0 1-2.33 4.03 2.34 2.34 0 0 0-3.32 1.91 2.34 2.34 0 0 1-4.66 0 2.34 2.34 0 0 0-3.32-1.91 2.34 2.34 0 0 1-2.33-4.03 2.34 2.34 0 0 0 0-3.84 2.34 2.34 0 0 1 2.33-4.03 2.34 2.34 0 0 0 3.32-1.91z',
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'
+  ], 'icon');
+}
+
 // 표시 규약(§1.4): 선두·후미 공백(U+0020)만 ␣로 치환, 내부 공백 유지. 빈 dst는 ∅(삭제).
 function displayToken(s) {
   if (s === '') return '∅(삭제)';
@@ -77,7 +103,7 @@ async function readSettings() {
   try {
     stored = (await chrome.storage.local.get('settings')).settings || {};
   } catch (e) { /* 기본값 사용 */ }
-  return {
+  const out = {
     schemaVersion: 1,
     docsCategories: mergeCats(DEFAULT_SETTINGS.docsCategories, stored.docsCategories),
     genericCategories: mergeCats(DEFAULT_SETTINGS.genericCategories, stored.genericCategories),
@@ -85,6 +111,10 @@ async function readSettings() {
       ? stored.disabledOrigins.filter((o) => typeof o === 'string')
       : []
   };
+  if (stored.ai && typeof stored.ai === 'object') out.ai = stored.ai;
+  if (stored.tocMaxLevel !== undefined) out.tocMaxLevel = stored.tocMaxLevel; // 옵션 페이지 소관 — 그대로 보존
+  if (stored.copyOnSelect !== undefined) out.copyOnSelect = stored.copyOnSelect; // 옵션 페이지 소관 — 그대로 보존
+  return out;
 }
 
 async function writeSettings(settings) {
@@ -192,6 +222,14 @@ async function setSiteDisabled(origin, disabled) {
   await requestReport({ type: 'typo:rescan' }, 99);
 }
 
+function openSettingsPage() {
+  try {
+    chrome.runtime.openOptionsPage();
+  } catch (e) {
+    chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
+  }
+}
+
 // ---------- 정상 화면 (상태 D) ----------
 
 async function renderReport(report) {
@@ -281,6 +319,12 @@ async function renderReport(report) {
   const rescanBtn = el('button', 'btn primary', '다시 검사');
   rescanBtn.addEventListener('click', () => { requestReport({ type: 'typo:rescan' }, 99); });
   footer.append(rescanBtn);
+  const settingsBtn = el('button', 'btn icon-btn ghost');
+  settingsBtn.appendChild(settingsIcon());
+  settingsBtn.setAttribute('aria-label', '설정');
+  settingsBtn.title = '설정';
+  settingsBtn.addEventListener('click', openSettingsPage);
+  footer.append(settingsBtn);
   const disableBtn = el('button', 'btn ghost', report.context === 'docs' ? '구글 독스에서 끄기' : '이 사이트에서 끄기');
   disableBtn.addEventListener('click', () => { setSiteDisabled(report.origin, true); });
   footer.append(disableBtn);

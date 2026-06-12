@@ -42,8 +42,28 @@
         if (!Array.isArray(r) || typeof r[0] !== 'string' || typeof r[1] !== 'string') {
           throw new Error('TypoEngine.init: invalid rule in category "' + cat.id + '" at index ' + j);
         }
+        if (r.length > 2 && !validRuleOptions(r[2])) {
+          throw new Error('TypoEngine.init: invalid rule options in category "' + cat.id + '" at index ' + j);
+        }
       }
     }
+  }
+
+  function validRuleOptions(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return validStringList(value.rejectBefore) && validStringList(value.rejectAfter);
+  }
+
+  function validStringList(value) {
+    return value === undefined ||
+      typeof value === 'string' ||
+      (Array.isArray(value) && value.every(function (item) { return typeof item === 'string'; }));
+  }
+
+  function stringList(value) {
+    if (typeof value === 'string') return value ? [value] : [];
+    if (Array.isArray(value)) return value.filter(function (item) { return typeof item === 'string' && item !== ''; });
+    return [];
   }
 
   function byLenDescOrdAsc(a, b) {
@@ -91,6 +111,8 @@
           ord: ord++,
           headAlnum: isAsciiAlnum(src.charCodeAt(0)),
           tailAlnum: isAsciiAlnum(src.charCodeAt(src.length - 1)),
+          rejectBefore: stringList(rule[2] && rule[2].rejectBefore),
+          rejectAfter: stringList(rule[2] && rule[2].rejectAfter),
           // 가드 D용: 후미 공백만 추가하는 규칙 ("➊"→"➊ ")
           addsTailSpace: dst === src + ' '
         };
@@ -124,6 +146,8 @@
     // 가드 A: CamelCase 식별자 내부 오검출 방지
     if (entry.headAlnum && start > 0 && isAsciiAlnum(text.charCodeAt(start - 1))) return true;
     if (entry.tailAlnum && end < text.length && isAsciiAlnum(text.charCodeAt(end))) return true;
+
+    if (rejectedByRuleOptions(text, start, end, entry)) return true;
 
     // 가드 D: 후미 공백 추가 규칙("➊"→"➊ ", "인지를"→"인지를 ")은
     // 바로 뒤가 단어 문자(한글·영숫자)에 붙어 있을 때만 오류다.
@@ -164,6 +188,21 @@
     if (urlish) return true;
     if (hasNonAscii) return false; // URL이 아닌 비ASCII 포함 토큰(한글 단어 등)은 탈락 대상 아님
     return hasSpecial || tokenLen >= 20;
+  }
+
+  function rejectedByRuleOptions(text, start, end, entry) {
+    if (entry.rejectBefore && entry.rejectBefore.length) {
+      for (let i = 0; i < entry.rejectBefore.length; i++) {
+        const needle = entry.rejectBefore[i];
+        if (start >= needle.length && text.slice(start - needle.length, start) === needle) return true;
+      }
+    }
+    if (entry.rejectAfter && entry.rejectAfter.length) {
+      for (let i = 0; i < entry.rejectAfter.length; i++) {
+        if (text.startsWith(entry.rejectAfter[i], end)) return true;
+      }
+    }
+    return false;
   }
 
   function scan(text, opts) {

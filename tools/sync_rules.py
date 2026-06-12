@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """규칙 시트 → rules.json 동기화.
 
-8개 탭, 오기→교정 2컬럼 쌍으로 구성된 규칙 시트를 gws CLI로 읽어
+8개 탭, 오기→교정 2컬럼 쌍과 선택적 옵션 JSON 1컬럼으로 구성된 규칙 시트를 gws CLI로 읽어
 확장 프로그램이 쓰는 rules.json(확장 루트)으로 변환한다.
 
 실행: python3 tools/sync_rules.py   (확장 루트에서)
@@ -31,7 +31,7 @@ OUT = Path(__file__).resolve().parent.parent / "rules.json"
 
 
 def fetch_tab(title: str) -> list[list[str]]:
-    params = json.dumps({"spreadsheetId": SHEET_ID, "range": f"{title}!A:B"})
+    params = json.dumps({"spreadsheetId": SHEET_ID, "range": f"{title}!A:C"})
     proc = subprocess.run(
         ["gws", "sheets", "spreadsheets", "values", "get", "--params", params],
         capture_output=True, text=True,
@@ -42,7 +42,61 @@ def fetch_tab(title: str) -> list[list[str]]:
     return json.loads(proc.stdout).get("values", [])
 
 
+def load_existing_options() -> dict[tuple[str, str, str], dict]:
+    if not OUT.exists():
+        return {}
+    try:
+        data = json.loads(OUT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    options: dict[tuple[str, str, str], dict] = {}
+    for cat in data.get("categories", []):
+        cat_id = cat.get("id")
+        if not isinstance(cat_id, str):
+            continue
+        for rule in cat.get("rules", []):
+            if (
+                isinstance(rule, list)
+                and len(rule) == 3
+                and isinstance(rule[0], str)
+                and isinstance(rule[1], str)
+                and valid_rule_options(rule[2])
+            ):
+                options[(cat_id, rule[0], rule[1])] = rule[2]
+    return options
+
+
+def parse_options_cell(raw: str, cat_id: str, src: str) -> dict | None:
+    value = raw.strip()
+    if not value:
+        return None
+    try:
+        options = json.loads(value)
+    except json.JSONDecodeError as exc:
+        print(f"  ! {cat_id}/{src}: 옵션 JSON 파싱 실패 — {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not valid_rule_options(options):
+        print(f"  ! {cat_id}/{src}: 옵션은 rejectBefore/rejectAfter 문자열 또는 문자열 배열만 허용합니다", file=sys.stderr)
+        sys.exit(1)
+    return options
+
+
+def valid_rule_options(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return valid_string_list(value.get("rejectBefore")) and valid_string_list(value.get("rejectAfter"))
+
+
+def valid_string_list(value: object) -> bool:
+    return (
+        value is None
+        or isinstance(value, str)
+        or (isinstance(value, list) and all(isinstance(item, str) for item in value))
+    )
+
+
 def main() -> None:
+    existing_options = load_existing_options()
     categories = []
     total = 0
     for title, cat_id, label, default_on in TABS:
@@ -58,7 +112,10 @@ def main() -> None:
                 continue
             # 교정 결과가 비어 있는 행(삭제 규칙)도 그대로 둔다. 표시만 하므로 안전.
             seen.add(src)
-            rules.append([src, dst])
+            options = parse_options_cell(str(row[2]), cat_id, src) if len(row) >= 3 else None
+            if options is None:
+                options = existing_options.get((cat_id, src, dst))
+            rules.append([src, dst, options] if options else [src, dst])
         categories.append({
             "id": cat_id,
             "label": label,

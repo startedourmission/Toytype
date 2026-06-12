@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Toytype 설정</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="page">
+    <section class="section">
+      <h2>AI 엔진</h2>
+      <div class="segmented" role="radiogroup" aria-label="AI 엔진 선택">
+        <label>
+          <input type="radio" name="provider" value="codex">
+          <span>Codex</span>
+        </label>
+        <label>
+          <input type="radio" name="provider" value="claude">
+          <span>Claude Code</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>로컬 브리지</h2>
+      <label class="field">
+        <span>브리지 URL</span>
+        <input id="bridgeUrl" type="url" spellcheck="false">
+      </label>
+      <p class="hint">터미널에서 프로젝트 루트로 이동한 뒤 아래 명령어를 입력하세요.</p>
+      <pre id="bridgeCommand" class="command"></pre>
+      <div class="actions">
+        <button id="health" class="btn" type="button">브리지 확인</button>
+      </div>
+    </section>
+
+    <section class="section grid">
+      <div>
+        <h2>Codex</h2>
+        <label class="field">
+          <span>명령</span>
+          <input id="codexCommand" type="text" spellcheck="false">
+        </label>
+        <button id="testCodex" class="btn" type="button">Codex 연결 테스트</button>
+      </div>
+      <div>
+        <h2>Claude Code</h2>
+        <label class="field">
+          <span>명령</span>
+          <input id="claudeCommand" type="text" spellcheck="false">
+        </label>
+        <button id="testClaude" class="btn" type="button">Claude 연결 테스트</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>작업 경로</h2>
+      <label class="field">
+        <span>작업 폴더</span>
+        <input id="workspaceDir" type="text" spellcheck="false">
+      </label>
+      <div class="field-with-action">
+        <label class="field">
+          <span>생성 JSON 저장 폴더</span>
+          <input id="outputDir" type="text" spellcheck="false">
+        </label>
+        <button id="openOutputDir" class="btn" type="button">폴더 열기</button>
+      </div>
+      <div class="inline-fields">
+        <label class="field">
+          <span>요청 제한 시간(ms)</span>
+          <input id="requestTimeoutMs" type="number" min="5000" step="1000">
+        </label>
+        <label class="field">
+          <span>프롬프트 본문 최대 글자</span>
+          <input id="maxDocumentChars" type="number" min="1000" step="1000">
+        </label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>독스 패널</h2>
+      <label class="check">
+        <input id="copyOnSelect" type="checkbox" checked>
+        <span>오탈자 선택 시 교정어를 클립보드에 자동 복사</span>
+      </label>
+      <p class="hint">끄면 항목을 클릭해도 클립보드를 건드리지 않고 문서 위치만 선택합니다.</p>
+    </section>
+
+    <section class="section">
+      <h2>목차 추출</h2>
+      <label class="field">
+        <span>추출할 헤딩 깊이</span>
+        <select id="tocMaxLevel">
+          <option value="1">헤딩 1까지</option>
+          <option value="2">헤딩 2까지</option>
+          <option value="3">헤딩 3까지</option>
+          <option value="4" selected>헤딩 4까지</option>
+          <option value="5">헤딩 5까지</option>
+        </select>
+      </label>
+      <p class="hint">선택한 레벨보다 깊은 헤딩은 목차에서 제외됩니다. 헤딩 2부터는 언더바(_) 개수로 깊이를 표시합니다.</p>
+    </section>
+
+    <section class="section">
+      <h2>상태</h2>
+      <pre id="status" class="status">설정을 불러오는 중...</pre>
+    </section>
+
+    <div class="bottom-actions">
+      <button id="save" class="btn primary" type="button">저장</button>
+    </div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

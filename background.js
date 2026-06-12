@@ -1,5 +1,5 @@
 // Toytype — background service worker
-// 역할: 탭 배지 갱신 + rules.json 로드·배포. settings는 읽지도 쓰지도 않는다.
+// 역할: 탭 배지 갱신 + rules.json 로드·배포 + 로컬 AI 브리지 프록시.
 'use strict';
 
 chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
@@ -7,12 +7,105 @@ chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
 // SW 재기동 시 사라지는 모듈 레벨 캐시 — 재fetch가 정상 동작이다.
 let rulesCache = null;
 
+const DEFAULT_AI_SETTINGS = {
+  provider: 'codex',
+  bridgeUrl: 'http://127.0.0.1:17644',
+  codexCommand: 'codex',
+  claudeCommand: 'claude',
+  workspaceDir: '~/Dev/Toytype',
+  outputDir: '~/.toytype/generated',
+  requestTimeoutMs: 600000,
+  maxDocumentChars: 180000
+};
+
 async function loadRules() {
   if (rulesCache) return rulesCache;
   const res = await fetch(chrome.runtime.getURL('rules.json'));
   if (!res.ok) throw new Error('rules.json fetch failed: ' + res.status);
   rulesCache = await res.json();
   return rulesCache;
+}
+
+async function readSettings() {
+  let stored = {};
+  try {
+    stored = (await chrome.storage.local.get('settings')).settings || {};
+  } catch (e) {
+    stored = {};
+  }
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
+function normalizeBridgeUrl(value) {
+  const raw = typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_AI_SETTINGS.bridgeUrl;
+  return raw.replace(/\/+$/, '');
+}
+
+function mergeAiSettings(settings) {
+  const ai = settings && settings.ai && typeof settings.ai === 'object' ? settings.ai : {};
+  const provider = ai.provider === 'claude' ? 'claude' : 'codex';
+  return {
+    provider,
+    bridgeUrl: normalizeBridgeUrl(ai.bridgeUrl),
+    codexCommand: typeof ai.codexCommand === 'string' && ai.codexCommand.trim() ? ai.codexCommand.trim() : DEFAULT_AI_SETTINGS.codexCommand,
+    claudeCommand: typeof ai.claudeCommand === 'string' && ai.claudeCommand.trim() ? ai.claudeCommand.trim() : DEFAULT_AI_SETTINGS.claudeCommand,
+    workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : DEFAULT_AI_SETTINGS.workspaceDir,
+    outputDir: typeof ai.outputDir === 'string' && ai.outputDir.trim() ? ai.outputDir.trim() : DEFAULT_AI_SETTINGS.outputDir,
+    requestTimeoutMs: clampNumber(ai.requestTimeoutMs, DEFAULT_AI_SETTINGS.requestTimeoutMs, 5000, 3600000),
+    maxDocumentChars: clampNumber(ai.maxDocumentChars, DEFAULT_AI_SETTINGS.maxDocumentChars, 1000, 1000000)
+  };
+}
+
+function clampNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+async function callAiBridge(path, payload) {
+  const settings = await readSettings();
+  const ai = mergeAiSettings(settings);
+  const bridgePayload = Object.assign({}, payload || {}, {
+    provider: payload && payload.provider || ai.provider,
+    settings: {
+      provider: ai.provider,
+      codexCommand: ai.codexCommand,
+      claudeCommand: ai.claudeCommand,
+      workspaceDir: ai.workspaceDir,
+      outputDir: ai.outputDir,
+      requestTimeoutMs: ai.requestTimeoutMs,
+      maxDocumentChars: ai.maxDocumentChars
+    }
+  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ai.requestTimeoutMs + 5000);
+  try {
+    const res = await fetch(ai.bridgeUrl + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(bridgePayload),
+      signal: ctrl.signal
+    });
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (e) {
+      return { ok: false, error: 'bridge_invalid_json', status: res.status, body: text.slice(0, 2000) };
+    }
+    if (!res.ok) {
+      return Object.assign({ ok: false, status: res.status }, json);
+    }
+    return json;
+  } catch (e) {
+    return {
+      ok: false,
+      error: e && e.name === 'AbortError' ? 'bridge_timeout' : 'bridge_unavailable',
+      message: e && e.message ? e.message : String(e)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -36,6 +129,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // 비동기 응답
   }
 
+  if (msg.type === 'typo:openOptions') {
+    try {
+      chrome.runtime.openOptionsPage(() => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: 'options_open_failed', message: chrome.runtime.lastError.message });
+          return;
+        }
+        sendResponse({ ok: true });
+      });
+    } catch (error) {
+      sendResponse({ ok: false, error: 'options_open_failed', message: error && error.message ? error.message : String(error) });
+    }
+    return true;
+  }
+
   if (msg.type === 'typo:getCategories') {
     loadRules()
       .then((rules) => sendResponse({
@@ -51,5 +159,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: 'rules_load_failed' });
       });
     return true; // 비동기 응답
+  }
+
+  if (msg.type === 'typo:aiBridge') {
+    const action = msg.action;
+    const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+    const path = action === 'health' ? '/health'
+      : action === 'test' ? '/ai/test'
+        : action === 'proofread' ? '/ai/proofread'
+          : action === 'listGenerated' ? '/fs/list-generated'
+            : action === 'openOutputDir' ? '/fs/open-output-dir'
+              : '';
+    if (!path) {
+      sendResponse({ ok: false, error: 'unknown_ai_bridge_action' });
+      return;
+    }
+    callAiBridge(path, payload).then(sendResponse, error => {
+      sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
+    });
+    return true;
   }
 });
