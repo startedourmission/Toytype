@@ -171,7 +171,10 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 }
 .trd-item.trd-selected:hover { background: #e8f0fe; }
 .trd-item.trd-applying { opacity: .78; }
-.trd-apply-btn {
+.trd-item.trd-copy-only { padding-right: 18px; }
+.trd-item.trd-suggestion-item .trd-fix { font-weight: 500; }
+.trd-apply-btn,
+.trd-suggestion-delete-btn {
   position: absolute;
   right: 10px;
   top: 10px;
@@ -186,8 +189,13 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   justify-content: center;
   cursor: pointer;
 }
-.trd-apply-btn:hover:not(:disabled) { background: #f1f3f4; }
-.trd-apply-btn:disabled {
+.trd-suggestion-delete-btn {
+  color: #5f6368;
+}
+.trd-apply-btn:hover:not(:disabled),
+.trd-suggestion-delete-btn:hover:not(:disabled) { background: #f1f3f4; }
+.trd-apply-btn:disabled,
+.trd-suggestion-delete-btn:disabled {
   opacity: .5;
   cursor: default;
 }
@@ -267,10 +275,15 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   align-items: center;
 }
 .trd-settings-btn,
+.trd-suggestions-btn,
 .trd-addons-btn {
   width: 28px;
   height: 28px;
   color: #5f6368;
+}
+.trd-suggestions-btn.trd-on {
+  background: #e8f0fe;
+  color: #174ea6;
 }
 .trd-addons-menu {
   position: absolute;

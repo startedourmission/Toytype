@@ -26,6 +26,16 @@
   const FETCH_TIMEOUT = 15000;
   const SNIPPET = 20;
   const MATCH_CONTEXT = 80;
+  const AI_QUESTION_CONTEXT_BEFORE = 3500;
+  const AI_QUESTION_CONTEXT_AFTER = 2500;
+  const AI_QUESTION_TIMEOUT = 180000;
+  const AI_LENGTH_CONTEXT = 1200;
+  const AI_LENGTH_TIMEOUT = 180000;
+  const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
+  const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
+  const GENERATED_RULES_CACHE_KEY = 'docsGeneratedRulesCacheV1';
+  const GENERATED_RULES_CACHE_DOC_LIMIT = 20;
+  const GENERATED_RULES_CACHE_FILE_LIMIT = 50;
   const CURSOR_POLL_INTERVAL = 800;
   const FALLBACK_CSS =
     '.trd-wrap{font-family:sans-serif;font-size:13px;color:#202124;line-height:1.45}' +
@@ -33,15 +43,38 @@
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:17px;line-height:1;vertical-align:top}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
-    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 44px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-apply-btn{position:absolute;right:10px;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-apply-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
+    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 44px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-item.trd-copy-only{padding-right:18px}.trd-item.trd-suggestion-item .trd-fix{font-weight:500}.trd-apply-btn,.trd-suggestion-delete-btn{position:absolute;right:10px;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-suggestion-delete-btn{color:#5f6368}.trd-apply-btn:disabled,.trd-suggestion-delete-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
     '.trd-cursor-marker{height:0;border-top:2px solid #1a73e8;margin:2px 0;position:relative}.trd-cursor-marker:before{content:"";position:absolute;left:12px;top:-4px;width:6px;height:6px;border-radius:50%;background:#1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
 
   const startedAt = Date.now();
+
+  function debugLogsEnabled() {
+    try {
+      return localStorage.getItem('toytype:debug') === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function debugLog() {
+    if (!debugLogsEnabled()) return;
+    console.info.apply(console, arguments);
+  }
+
+  function debugWarn() {
+    if (!debugLogsEnabled()) return;
+    console.warn.apply(console, arguments);
+  }
+
+  function debugTable(data) {
+    if (!debugLogsEnabled() || typeof console.table !== 'function') return;
+    console.table(data);
+  }
 
   let status = 'init'; // 'init'|'disabled'|'scanning'|'ready'|'error'
   let errorCode = null;
@@ -64,6 +97,7 @@
   let modelRequestSeq = 0;
   let selectedFindingKey = null;
   let listMode = 'order';
+  let categoryOpenState = Object.create(null);
   let currentCursorOffset = null;
   let cursorPollTimer = null;
   let cursorPollBusy = false;
@@ -80,6 +114,7 @@
   let panelCss = null;
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
+  let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
   let toastTimer = null;
   let cooldownTimer = null;
   let settingsTimer = null;
@@ -212,9 +247,67 @@
     return String(source || '').slice('generated:'.length);
   }
 
+  function isSentenceSuggestionSource(source) {
+    return isGeneratedRulesSource(source) && isSentenceSuggestionFileName(generatedFileNameFromSource(source));
+  }
+
+  function isSentenceSuggestionFileName(fileName) {
+    return /-문장제안\.json$/i.test(String(fileName || ''));
+  }
+
+  function isSentenceSuggestionRulesActive() {
+    if (isSentenceSuggestionSource(activeRulesSource)) return true;
+    if (rulesJson && typeof rulesJson.source === 'string' && rulesJson.source.indexOf('sentence-suggestions:') === 0) return true;
+    if (!rulesJson || !Array.isArray(rulesJson.categories)) return false;
+    return rulesJson.categories.some(cat => cat && cat.id === SENTENCE_SUGGESTION_CATEGORY_ID);
+  }
+
   function findGeneratedRulesFile(source) {
     const fileName = generatedFileNameFromSource(source);
-    return generatedRulesFiles.find(file => file.fileName === fileName) || null;
+    const file = generatedRulesFiles.find(item => item.fileName === fileName);
+    if (file) return file;
+    const virtualFile = virtualSentenceSuggestionFile();
+    if (virtualFile && fileName === virtualFile.fileName) return virtualFile;
+    return null;
+  }
+
+  function generatedRulesFilesForSelect() {
+    return generatedRulesFiles.filter(file => !isSentenceSuggestionFileName(file && file.fileName));
+  }
+
+  function virtualSentenceSuggestionFile() {
+    const docId = getDocId();
+    if (!docId) return null;
+    const fileName = sentenceSuggestionFileNameForDoc(docId);
+    return {
+      fileName,
+      displayName: '문장제안.json',
+      outputPath: '',
+      mtimeMs: 0,
+      virtual: true,
+      json: emptySentenceSuggestionJson(docId)
+    };
+  }
+
+  function sentenceSuggestionFileNameForDoc(docId) {
+    return String(docId || 'document') + '-문장제안.json';
+  }
+
+  function emptySentenceSuggestionJson(docId) {
+    return {
+      version: new Date().toISOString().slice(0, 10),
+      source: 'sentence-suggestions:' + (documentTitleForAddon ? documentTitleForAddon() : docId || 'Google Docs document'),
+      categories: [{
+        id: SENTENCE_SUGGESTION_CATEGORY_ID,
+        label: SENTENCE_SUGGESTION_CATEGORY_LABEL,
+        defaultOn: true,
+        rules: []
+      }],
+      notes: [],
+      documentId: docId || '',
+      documentTitle: documentTitleForAddon ? documentTitleForAddon() : '',
+      documentUrl: location.href
+    };
   }
 
   function validateRulesJson(value) {
@@ -361,7 +454,46 @@
         textLine: nonEmptyLineByLine[line] || line
       });
     }
-    return out;
+    return appendMissingSentenceSuggestionFindings(out, textSource);
+  }
+
+  function appendMissingSentenceSuggestionFindings(findings, textSource) {
+    if (!isSentenceSuggestionRulesActive()) return findings;
+    if (!rulesJson || !Array.isArray(rulesJson.categories)) return findings;
+    const seen = new Set(findings.map(f => sentenceSuggestionRuleKey(f.cat, f.src, f.dst)));
+    let idx = findings.length;
+    for (const cat of rulesJson.categories) {
+      if (!cat || cat.id !== SENTENCE_SUGGESTION_CATEGORY_ID || !Array.isArray(cat.rules)) continue;
+      for (const rule of cat.rules) {
+        if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') continue;
+        const key = sentenceSuggestionRuleKey(cat.id, rule[0], rule[1]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        findings.push({
+          idx: idx++,
+          src: rule[0],
+          dst: rule[1],
+          cat: cat.id,
+          catLabel: labelOf(cat.id),
+          start: Number.MAX_SAFE_INTEGER,
+          end: Number.MAX_SAFE_INTEGER,
+          selectable: false,
+          textSource,
+          before: '',
+          after: '',
+          contextBefore: '',
+          contextAfter: '',
+          line: '제안',
+          textLine: Number.MAX_SAFE_INTEGER,
+          missingFromDocument: true
+        });
+      }
+    }
+    return findings;
+  }
+
+  function sentenceSuggestionRuleKey(cat, src, dst) {
+    return [String(cat || ''), String(src || ''), String(dst || '')].join('\u0001');
   }
 
   function buildNonEmptyLineMap(text) {
@@ -398,6 +530,10 @@
       lastModelAt = 0;
       selectedFindingKey = null;
       currentCursorOffset = null;
+      generatedRulesFiles = [];
+      generatedRulesLoadedDocId = null;
+      loadCachedGeneratedRulesListQuiet();
+      refreshGeneratedRulesListQuiet();
     }
     // quiet: 적용 파이프라인 내부 재스캔 — 목록을 '검사 중…'으로 비우지 않고
     // 기존 패널을 유지한 채 결과만 갱신한다 (불필요한 전체 리렌더 2회 제거).
@@ -522,7 +658,7 @@
     perf.textLength = text.length;
     perf.totalMs = Date.now() - perfStartedAt;
     lastReport.perf = perf;
-    console.info('[Toytype perf] scan', JSON.stringify(Object.assign({ total: findings.length, cached }, perf)));
+    debugLog('[Toytype perf] scan', JSON.stringify(Object.assign({ total: findings.length, cached }, perf)));
     return lastReport;
   }
 
@@ -613,6 +749,10 @@
     return strokedSvg(['M20 6L9 17l-5-5'], 'trd-apply-icon');
   }
 
+  function suggestionsIcon() {
+    return strokedSvg(['M8 7h8', 'M8 12h6', 'M5 4h14v14H8l-3 3z'], 'trd-svg-icon');
+  }
+
   // 추가기능 아이콘 — 격자 4칸(기능 묶음) 모양
   function addonsIcon() {
     return strokedSvg(['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h6v6h-6z'], 'trd-svg-icon');
@@ -625,9 +765,21 @@
     ], 'trd-svg-icon');
   }
 
+  function trashIcon() {
+    return strokedSvg([
+      'M3 6h18',
+      'M8 6V4h8v2',
+      'M19 6l-1 14H6L5 6',
+      'M10 11v6',
+      'M14 11v6'
+    ], 'trd-apply-icon');
+  }
+
   function addonActions() {
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
+      { id: 'ai-question', label: 'AI 발문 삽입', run: handleAiQuestionAddon },
+      { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
       { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
     ];
   }
@@ -655,11 +807,34 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = !addonsMenuOpen;
+      suggestionsViewOpen = false;
       render();
     });
     wrap.appendChild(btn);
     if (addonsMenuOpen) wrap.appendChild(buildAddonsMenu());
     return wrap;
+  }
+
+  function buildSuggestionsButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-suggestions-btn' + (suggestionsViewOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.appendChild(suggestionsIcon());
+    btn.setAttribute('aria-label', '문장 제안');
+    btn.setAttribute('aria-pressed', suggestionsViewOpen ? 'true' : 'false');
+    btn.title = '문장 제안';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addonsMenuOpen = false;
+      suggestionsViewOpen = !suggestionsViewOpen;
+      if (suggestionsViewOpen) {
+        loadCachedGeneratedRulesListQuiet();
+        refreshGeneratedRulesListQuiet();
+        if (cachedText === null) enqueueScan(true, { quiet: true });
+      }
+      render();
+    });
+    return btn;
   }
 
   function buildSettingsButton() {
@@ -679,7 +854,7 @@
 
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildAddonsButton());
+    wrap.append(buildSettingsButton(), buildSuggestionsButton(), buildAddonsButton());
     return wrap;
   }
 
@@ -752,8 +927,41 @@
     if (opts.preserveBodyScroll) {
       const nextBody = shadowView.querySelector('.trd-body');
       if (nextBody) nextBody.scrollTop = prevBodyScrollTop;
+    } else if (shouldFollowCursorInOrderList()) {
+      scheduleCursorListFollow();
     }
     syncCursorWatcher();
+  }
+
+  function shouldFollowCursorInOrderList() {
+    return expanded &&
+      !suggestionsViewOpen &&
+      status === 'ready' &&
+      lastReport &&
+      lastReport.textSource === 'model' &&
+      listMode === 'order' &&
+      shouldShowCursorMarker();
+  }
+
+  function scheduleCursorListFollow() {
+    requestAnimationFrame(() => {
+      if (!shouldFollowCursorInOrderList() || !shadowView) return;
+      const body = shadowView.querySelector('.trd-body');
+      const marker = body && body.querySelector('.trd-cursor-marker');
+      if (!body || !marker) return;
+      scrollPanelBodyToMarker(body, marker);
+    });
+  }
+
+  function scrollPanelBodyToMarker(body, marker) {
+    const bodyRect = body.getBoundingClientRect();
+    const markerRect = marker.getBoundingClientRect();
+    if (!bodyRect.height) return;
+    const margin = 24;
+    if (markerRect.top >= bodyRect.top + margin && markerRect.bottom <= bodyRect.bottom - margin) return;
+    const bodyCenter = bodyRect.top + body.clientHeight / 2;
+    const markerCenter = markerRect.top + markerRect.height / 2;
+    body.scrollTop += markerCenter - bodyCenter;
   }
 
   function buildBubble() {
@@ -837,7 +1045,9 @@
 
     // 본문
     const body = el('div', 'trd-body');
-    if (status === 'error') {
+    if (suggestionsViewOpen) {
+      appendSentenceSuggestionsView(body);
+    } else if (status === 'error') {
       const msg = el('div', 'trd-msg trd-error');
       msg.textContent = errorCode === 'rules_load_failed'
         ? '검사 규칙을 불러오지 못했습니다. 확장 프로그램을 새로고침해 주세요.'
@@ -866,10 +1076,13 @@
         const items = byCat.get(id);
         if (!items || items.length === 0) continue;
         const det = el('details', 'trd-cat');
-        det.open = true;
+        det.open = isCategoryOpen(id);
         const sum = document.createElement('summary');
         sum.textContent = labelOf(id) + ' (' + items.length + ')';
         det.appendChild(sum);
+        det.addEventListener('toggle', () => {
+          categoryOpenState[categoryOpenKey(id)] = det.open;
+        });
         for (const f of items) det.appendChild(buildItem(f));
         body.appendChild(det);
       }
@@ -882,7 +1095,7 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    const ruleSource = activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json');
+    const ruleSource = suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json'));
     l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
     const addonStatusText = addonStatusLineText();
     if (addonStatusText) {
@@ -899,6 +1112,244 @@
     toast.id = 'trd-toast';
     panel.appendChild(toast);
     return panel;
+  }
+
+  function categoryOpenKey(id) {
+    return [getDocId() || '', activeRulesSource || '', String(id || '')].join('\u0001');
+  }
+
+  function isCategoryOpen(id) {
+    const key = categoryOpenKey(id);
+    return categoryOpenState[key] !== false;
+  }
+
+  function appendSentenceSuggestionsView(body) {
+    const rules = sentenceSuggestionRules();
+    if (rules.length === 0) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '문장 제안이 없습니다.';
+      body.appendChild(msg);
+      return;
+    }
+    for (let i = 0; i < rules.length; i++) {
+      body.appendChild(buildSentenceSuggestionItem(rules[i], i));
+    }
+  }
+
+  function sentenceSuggestionRules() {
+    const file = sentenceSuggestionRulesFile();
+    const json = file && file.json;
+    if (!json || !Array.isArray(json.categories)) return [];
+    const out = [];
+    for (const cat of json.categories) {
+      if (!cat || cat.id !== SENTENCE_SUGGESTION_CATEGORY_ID || !Array.isArray(cat.rules)) continue;
+      for (let j = 0; j < cat.rules.length; j++) {
+        const rule = cat.rules[j];
+        if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') continue;
+        out.push({
+          src: rule[0],
+          dst: rule[1],
+          options: rule[2] || null,
+          categoryId: cat.id,
+          ruleIndex: j,
+          fileName: file.fileName
+        });
+      }
+    }
+    return out;
+  }
+
+  function sentenceSuggestionRulesFile() {
+    const docId = getDocId();
+    if (!docId) return null;
+    return findGeneratedRulesFile(generatedRulesSourceValue(sentenceSuggestionFileNameForDoc(docId)));
+  }
+
+  function buildSentenceSuggestionItem(rule, index) {
+    const item = el('div', 'trd-item trd-suggestion-item');
+    const ctx = el('div', 'trd-ctx');
+    ctx.textContent = displayText(rule.src);
+    const fix = el('div', 'trd-fix');
+    fix.textContent = displayText(rule.dst);
+    const ln = el('span', 'trd-line');
+    ln.textContent = '문장 제안 · ' + sentenceSuggestionStatus(rule);
+    fix.appendChild(ln);
+    item.append(ctx, fix);
+    item.addEventListener('click', () => {
+      handleSentenceSuggestionClick(rule);
+    });
+    const deleteBtn = el('button', 'trd-suggestion-delete-btn');
+    deleteBtn.type = 'button';
+    deleteBtn.appendChild(trashIcon());
+    deleteBtn.title = '문장 제안 삭제';
+    deleteBtn.setAttribute('aria-label', '문장 제안 삭제');
+    deleteBtn.disabled = isAddonBusy('delete-sentence-suggestion');
+    deleteBtn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleDeleteSentenceSuggestion(rule);
+    });
+    item.appendChild(deleteBtn);
+    return item;
+  }
+
+  function sentenceSuggestionStatus(rule) {
+    const location = locateSentenceSuggestionInCachedText(rule);
+    if (location) return location.kind === 'replacement' ? '반영됨' : '원문 찾음';
+    if (typeof cachedText !== 'string') return '상태 확인 전';
+    return '원문 없음';
+  }
+
+  async function handleSentenceSuggestionClick(rule) {
+    const suggestion = String(rule && rule.dst || '');
+    if (!suggestion) {
+      showToast('복사할 문장 제안이 없습니다');
+      return;
+    }
+    let location = locateSentenceSuggestionInCachedText(rule);
+    if (!location || cachedTextSource !== 'model') {
+      await refreshCachedModelTextForSuggestion();
+      location = locateSentenceSuggestionInCachedText(rule);
+    }
+    if (!location || cachedTextSource !== 'model') {
+      copySentenceSuggestionText(suggestion, '위치 못 찾음 · ');
+      return;
+    }
+    selectDocsModelRange(location.start, location.end).then(res => {
+      updateCursorOffset(res && res.selection ? res.selection : [{ start: location.start, end: location.end }]);
+      copySentenceSuggestionText(suggestion, (location.kind === 'replacement' ? '반영 위치 선택 · ' : '원문 위치 선택 · '));
+    }, () => {
+      copySentenceSuggestionText(suggestion, '위치 선택 실패 · ');
+    });
+  }
+
+  async function handleDeleteSentenceSuggestion(rule) {
+    const actionId = 'delete-sentence-suggestion';
+    if (isAddonBusy(actionId)) return;
+    const docId = getDocId();
+    if (!docId) {
+      showToast('문서 ID를 찾지 못했습니다');
+      return;
+    }
+    setAddonBusy(actionId, true);
+    render({ preserveBodyScroll: true });
+    let toastText = '';
+    let toastOptions = null;
+    try {
+      const res = await sendAiBridge('deleteSentenceSuggestion', {
+        document: {
+          id: docId,
+          title: documentTitleForAddon(),
+          url: location.href
+        },
+        rule: {
+          categoryId: rule.categoryId || SENTENCE_SUGGESTION_CATEGORY_ID,
+          ruleIndex: Number.isInteger(Number(rule.ruleIndex)) ? Number(rule.ruleIndex) : undefined,
+          sourceText: String(rule.src || ''),
+          replacementText: String(rule.dst || ''),
+          options: rule.options || undefined
+        }
+      });
+      if (!res || !res.ok || !res.deleted || !res.json) {
+        throw aiBridgeError(res, '문장 제안 삭제 실패');
+      }
+      upsertGeneratedRulesFile({
+        fileName: res.fileName || rule.fileName || sentenceSuggestionFileNameForDoc(docId),
+        displayName: res.displayName || '문장제안.json',
+        outputPath: res.outputPath || '',
+        mtimeMs: Date.now(),
+        json: res.json
+      });
+      toastText = '문장 제안을 삭제했습니다';
+    } catch (error) {
+      console.error('[Toytype addons] sentence suggestion delete failed', error);
+      toastText = error && error.userMessage ? error.userMessage : '문장 제안 삭제 실패';
+      toastOptions = { durationMs: 3600 };
+      refreshGeneratedRulesListQuiet();
+    } finally {
+      setAddonBusy(actionId, false);
+      if (expanded) render({ preserveBodyScroll: true });
+      if (toastText) showToast(toastText, toastOptions || undefined);
+    }
+  }
+
+  async function refreshCachedModelTextForSuggestion() {
+    const docId = getDocId();
+    if (!docId) return false;
+    try {
+      const doc = await fetchModelText(docId);
+      cachedText = doc.text;
+      cachedTextSource = 'model';
+      lastModelAt = Date.now();
+      updateCursorOffset(doc.selection || null);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function locateSentenceSuggestionInCachedText(rule) {
+    if (typeof cachedText !== 'string') return null;
+    const source = String(rule && rule.src || '');
+    const replacement = String(rule && rule.dst || '');
+    return findTextRangeInCachedText(source, 'source') || findTextRangeInCachedText(replacement, 'replacement');
+  }
+
+  function findTextRangeInCachedText(needle, kind) {
+    if (typeof cachedText !== 'string' || !needle || !String(needle).trim()) return null;
+    const exact = findExactTextRanges(cachedText, String(needle));
+    if (exact.length) return chooseNearestTextRange(exact, kind);
+    const normalized = normalizeSearchText(needle);
+    if (!normalized) return null;
+    const tokens = normalized.split(' ').filter(Boolean);
+    if (tokens.length < 2) return null;
+    const pattern = tokens.map(escapeRegExp).join('\\s+');
+    const match = new RegExp(pattern).exec(cachedText);
+    if (!match) return null;
+    return { kind, start: match.index, end: match.index + match[0].length, text: match[0] };
+  }
+
+  function findExactTextRanges(text, needle) {
+    const ranges = [];
+    let index = 0;
+    while ((index = text.indexOf(needle, index)) !== -1) {
+      ranges.push({ start: index, end: index + needle.length, text: needle });
+      index += Math.max(1, needle.length);
+    }
+    return ranges;
+  }
+
+  function chooseNearestTextRange(ranges, kind) {
+    let best = ranges[0];
+    if (Number.isFinite(currentCursorOffset)) {
+      let bestScore = Infinity;
+      for (const range of ranges) {
+        const score = range.start <= currentCursorOffset && currentCursorOffset <= range.end
+          ? 0
+          : Math.min(Math.abs(currentCursorOffset - range.start), Math.abs(currentCursorOffset - range.end));
+        if (score < bestScore) {
+          best = range;
+          bestScore = score;
+        }
+      }
+    }
+    return { kind, start: best.start, end: best.end, text: best.text };
+  }
+
+  function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function copySentenceSuggestionText(text, prefix) {
+    const suggestion = String(text || '');
+    if (!suggestion) {
+      showToast('복사할 문장 제안이 없습니다');
+      return;
+    }
+    copyText(suggestion).then(
+      () => showToast((prefix || '') + '문장 제안 복사됨: ' + displayText(suggestion)),
+      () => showToast('문장 제안 복사 실패')
+    );
   }
 
   function appendOrderedFindings(body, findings) {
@@ -948,6 +1399,7 @@
       ev.stopPropagation();
       if (listMode === mode) return;
       listMode = mode;
+      suggestionsViewOpen = false;
       render();
     });
     return btn;
@@ -961,7 +1413,7 @@
     builtinOption.value = 'builtin';
     builtinOption.textContent = 'rules' + rulesVersionSuffix(builtinRulesJson);
     select.appendChild(builtinOption);
-    for (const file of generatedRulesFiles) {
+    for (const file of generatedRulesFilesForSelect()) {
       const generatedOption = document.createElement('option');
       generatedOption.value = generatedRulesSourceValue(file.fileName);
       generatedOption.textContent = file.displayName || file.fileName;
@@ -975,7 +1427,7 @@
       uploadedOption.title = uploadedRulesLabel || 'uploaded.json';
       select.appendChild(uploadedOption);
     }
-    select.value = canUseRulesSource(activeRulesSource) ? activeRulesSource : 'builtin';
+    select.value = canUseRulesSource(activeRulesSource) && !isSentenceSuggestionSource(activeRulesSource) ? activeRulesSource : 'builtin';
     select.addEventListener('click', ev => {
       ev.stopPropagation();
     });
@@ -998,6 +1450,7 @@
       render();
       return;
     }
+    suggestionsViewOpen = false;
     showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
     enqueueScan(cachedText === null);
   }
@@ -1022,7 +1475,7 @@
 
   function pollCursorSelection() {
     // 적용 진행 중에는 모델 호출 경합을 피하려고 커서 폴링을 쉰다.
-    if (cursorPollBusy || applyingFindingKey !== null) return;
+    if (cursorPollBusy || applyingFindingKey !== null || addonBusyActions.size > 0) return;
     cursorPollBusy = true;
     fetchDocsSelection().then(selection => {
       if (updateCursorOffset(selection) && expanded && listMode === 'order') render();
@@ -1050,8 +1503,19 @@
     return Math.min(first.start, first.end);
   }
 
+  function selectionRange(selection) {
+    if (!Array.isArray(selection) || selection.length === 0) return null;
+    const first = selection[0];
+    if (!first || typeof first.start !== 'number' || typeof first.end !== 'number') return null;
+    return {
+      start: Math.min(first.start, first.end),
+      end: Math.max(first.start, first.end)
+    };
+  }
+
   function buildItem(f) {
-    const item = el('div', 'trd-item');
+    const isSuggestion = isSentenceSuggestionFinding(f);
+    const item = el('div', 'trd-item' + (isSuggestion ? ' trd-suggestion-item trd-copy-only' : ''));
     if (isSelectedFinding(f)) item.classList.add('trd-selected');
     const key = findingKey(f);
     if (applyingFindingKey === key) item.classList.add('trd-applying');
@@ -1069,21 +1533,24 @@
     ln.textContent = '¶' + f.line + (listMode === 'order' ? ' · ' + labelOf(f.cat) : '');
     fix.appendChild(ln);
 
-    const applyBtn = el('button', 'trd-apply-btn');
-    applyBtn.type = 'button';
-    applyBtn.appendChild(applyIcon());
-    applyBtn.title = '적용';
-    applyBtn.setAttribute('aria-label', '적용');
-    applyBtn.disabled = !f.selectable || !Number.isFinite(f.start) || !Number.isFinite(f.end) || applyingFindingKey !== null;
-    applyBtn.addEventListener('click', ev => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      handleApplyFindingClick(f);
-    });
-
-    item.append(ctx, fix, applyBtn);
+    item.append(ctx, fix);
+    if (!isSuggestion) {
+      const applyBtn = el('button', 'trd-apply-btn');
+      applyBtn.type = 'button';
+      applyBtn.appendChild(applyIcon());
+      applyBtn.title = '적용';
+      applyBtn.setAttribute('aria-label', '적용');
+      applyBtn.disabled = !f.selectable || !Number.isFinite(f.start) || !Number.isFinite(f.end) || applyingFindingKey !== null;
+      applyBtn.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleApplyFindingClick(f);
+      });
+      item.appendChild(applyBtn);
+    }
     item.addEventListener('click', () => {
-      handleFindingClick(f);
+      if (isSuggestion) handleSentenceSuggestionClick(f);
+      else handleFindingClick(f);
     });
     return item;
   }
@@ -1117,6 +1584,7 @@
       return;
     }
     const originalKey = findingKey(f);
+    const keepSuggestionVisible = isSentenceSuggestionRulesActive();
     const applyStartedAt = Date.now();
     let preScanDoneAt = null;
     let appliedFresh = null;
@@ -1183,27 +1651,27 @@
     }).then(result => {
       const applied = !!(result && (result.verified === true || result.verificationDeferred === true));
       completionToast = applied ? '적용됨' : '적용 확인 필요';
-      if (applied && appliedFresh) removeAppliedFindingOptimistically(appliedFresh);
+      if (applied && appliedFresh && !keepSuggestionVisible) removeAppliedFindingOptimistically(appliedFresh);
       const timings = {
         totalMs: Date.now() - applyStartedAt,
         preScanMs: preScanDoneAt === null ? null : preScanDoneAt - applyStartedAt,
         applyMs: preScanDoneAt === null ? null : Date.now() - preScanDoneAt
       };
-      console.info('[Toytype apply] item apply result', {
+      debugLog('[Toytype apply] item apply result', {
         finding: f,
         result,
         timings
       });
-      console.info('[Toytype apply timings]', JSON.stringify(Object.assign({}, timings, {
+      debugLog('[Toytype apply timings]', JSON.stringify(Object.assign({}, timings, {
         bridge: result && result.phaseTimings ? result.phaseTimings : null,
         actionWait: result && result.actionResult && result.actionResult.waitResult ? result.actionResult.waitResult : null,
         verifyDeferred: !!(result && result.verificationDeferred),
         beforeTextSource: result && result.beforeTextSource ? result.beforeTextSource : null,
         actionId: result && result.actionResult && result.actionResult.actionId ? result.actionResult.actionId : null
       })));
-      if (result) console.info('[Toytype apply item json]', JSON.stringify({ finding: f, result, timings }));
+      if (result) debugLog('[Toytype apply item json]', JSON.stringify({ finding: f, result, timings }));
     }).catch(error => {
-      console.warn('[Toytype apply] item apply failed', {
+      console.error('[Toytype apply] item apply failed', {
         finding: f,
         error: summarizeErrorForConsole(error),
         response: error && error.response !== undefined ? error.response : undefined
@@ -1220,7 +1688,7 @@
   // 통과 시 검증에 쓴 본문으로 재취득 없이 재스캔하고, 실패 시 알리고 실제 문서 기준으로 복구한다.
   function handleApplyVerifyResult(data) {
     const verified = !!(data && data.ok === true && data.verified === true);
-    console.info('[Toytype apply] deferred verification', {
+    debugLog('[Toytype apply] deferred verification', {
       verified,
       requestId: data && data.requestId,
       requested: data && data.requested,
@@ -1409,9 +1877,11 @@
         finalStatus += ' · ' + (res.displayName || res.fileName);
       }
     } catch (error) {
-      console.error('[Toytype addons] AI proofread failed', {
-        message: error && error.message ? error.message : String(error),
-        userMessage: error && error.userMessage ? error.userMessage : '',
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] AI proofread failed', summary);
+      debugLog('[Toytype addons] AI proofread failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
@@ -1422,6 +1892,297 @@
       finishAiProofreadStatus(errorToast ? 'error' : 'success', finalStatus);
       if (errorToast) showToast(errorToast, { durationMs: 4200 });
     }
+  }
+
+  function activateGeneratedRulesResponse(res, fallbackFileName) {
+    if (!res || !res.json) return 0;
+    const fileName = res.fileName || fallbackFileName || 'ai-generated.json';
+    const isSentenceSuggestionFile = isSentenceSuggestionFileName(fileName);
+    if (!isSentenceSuggestionFile) setUploadedRulesJson(res.json, fileName);
+    if (res.fileName) {
+      upsertGeneratedRulesFile({
+        fileName: res.fileName,
+        displayName: res.displayName || '',
+        outputPath: res.outputPath || '',
+        mtimeMs: Date.now(),
+        json: res.json
+      });
+      if (isSentenceSuggestionFile) {
+        if (isSentenceSuggestionSource(activeRulesSource)) useRulesSource('builtin');
+        suggestionsViewOpen = true;
+      } else {
+        useRulesSource(generatedRulesSourceValue(res.fileName));
+      }
+    }
+    refreshGeneratedRulesListQuiet();
+    const n = countRulesInJson(res.json);
+    enqueueScan(cachedText === null, { quiet: true }).then(report => {
+      if (!report || report.ok !== true) {
+        console.error('[Toytype addons] post-AI suggestion scan failed', report || { error: 'empty report' });
+      }
+    }).catch(error => {
+      console.error('[Toytype addons] post-AI suggestion scan failed', error);
+    });
+    return n;
+  }
+
+  async function handleAiQuestionAddon() {
+    const actionId = 'ai-question';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startAiQuestionStatus('본문/커서 읽는 중');
+    try {
+      const doc = await readCurrentDocumentTextForAddon();
+      if (doc.source !== 'model') {
+        const error = new Error('Google Docs model text is required for cursor insertion');
+        error.userMessage = '문서 모델을 읽지 못해 삽입할 수 없습니다';
+        throw error;
+      }
+      let selection = doc.selection || null;
+      if (!selection) {
+        try {
+          selection = await fetchDocsSelection();
+          updateCursorOffset(selection);
+        } catch (_) {
+          selection = null;
+        }
+      }
+      const offset = selectionOffset(selection);
+      if (!Number.isFinite(offset) || offset < 0 || offset > doc.text.length) {
+        const error = new Error('current Google Docs cursor is unavailable');
+        error.userMessage = '커서 위치를 읽지 못했습니다';
+        throw error;
+      }
+
+      const context = buildAiQuestionContext(doc.text, offset);
+      const anchor = buildInsertionSuggestionAnchor(doc.text, offset);
+      updateAiQuestionStatus('AI 발문 생성 중');
+      const res = await sendAiBridge('question', {
+        timeoutMs: AI_QUESTION_TIMEOUT,
+        document: {
+          id: doc.docId,
+          title: doc.title,
+          url: location.href,
+          textSource: doc.source,
+          cursorOffset: offset,
+          totalChars: doc.text.length,
+          contextBefore: context.before,
+          contextAfter: context.after,
+          insertionSource: anchor.source,
+          insertionPrefixLength: anchor.prefixLength
+        }
+      });
+      if (!res || !res.ok || !res.json) {
+        throw aiBridgeError(res, 'AI 발문 생성 실패');
+      }
+
+      updateAiQuestionStatus('문장 제안 JSON 저장 중');
+      const n = activateGeneratedRulesResponse(res, '문장제안.json');
+      debugLog('[Toytype addons] AI question suggestion result', {
+        chars: typeof res.text === 'string' ? Array.from(res.text).length : null,
+        provider: res.provider || '',
+        model: res.model || ''
+      });
+      finalStatus = 'AI 발문 제안 저장 완료';
+      if (n) finalStatus += ' · 누적 ' + n + '건';
+      if (res.model) finalStatus += ' · ' + res.model;
+      successToast = 'AI 발문 제안을 저장했습니다';
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] AI question suggestion failed', summary);
+      debugLog('[Toytype addons] AI question suggestion failed detail', {
+        response: error && error.response !== undefined ? error.response : null,
+        stack: error && error.stack ? error.stack : ''
+      });
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 발문 제안 저장 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishAiQuestionStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 4200 });
+      else if (successToast) showToast(successToast);
+    }
+  }
+
+  function buildAiQuestionContext(text, offset) {
+    const source = String(text || '');
+    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
+    return {
+      before: source.slice(Math.max(0, pos - AI_QUESTION_CONTEXT_BEFORE), pos),
+      after: source.slice(pos, pos + AI_QUESTION_CONTEXT_AFTER)
+    };
+  }
+
+  function buildInsertionSuggestionAnchor(text, offset) {
+    const source = String(text || '');
+    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
+    const right = buildOneSidedInsertionAnchor(source, pos, 'right');
+    if (right) return right;
+    const left = buildOneSidedInsertionAnchor(source, pos, 'left');
+    if (left) return left;
+
+    let best = null;
+    for (const radius of [16, 24, 40, 72, 120]) {
+      const beforeLen = Math.min(pos, Math.ceil(radius / 2));
+      const afterLen = Math.min(source.length - pos, Math.floor(radius / 2));
+      const start = pos - beforeLen;
+      const end = pos + afterLen;
+      const candidate = source.slice(start, end);
+      if (!candidate.trim()) continue;
+      const anchor = {
+        source: candidate,
+        prefixLength: beforeLen,
+        start,
+        end,
+        occurrences: countTextOccurrences(source, candidate, 2)
+      };
+      best = anchor;
+      if (anchor.occurrences === 1) return anchor;
+    }
+    if (best) return best;
+    const error = new Error('insertion anchor unavailable');
+    error.userMessage = '발문을 넣을 기준 문맥을 찾지 못했습니다';
+    throw error;
+  }
+
+  function buildOneSidedInsertionAnchor(text, pos, side) {
+    const lengths = [4, 6, 8, 12, 18, 28, 44, 72];
+    for (const len of lengths) {
+      const start = side === 'right' ? pos : Math.max(0, pos - len);
+      const end = side === 'right' ? Math.min(text.length, pos + len) : pos;
+      const candidate = text.slice(start, end);
+      if (!candidate.trim()) continue;
+      const anchor = {
+        source: candidate,
+        prefixLength: side === 'right' ? 0 : candidate.length,
+        start,
+        end,
+        occurrences: countTextOccurrences(text, candidate, 2)
+      };
+      if (anchor.occurrences === 1) return anchor;
+    }
+    return null;
+  }
+
+  function countTextOccurrences(text, needle, stopAfter) {
+    if (!needle) return 0;
+    let count = 0;
+    let index = 0;
+    const limit = Number.isFinite(Number(stopAfter)) ? Number(stopAfter) : Infinity;
+    while ((index = text.indexOf(needle, index)) !== -1) {
+      count++;
+      if (count >= limit) return count;
+      index += Math.max(1, needle.length);
+    }
+    return count;
+  }
+
+  async function handleAiLengthAddon() {
+    const actionId = 'ai-length';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startAiLengthStatus('선택 영역 읽는 중');
+    try {
+      const doc = await readCurrentDocumentTextForAddon();
+      if (doc.source !== 'model') {
+        const error = new Error('Google Docs model text is required for selected text suggestions');
+        error.userMessage = '문서 선택 영역을 읽지 못했습니다';
+        throw error;
+      }
+      let selection = doc.selection || null;
+      if (!selection) {
+        try {
+          selection = await fetchDocsSelection();
+          updateCursorOffset(selection);
+        } catch (_) {
+          selection = null;
+        }
+      }
+      const range = selectionRange(selection);
+      if (!range || range.end <= range.start) {
+        const error = new Error('selected text is required');
+        error.userMessage = '길이를 조절할 문장을 드래그해 선택하세요';
+        throw error;
+      }
+      const selectedText = doc.text.slice(range.start, range.end);
+      if (!selectedText.trim()) {
+        const error = new Error('selected text is blank');
+        error.userMessage = '공백이 아닌 문장을 선택하세요';
+        throw error;
+      }
+      const targetPercent = promptAiLengthPercent();
+      if (targetPercent === null) {
+        finalStatus = 'AI 문장 길이 조절 취소';
+        return;
+      }
+
+      updateAiLengthStatus('AI 문장 제안 생성 중');
+      const res = await sendAiBridge('adjustLength', {
+        timeoutMs: AI_LENGTH_TIMEOUT,
+        document: {
+          id: doc.docId,
+          title: doc.title,
+          url: location.href,
+          textSource: doc.source,
+          selectionStart: range.start,
+          selectionEnd: range.end,
+          selectedText,
+          targetPercent,
+          contextBefore: doc.text.slice(Math.max(0, range.start - AI_LENGTH_CONTEXT), range.start),
+          contextAfter: doc.text.slice(range.end, range.end + AI_LENGTH_CONTEXT)
+        }
+      });
+      if (!res || !res.ok || !res.json) {
+        throw aiBridgeError(res, 'AI 문장 길이 조절 실패');
+      }
+      updateAiLengthStatus('문장 제안 JSON 저장 중');
+      const n = activateGeneratedRulesResponse(res, '문장제안.json');
+      finalStatus = 'AI 문장 제안 저장 완료 · ' + targetPercent + '%';
+      if (n) finalStatus += ' · 누적 ' + n + '건';
+      if (res.model) finalStatus += ' · ' + res.model;
+      successToast = 'AI 문장 제안을 저장했습니다';
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] AI length suggestion failed', summary);
+      debugLog('[Toytype addons] AI length suggestion failed detail', {
+        response: error && error.response !== undefined ? error.response : null,
+        stack: error && error.stack ? error.stack : ''
+      });
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 문장 길이 조절 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishAiLengthStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 4200 });
+      else if (successToast) showToast(successToast);
+    }
+  }
+
+  function promptAiLengthPercent() {
+    let raw = null;
+    try {
+      raw = window.prompt('원하는 문장 길이 비율을 입력하세요 (10~500%)', '100');
+    } catch (_) {
+      raw = null;
+    }
+    if (raw === null) return null;
+    const value = String(raw).replace(/%/g, '').trim();
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 10 || n > 500) {
+      showToast('10~500 사이 숫자를 입력하세요', { durationMs: 3200 });
+      return null;
+    }
+    return Math.round(n);
   }
 
   function handleExtractTocAddon() {
@@ -1467,6 +2228,7 @@
   function startAiProofreadStatus(phase) {
     addonStatus = {
       type: 'ai-proofread',
+      label: 'AI 교정',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -1491,6 +2253,85 @@
     const previous = addonStatus && addonStatus.type === 'ai-proofread' ? addonStatus : null;
     addonStatus = {
       type: 'ai-proofread',
+      label: 'AI 교정',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startAiQuestionStatus(phase) {
+    addonStatus = {
+      type: 'ai-question',
+      label: 'AI 발문',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateAiQuestionStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-question' || addonStatus.state !== 'running') {
+      startAiQuestionStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishAiQuestionStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'ai-question' ? addonStatus : null;
+    addonStatus = {
+      type: 'ai-question',
+      label: 'AI 발문',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startAiLengthStatus(phase) {
+    addonStatus = {
+      type: 'ai-length',
+      label: 'AI 문장',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateAiLengthStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-length' || addonStatus.state !== 'running') {
+      startAiLengthStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishAiLengthStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'ai-length' ? addonStatus : null;
+    addonStatus = {
+      type: 'ai-length',
+      label: 'AI 문장',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
@@ -1519,16 +2360,17 @@
   }
 
   function addonStatusLineText() {
-    if (!addonStatus || addonStatus.type !== 'ai-proofread') return '';
+    if (!addonStatus) return '';
+    const label = addonStatus.label || (addonStatus.type === 'ai-proofread' ? 'AI 교정' : 'AI 작업');
     const now = addonStatus.state === 'running' ? Date.now() : (addonStatus.finishedAt || Date.now());
     const elapsed = formatElapsed(now - (addonStatus.startedAt || now));
     if (addonStatus.state === 'running') {
-      return ['AI 교정 중', elapsed + ' 경과', addonStatus.phase || '대기 중'].join(' · ');
+      return [label + ' 중', elapsed + ' 경과', addonStatus.phase || '대기 중'].join(' · ');
     }
     if (addonStatus.state === 'error') {
-      return ['AI 교정 실패', elapsed + ' 경과', addonStatus.message || '오류 발생'].join(' · ');
+      return [label + ' 실패', elapsed + ' 경과', addonStatus.message || '오류 발생'].join(' · ');
     }
-    return ['AI 교정 완료', elapsed + ' 경과', addonStatus.message || '완료'].join(' · ');
+    return [label + ' 완료', elapsed + ' 경과', addonStatus.message || '완료'].join(' · ');
   }
 
   function formatElapsed(ms) {
@@ -1575,7 +2417,8 @@
         docId,
         title: documentTitleForAddon(),
         text: res.text,
-        source: 'model'
+        source: 'model',
+        selection: res.selection || null
       };
     }).catch(error => {
       if (typeof cachedText === 'string' && cachedText.length > 0) {
@@ -1615,6 +2458,122 @@
     });
   }
 
+  function loadCachedGeneratedRulesListQuiet() {
+    loadCachedGeneratedRulesList().catch(error => {
+      debugWarn('[Toytype addons] generated JSON cache load failed', error);
+    });
+  }
+
+  function loadCachedGeneratedRulesList() {
+    const docId = getDocId();
+    if (!docId) return Promise.resolve(false);
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(GENERATED_RULES_CACHE_KEY, items => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+            return;
+          }
+          const cache = items && items[GENERATED_RULES_CACHE_KEY] && typeof items[GENERATED_RULES_CACHE_KEY] === 'object'
+            ? items[GENERATED_RULES_CACHE_KEY]
+            : {};
+          const docCache = cache[docId] && typeof cache[docId] === 'object' ? cache[docId] : null;
+          const files = Array.isArray(docCache && docCache.files) ? docCache.files : [];
+          const nextFiles = [];
+          for (const file of files) {
+            const entry = normalizeGeneratedRulesFileEntry(file);
+            if (entry) nextFiles.push(entry);
+          }
+          if (nextFiles.length === 0) {
+            resolve(false);
+            return;
+          }
+          generatedRulesFiles = mergeGeneratedRulesFileEntries(nextFiles, generatedRulesFiles);
+          generatedRulesLoadedDocId = docId;
+          if (expanded) render();
+          resolve(true);
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function saveGeneratedRulesCacheQuiet() {
+    saveGeneratedRulesCache().catch(error => {
+      debugWarn('[Toytype addons] generated JSON cache save failed', error);
+    });
+  }
+
+  function saveGeneratedRulesCache() {
+    const docId = getDocId();
+    if (!docId) return Promise.resolve(false);
+    const files = generatedRulesFiles
+      .filter(file => file && !file.virtual)
+      .map(normalizeGeneratedRulesFileEntry)
+      .filter(Boolean)
+      .slice(0, GENERATED_RULES_CACHE_FILE_LIMIT);
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(GENERATED_RULES_CACHE_KEY, items => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+            return;
+          }
+          const cache = items && items[GENERATED_RULES_CACHE_KEY] && typeof items[GENERATED_RULES_CACHE_KEY] === 'object'
+            ? Object.assign({}, items[GENERATED_RULES_CACHE_KEY])
+            : {};
+          cache[docId] = {
+            savedAt: Date.now(),
+            title: documentTitleForAddon(),
+            url: location.href,
+            files
+          };
+          const keys = Object.keys(cache).sort((a, b) => {
+            const am = cache[a] && Number(cache[a].savedAt) || 0;
+            const bm = cache[b] && Number(cache[b].savedAt) || 0;
+            return bm - am;
+          });
+          for (const key of keys.slice(GENERATED_RULES_CACHE_DOC_LIMIT)) delete cache[key];
+          chrome.storage.local.set({ [GENERATED_RULES_CACHE_KEY]: cache }, () => {
+            resolve(!chrome.runtime.lastError);
+          });
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function normalizeGeneratedRulesFileEntry(file) {
+    if (!file || typeof file.fileName !== 'string' || !file.json) return null;
+    try {
+      validateRulesJson(file.json);
+    } catch (_) {
+      return null;
+    }
+    return {
+      fileName: file.fileName,
+      displayName: typeof file.displayName === 'string' && file.displayName ? file.displayName : generatedRulesDisplayName(file.fileName),
+      outputPath: typeof file.outputPath === 'string' ? file.outputPath : '',
+      mtimeMs: Number.isFinite(Number(file.mtimeMs)) ? Number(file.mtimeMs) : 0,
+      json: file.json
+    };
+  }
+
+  function mergeGeneratedRulesFileEntries(primary, secondary) {
+    const map = new Map();
+    for (const file of secondary || []) {
+      const entry = normalizeGeneratedRulesFileEntry(file);
+      if (entry) map.set(entry.fileName, entry);
+    }
+    for (const file of primary || []) {
+      const entry = normalizeGeneratedRulesFileEntry(file);
+      if (entry) map.set(entry.fileName, entry);
+    }
+    return Array.from(map.values()).sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+  }
+
   function refreshGeneratedRulesListQuiet() {
     refreshGeneratedRulesList().catch(error => {
       console.error('[Toytype addons] generated JSON list failed', error);
@@ -1643,22 +2602,16 @@
     }
     const nextFiles = [];
     for (const file of res.files) {
-      if (!file || typeof file.fileName !== 'string' || !file.json) continue;
-      try {
-        validateRulesJson(file.json);
-        nextFiles.push({
-          fileName: file.fileName,
-          displayName: typeof file.displayName === 'string' && file.displayName ? file.displayName : generatedRulesDisplayName(file.fileName),
-          outputPath: typeof file.outputPath === 'string' ? file.outputPath : '',
-          mtimeMs: Number.isFinite(Number(file.mtimeMs)) ? Number(file.mtimeMs) : 0,
-          json: file.json
-        });
-      } catch (error) {
-        console.error('[Toytype addons] generated JSON ignored', { fileName: file.fileName, error });
+      const entry = normalizeGeneratedRulesFileEntry(file);
+      if (entry) {
+        nextFiles.push(entry);
+      } else {
+        console.error('[Toytype addons] generated JSON ignored', { fileName: file && file.fileName, reason: 'invalid generated rules json' });
       }
     }
     generatedRulesFiles = nextFiles;
     generatedRulesLoadedDocId = docId;
+    saveGeneratedRulesCacheQuiet();
     if (isGeneratedRulesSource(activeRulesSource) && !findGeneratedRulesFile(activeRulesSource)) {
       useRulesSource('builtin');
       if (cachedText !== null) enqueueScan(false, { quiet: true });
@@ -1686,10 +2639,12 @@
       .concat(generatedRulesFiles.filter(existing => existing.fileName !== entry.fileName))
       .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
     generatedRulesLoadedDocId = getDocId();
+    saveGeneratedRulesCacheQuiet();
     if (expanded) render();
   }
 
   function generatedRulesDisplayName(fileName) {
+    if (/-문장제안\.json$/i.test(String(fileName || ''))) return '문장제안.json';
     const stamp = String(fileName || '').match(/(?:-toytype)?-(\d{8}T\d{6}Z)\.json$/);
     return stamp ? 'ai 검토-' + stamp[1] + '.json' : 'ai 검토.json';
   }
@@ -1701,6 +2656,8 @@
       userMessage = '로컬 브리지가 꺼져 있습니다 · 터미널에서 브리지를 실행하세요';
     } else if (code === 'bridge_timeout') {
       userMessage = 'AI 응답 시간 초과';
+    } else if (res && res.status === 404 && res.error === 'not found') {
+      userMessage = '브리지 기능을 찾지 못했습니다 · 로컬 브리지를 재시작하세요';
     } else if (res && res.error) {
       userMessage = fallbackMessage + ': ' + String(res.error).slice(0, 120);
     } else if (res && res.message) {
@@ -1712,10 +2669,31 @@
     if (details && details.exitCode !== undefined) {
       userMessage += ' · exitCode ' + String(details.exitCode);
     }
+    if (details && typeof details.stderr === 'string' && details.stderr.trim()) {
+      const firstUsefulLine = details.stderr.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+      if (firstUsefulLine) userMessage += ' · ' + firstUsefulLine.slice(0, 160);
+    }
     const error = new Error(userMessage);
     error.userMessage = userMessage;
     error.response = res;
     return error;
+  }
+
+  function summarizeAiBridgeResponse(res) {
+    if (!res || typeof res !== 'object') {
+      return String(res).slice(0, 500);
+    }
+    const details = res.details && typeof res.details === 'object' ? res.details : null;
+    return {
+      ok: res.ok === true,
+      status: Number.isFinite(Number(res.status)) ? Number(res.status) : undefined,
+      error: typeof res.error === 'string' ? res.error.slice(0, 300) : undefined,
+      message: typeof res.message === 'string' ? res.message.slice(0, 300) : undefined,
+      exitCode: details && details.exitCode !== undefined ? details.exitCode : undefined,
+      model: details && typeof details.model === 'string' ? details.model : undefined,
+      stdout: details && typeof details.stdout === 'string' ? details.stdout.slice(-1200) : undefined,
+      stderr: details && typeof details.stderr === 'string' ? details.stderr.slice(-1200) : undefined
+    };
   }
 
   function countRulesInJson(json) {
@@ -1725,7 +2703,7 @@
 
   function extractTocFromDocument(doc) {
     return extractTocFromMarkdownExport().catch(error => {
-      console.warn('[Toytype addons] TOC md export unavailable', error && error.message ? error.message : error);
+      debugWarn('[Toytype addons] TOC md export unavailable', error && error.message ? error.message : error);
       return null;
     }).then(exported => {
       if (exported && exported.headings.length > 0) return exported;
@@ -2131,6 +3109,22 @@
   }
 
   function fallbackFindingClick(f) {
+    if (isSentenceSuggestionFinding(f)) {
+      const suggestion = String(f && f.dst || '');
+      if (!suggestion) {
+        showToast('복사할 문장 제안이 없습니다');
+        return;
+      }
+      if (!settings.copyOnSelect) {
+        showToast('문서 위치를 찾지 못했습니다');
+        return;
+      }
+      copyText(suggestion).then(
+        () => showToast('문장 제안 복사됨: ' + displayText(suggestion)),
+        () => showToast('문장 제안 복사 실패')
+      );
+      return;
+    }
     const term = searchTermForFinding(f);
     if (!settings.copyOnSelect) {
       openDocsFind();
@@ -2146,6 +3140,10 @@
         showToast('검색어 복사 실패');
       }
     );
+  }
+
+  function isSentenceSuggestionFinding(f) {
+    return !!(f && f.cat === SENTENCE_SUGGESTION_CATEGORY_ID);
   }
 
   function openDocsFind() {
@@ -2262,9 +3260,9 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw docsModelError('profileModelOps failed', res);
       const result = res.result;
-      console.info('[Toytype profile] model ops', result);
-      if (result && typeof console.table === 'function') console.table(result.steps || []);
-      if (result) console.info('[Toytype profile model ops json]', JSON.stringify(result));
+      debugLog('[Toytype profile] model ops', result);
+      if (result && typeof console.table === 'function') debugTable(result.steps || []);
+      if (result) debugLog('[Toytype profile model ops json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2273,9 +3271,9 @@
     return requestDocsModel('probeFindReplace', Object.assign({ docId: getDocId(), timeoutMs: 30000 }, options || {})).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'probeFindReplace failed');
       const result = res.result;
-      console.info('[Toytype probe/content] find/replace result', result);
-      if (result && typeof console.table === 'function') console.table(result.topCandidates || []);
-      if (result) console.info('[Toytype probe/content json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] find/replace result', result);
+      if (result && typeof console.table === 'function') debugTable(result.topCandidates || []);
+      if (result) debugLog('[Toytype probe/content json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2286,12 +3284,12 @@
     return requestDocsModel('probeFindReplaceInteraction', Object.assign({ timeoutMs }, opts)).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'probeFindReplaceInteraction failed');
       const result = res.result;
-      console.info('[Toytype probe/content] find/replace interaction result', result);
+      debugLog('[Toytype probe/content] find/replace interaction result', result);
       if (result && typeof console.table === 'function') {
-        console.table(result.topEvents || []);
-        console.table(result.topMutations || []);
+        debugTable(result.topEvents || []);
+        debugTable(result.topMutations || []);
       }
-      if (result) console.info('[Toytype probe/content interaction json]', JSON.stringify(result));
+      if (result) debugLog('[Toytype probe/content interaction json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2303,8 +3301,8 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'runKnownFindAction failed');
       const result = res.result;
-      console.info('[Toytype probe/content] run docs find action result', result);
-      if (result) console.info('[Toytype probe/content run action json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] run docs find action result', result);
+      if (result) debugLog('[Toytype probe/content run action json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2315,9 +3313,9 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'probeFindReplaceUi failed');
       const result = res.result;
-      console.info('[Toytype probe/content] find/replace UI result', result);
-      if (result && typeof console.table === 'function') console.table(result.candidates || []);
-      if (result) console.info('[Toytype probe/content ui json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] find/replace UI result', result);
+      if (result && typeof console.table === 'function') debugTable(result.candidates || []);
+      if (result) debugLog('[Toytype probe/content ui json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2330,8 +3328,8 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'prepareFindReplaceUi failed');
       const result = res.result;
-      console.info('[Toytype probe/content] prepare find/replace UI result', result);
-      if (result) console.info('[Toytype probe/content prepare ui json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] prepare find/replace UI result', result);
+      if (result) debugLog('[Toytype probe/content prepare ui json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2343,8 +3341,8 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'clickFindReplaceButton failed');
       const result = res.result;
-      console.info('[Toytype probe/content] click find/replace button result', result);
-      if (result) console.info('[Toytype probe/content click button json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] click find/replace button result', result);
+      if (result) debugLog('[Toytype probe/content click button json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2357,8 +3355,8 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw docsModelError('applyFindReplaceOnce failed', res);
       const result = res.result;
-      console.info('[Toytype probe/content] apply find/replace once result', result);
-      if (result) console.info('[Toytype probe/content apply once json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] apply find/replace once result', result);
+      if (result) debugLog('[Toytype probe/content apply once json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2371,8 +3369,8 @@
     }, options || {})).then(res => {
       if (!res || !res.ok) throw docsModelError('applyInternalTextActionOnce failed', res);
       const result = res.result;
-      console.info('[Toytype probe/content] apply internal text action result', result);
-      if (result) console.info('[Toytype probe/content apply internal text action json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] apply internal text action result', result);
+      if (result) debugLog('[Toytype probe/content apply internal text action json]', JSON.stringify(result));
       return result;
     });
   }
@@ -2426,8 +3424,8 @@
       const result = res.result;
       const target = targetSummary(resolved);
       if (result && typeof result === 'object') result.target = target;
-      console.info('[Toytype probe/content] apply finding result', { target, finding, result });
-      if (result) console.info('[Toytype probe/content apply finding json]', JSON.stringify({ target, result }));
+      debugLog('[Toytype probe/content] apply finding result', { target, finding, result });
+      if (result) debugLog('[Toytype probe/content apply finding json]', JSON.stringify({ target, result }));
       if (result && result.verified && payload.rescan !== false) {
         enqueueScan(true, { quiet: true }); // 결과 반환을 막지 않는 백그라운드 재검사
       }
@@ -2441,15 +3439,15 @@
       const result = res.result;
       const target = targetSummary(resolved);
       if (result && typeof result === 'object') result.target = target;
-      console.info('[Toytype probe/content] apply finding internal text action result', { target, finding, result });
-      if (result) console.info('[Toytype probe/content apply finding internal text action json]', JSON.stringify({ target, result }));
+      debugLog('[Toytype probe/content] apply finding internal text action result', { target, finding, result });
+      if (result) debugLog('[Toytype probe/content apply finding internal text action json]', JSON.stringify({ target, result }));
       if (result && result.verified && payload.rescan !== false) {
         enqueueScan(true, { quiet: true }); // 결과 반환을 막지 않는 백그라운드 재검사
       }
       return result;
     }).catch(error => {
       const canFallback = payload.useFindReplaceFallback === true && !shouldPreventApplyFallback(error);
-      console.warn(canFallback ? '[Toytype apply] internal text action fallback' : '[Toytype apply] internal text action failed', {
+      debugWarn(canFallback ? '[Toytype apply] internal text action fallback' : '[Toytype apply] internal text action failed', {
         finding,
         error: summarizeErrorForConsole(error),
         response: error && error.response !== undefined ? error.response : undefined,
@@ -2577,8 +3575,8 @@
           button: buttonRes.result,
           documentMutated: false
         };
-        console.info('[Toytype probe/content] diagnose finding result', result);
-        console.info('[Toytype probe/content diagnose finding json]', JSON.stringify(result));
+        debugLog('[Toytype probe/content] diagnose finding result', result);
+        debugLog('[Toytype probe/content diagnose finding json]', JSON.stringify(result));
         return result;
       });
     });
@@ -2648,9 +3646,9 @@
       docId: getDocId(),
       items
     };
-    console.info('[Toytype probe/content] findings', result);
-    if (typeof console.table === 'function') console.table(items);
-    console.info('[Toytype probe/content findings json]', JSON.stringify(result));
+    debugLog('[Toytype probe/content] findings', result);
+    if (typeof console.table === 'function') debugTable(items);
+    debugLog('[Toytype probe/content findings json]', JSON.stringify(result));
     return result;
   }
 
@@ -2671,9 +3669,9 @@
           target: targetSummary(resolved),
           diagnosis
         };
-        console.info('[Toytype probe/content] full diagnose current finding result', result);
-        if (typeof console.table === 'function') console.table(list.items || []);
-        console.info('[Toytype probe/content full diagnose json]', JSON.stringify(result));
+        debugLog('[Toytype probe/content] full diagnose current finding result', result);
+        if (typeof console.table === 'function') debugTable(list.items || []);
+        debugLog('[Toytype probe/content full diagnose json]', JSON.stringify(result));
         return result;
       });
     });
@@ -2720,8 +3718,8 @@
         result.errors.current = summarizeErrorForConsole(error);
       });
     }).then(() => {
-      console.info('[Toytype probe/content] apply state', result);
-      console.info('[Toytype probe/content apply state json]', JSON.stringify(result));
+      debugLog('[Toytype probe/content] apply state', result);
+      debugLog('[Toytype probe/content apply state json]', JSON.stringify(result));
       return result;
     });
   }
@@ -3099,6 +4097,7 @@
       }
     }
     await injectPanel();
+    await loadCachedGeneratedRulesList();
     injectPageBridgeScript();
     refreshGeneratedRulesListQuiet();
     return enqueueScan(true);
@@ -3126,7 +4125,9 @@
         }
       }
       await injectPanel();
+      await loadCachedGeneratedRulesList();
       injectPageBridgeScript();
+      refreshGeneratedRulesListQuiet();
       enqueueScan(cachedText === null); // 캐시 없으면 fetch 허용
       return;
     }
@@ -3167,6 +4168,7 @@
       return;
     }
     await injectPanel();
+    await loadCachedGeneratedRulesList();
     injectPageBridgeScript();
     refreshGeneratedRulesListQuiet();
     // document_idle + 3000ms 후 1회 자동 스캔. 이후 자동 폴링 없음.

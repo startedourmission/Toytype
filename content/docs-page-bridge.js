@@ -1,6 +1,24 @@
 (function () {
   'use strict';
 
+  function debugLogsEnabled() {
+    try {
+      return window.ToytypeDebug === true || window.localStorage.getItem('toytype:debug') === '1';
+    } catch (e) {
+      return window.ToytypeDebug === true;
+    }
+  }
+
+  function debugLog() {
+    if (!debugLogsEnabled()) return;
+    console.info.apply(console, arguments);
+  }
+
+  function debugTable(data) {
+    if (!debugLogsEnabled() || typeof console.table !== 'function') return;
+    console.table(data);
+  }
+
   let contentCommandSeq = 0;
   let lastPreflightFindingTarget = null;
   let lastPreflightFindingSnapshot = null;
@@ -687,9 +705,9 @@
           .filter(item => item.score > 0 || item.kind === 'textInput')
           .sort((a, b) => (b.score - a.score) || ((a.rect && a.rect.y || 0) - (b.rect && b.rect.y || 0)))
           .slice(0, 80);
-        console.info('[Toytype probe] find/replace UI result', result);
-        if (typeof console.table === 'function') console.table(result.candidates);
-        console.info('[Toytype probe ui json]', JSON.stringify(result));
+        debugLog('[Toytype probe] find/replace UI result', result);
+        if (typeof console.table === 'function') debugTable(result.candidates);
+        debugLog('[Toytype probe ui json]', JSON.stringify(result));
         return result;
       });
     });
@@ -2915,9 +2933,9 @@
         if (acc.length >= limits.scriptMatches) return acc;
         return acc.concat(scanMutationScriptText(item.url, item.text, limits).slice(0, limits.scriptMatches - acc.length));
       }, []).slice(0, limits.scriptMatches);
-      console.info('[Toytype probe] mutation action candidates', result);
-      if (typeof console.table === 'function') console.table(result.actionSummaries.slice(0, 80));
-      console.info('[Toytype probe mutation actions json]', JSON.stringify(result));
+      debugLog('[Toytype probe] mutation action candidates', result);
+      if (typeof console.table === 'function') debugTable(result.actionSummaries.slice(0, 80));
+      debugLog('[Toytype probe mutation actions json]', JSON.stringify(result));
       return result;
     });
   }
@@ -3413,12 +3431,12 @@
       result.activeElementAfter = summarizeElement(document.activeElement);
       result.topEvents = result.events.slice().sort((a, b) => (b.score - a.score) || (a.t - b.t)).slice(0, 30);
       result.topMutations = result.mutations.slice().sort((a, b) => (b.score - a.score) || (a.t - b.t)).slice(0, 30);
-      console.info('[Toytype probe] find/replace interaction result', result);
+      debugLog('[Toytype probe] find/replace interaction result', result);
       if (typeof console.table === 'function') {
-        console.table(result.topEvents);
-        console.table(result.topMutations);
+        debugTable(result.topEvents);
+        debugTable(result.topMutations);
       }
-      console.info('[Toytype probe interaction json]', JSON.stringify(result));
+      debugLog('[Toytype probe interaction json]', JSON.stringify(result));
       return result;
     });
   }
@@ -3467,9 +3485,9 @@
     const payload = Object.assign({ docId: extractDocId() }, options || {});
     return getAnnotatedTextObject(payload).catch(() => null).then(obj => {
       return probeFindReplace(obj, payload).then(result => {
-        console.info('[Toytype probe] find/replace result', result);
-        if (typeof console.table === 'function') console.table(result.topCandidates);
-        console.info('[Toytype probe json]', JSON.stringify(result));
+        debugLog('[Toytype probe] find/replace result', result);
+        if (typeof console.table === 'function') debugTable(result.topCandidates);
+        debugLog('[Toytype probe json]', JSON.stringify(result));
         return result;
       });
     });
@@ -3486,8 +3504,8 @@
   window.ToytypeRunDocsFindAction = function ToytypeRunDocsFindAction(id, options) {
     const opts = Object.assign({ id: id || 'docs-find-and-replace-start' }, options || {});
     return Promise.resolve().then(() => runKnownFindAction(opts)).then(result => {
-      console.info('[Toytype probe] run docs find action result', result);
-      console.info('[Toytype probe run action json]', JSON.stringify(result));
+      debugLog('[Toytype probe] run docs find action result', result);
+      debugLog('[Toytype probe run action json]', JSON.stringify(result));
       return result;
     });
   };
@@ -3498,48 +3516,48 @@
 
   window.ToytypePrepareFindReplaceUi = function ToytypePrepareFindReplaceUi(findText, replaceText, options) {
     return prepareFindReplaceUi(Object.assign({ findText, replaceText }, options || {})).then(result => {
-      console.info('[Toytype probe] prepare find/replace UI result', result);
-      console.info('[Toytype probe prepare ui json]', JSON.stringify(result));
+      debugLog('[Toytype probe] prepare find/replace UI result', result);
+      debugLog('[Toytype probe prepare ui json]', JSON.stringify(result));
       return result;
     });
   };
 
   window.ToytypeClickFindReplaceButton = function ToytypeClickFindReplaceButton(mode, options) {
     return clickFindReplaceButton(Object.assign({ mode: mode || 'replace' }, options || {})).then(result => {
-      console.info('[Toytype probe] click find/replace button result', result);
-      console.info('[Toytype probe click button json]', JSON.stringify(result));
+      debugLog('[Toytype probe] click find/replace button result', result);
+      debugLog('[Toytype probe click button json]', JSON.stringify(result));
       return result;
     });
   };
 
   window.ToytypeRunReplaceAction = function ToytypeRunReplaceAction(options) {
     return runFindReplaceMutationAction(Object.assign({ mode: 'replace' }, options || {})).then(result => {
-      console.info('[Toytype probe] run replace action result', result);
-      console.info('[Toytype probe run replace action json]', JSON.stringify(result));
+      debugLog('[Toytype probe] run replace action result', result);
+      debugLog('[Toytype probe run replace action json]', JSON.stringify(result));
       return result;
     });
   };
 
   window.ToytypePrimeFindMatch = function ToytypePrimeFindMatch(options) {
     return runFindNavigationAction(options || {}).then(result => {
-      console.info('[Toytype probe] prime find match result', result);
-      console.info('[Toytype probe prime find match json]', JSON.stringify(result));
+      debugLog('[Toytype probe] prime find match result', result);
+      debugLog('[Toytype probe prime find match json]', JSON.stringify(result));
       return result;
     });
   };
 
   window.ToytypeApplyFindReplaceOnce = function ToytypeApplyFindReplaceOnce(findText, replaceText, options) {
     return applyFindReplaceOnce(Object.assign({ findText, replaceText }, options || {})).then(result => {
-      console.info('[Toytype probe] apply find/replace once result', result);
-      console.info('[Toytype probe apply once json]', JSON.stringify(result));
+      debugLog('[Toytype probe] apply find/replace once result', result);
+      debugLog('[Toytype probe apply once json]', JSON.stringify(result));
       return result;
     });
   };
 
   window.ToytypeApplyInternalTextActionOnce = function ToytypeApplyInternalTextActionOnce(findText, replaceText, options) {
     return applyInternalTextActionOnce(Object.assign({ findText, replaceText }, options || {})).then(result => {
-      console.info('[Toytype probe] apply internal text action result', result);
-      console.info('[Toytype probe apply internal text action json]', JSON.stringify(result));
+      debugLog('[Toytype probe] apply internal text action result', result);
+      debugLog('[Toytype probe apply internal text action json]', JSON.stringify(result));
       return result;
     });
   };
@@ -3558,8 +3576,8 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] apply finding by index result', response.result);
-      console.info('[Toytype probe apply finding json]', JSON.stringify({ index, result: response.result }));
+      debugLog('[Toytype probe] apply finding by index result', response.result);
+      debugLog('[Toytype probe apply finding json]', JSON.stringify({ index, result: response.result }));
       return response.result;
     });
   };
@@ -3577,8 +3595,8 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] apply current finding result', response.result);
-      console.info('[Toytype probe apply current finding json]', JSON.stringify(response.result));
+      debugLog('[Toytype probe] apply current finding result', response.result);
+      debugLog('[Toytype probe apply current finding json]', JSON.stringify(response.result));
       return response.result;
     });
   };
@@ -3597,8 +3615,8 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] diagnose finding by index result', response.result);
-      console.info('[Toytype probe diagnose finding json]', JSON.stringify({ index, result: response.result }));
+      debugLog('[Toytype probe] diagnose finding by index result', response.result);
+      debugLog('[Toytype probe diagnose finding json]', JSON.stringify({ index, result: response.result }));
       return response.result;
     });
   };
@@ -3616,8 +3634,8 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] diagnose current finding result', response.result);
-      console.info('[Toytype probe diagnose current finding json]', JSON.stringify(response.result));
+      debugLog('[Toytype probe] diagnose current finding result', response.result);
+      debugLog('[Toytype probe diagnose current finding json]', JSON.stringify(response.result));
       return response.result;
     });
   };
@@ -3635,11 +3653,11 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] full diagnose current finding result', response.result);
+      debugLog('[Toytype probe] full diagnose current finding result', response.result);
       if (response.result && response.result.findings && typeof console.table === 'function') {
-        console.table(response.result.findings.items || []);
+        debugTable(response.result.findings.items || []);
       }
-      console.info('[Toytype probe full diagnose json]', JSON.stringify(response.result));
+      debugLog('[Toytype probe full diagnose json]', JSON.stringify(response.result));
       return response.result;
     });
   };
@@ -3675,8 +3693,8 @@
         applyResult
       }));
     }).then(result => {
-      console.info('[Toytype probe] apply current with preflight result', result);
-      console.info('[Toytype probe apply current with preflight json]', JSON.stringify(result));
+      debugLog('[Toytype probe] apply current with preflight result', result);
+      debugLog('[Toytype probe apply current with preflight json]', JSON.stringify(result));
       return result;
     });
   };
@@ -3698,8 +3716,8 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] apply preflight finding result', response.result);
-      console.info('[Toytype probe apply preflight finding json]', JSON.stringify({
+      debugLog('[Toytype probe] apply preflight finding result', response.result);
+      debugLog('[Toytype probe apply preflight finding json]', JSON.stringify({
         target: lastPreflightFindingTarget,
         findingSnapshot: lastPreflightFindingSnapshot,
         result: response.result
@@ -3721,15 +3739,15 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] apply state result', response.result);
+      debugLog('[Toytype probe] apply state result', response.result);
       if (response.result && typeof console.table === 'function') {
-        console.table([
+        debugTable([
           Object.assign({ role: 'selected' }, response.result.selected && response.result.selected.finding || {}),
           Object.assign({ role: 'nearestCursor' }, response.result.nearestCursor && response.result.nearestCursor.finding || {}),
           Object.assign({ role: 'current' }, response.result.current && response.result.current.finding || {})
         ]);
       }
-      console.info('[Toytype probe apply state json]', JSON.stringify(response.result));
+      debugLog('[Toytype probe apply state json]', JSON.stringify(response.result));
       return response.result;
     });
   };
@@ -3747,9 +3765,9 @@
         if (response !== undefined) error.response = response;
         throw error;
       }
-      console.info('[Toytype probe] findings result', response.result);
-      if (response.result && typeof console.table === 'function') console.table(response.result.items || []);
-      console.info('[Toytype probe findings json]', JSON.stringify(response.result));
+      debugLog('[Toytype probe] findings result', response.result);
+      if (response.result && typeof console.table === 'function') debugTable(response.result.items || []);
+      debugLog('[Toytype probe findings json]', JSON.stringify(response.result));
       return response.result;
     });
   };
@@ -3786,25 +3804,25 @@
     };
   };
 
-  console.info('[Toytype probe] ready: run ToytypeProbeFindReplace() in this Google Docs console.');
-  console.info('[Toytype probe] mutation candidates: run ToytypeProbeMutationActions().');
-  console.info('[Toytype probe] interaction: run ToytypeProbeFindReplaceInteraction(), open find/replace, then wait.');
-  console.info('[Toytype probe] action: run ToytypeRunDocsFindAction("docs-find-and-replace-start").');
-  console.info('[Toytype probe] ui: run ToytypeProbeFindReplaceUi().');
-  console.info('[Toytype probe] prepare UI: run ToytypePrepareFindReplaceUi("찾을말", "바꿀말").');
-  console.info('[Toytype probe] click button: run ToytypeClickFindReplaceButton("replace", {confirmMutation:true}).');
-  console.info('[Toytype probe] run replace action: run ToytypeRunReplaceAction({confirmMutation:true}).');
-  console.info('[Toytype probe] apply once: run ToytypeApplyFindReplaceOnce("찾을말", "바꿀말", {confirmMutation:true}).');
-  console.info('[Toytype probe] apply internal text action: run ToytypeApplyInternalTextActionOnce("찾을말", "바꿀말", {start:0,end:0,confirmMutation:true}).');
-  console.info('[Toytype probe] apply state: run ToytypeApplyState().');
-  console.info('[Toytype probe] list findings: run ToytypeListFindings().');
-  console.info('[Toytype probe] diagnose list item: run ToytypeDiagnoseFindingAtIndex(0).');
-  console.info('[Toytype probe] diagnose current item: run ToytypeDiagnoseCurrentFinding().');
-  console.info('[Toytype probe] full diagnose current item: run ToytypeFullDiagnoseCurrentFinding().');
-  console.info('[Toytype probe] preflight current item: run ToytypePreflightCurrentFinding().');
-  console.info('[Toytype probe] apply preflight item: run ToytypeApplyLastPreflightFinding({confirmMutation:true}).');
-  console.info('[Toytype probe] preflight + apply current item: run ToytypeApplyCurrentFindingWithPreflight({confirmMutation:true}).');
-  console.info('[Toytype probe] apply list item: run ToytypeApplyFindingAtIndex(0, {confirmMutation:true}).');
-  console.info('[Toytype probe] apply current item: run ToytypeApplyCurrentFinding({confirmMutation:true}).');
+  debugLog('[Toytype probe] ready: run ToytypeProbeFindReplace() in this Google Docs console.');
+  debugLog('[Toytype probe] mutation candidates: run ToytypeProbeMutationActions().');
+  debugLog('[Toytype probe] interaction: run ToytypeProbeFindReplaceInteraction(), open find/replace, then wait.');
+  debugLog('[Toytype probe] action: run ToytypeRunDocsFindAction("docs-find-and-replace-start").');
+  debugLog('[Toytype probe] ui: run ToytypeProbeFindReplaceUi().');
+  debugLog('[Toytype probe] prepare UI: run ToytypePrepareFindReplaceUi("찾을말", "바꿀말").');
+  debugLog('[Toytype probe] click button: run ToytypeClickFindReplaceButton("replace", {confirmMutation:true}).');
+  debugLog('[Toytype probe] run replace action: run ToytypeRunReplaceAction({confirmMutation:true}).');
+  debugLog('[Toytype probe] apply once: run ToytypeApplyFindReplaceOnce("찾을말", "바꿀말", {confirmMutation:true}).');
+  debugLog('[Toytype probe] apply internal text action: run ToytypeApplyInternalTextActionOnce("찾을말", "바꿀말", {start:0,end:0,confirmMutation:true}).');
+  debugLog('[Toytype probe] apply state: run ToytypeApplyState().');
+  debugLog('[Toytype probe] list findings: run ToytypeListFindings().');
+  debugLog('[Toytype probe] diagnose list item: run ToytypeDiagnoseFindingAtIndex(0).');
+  debugLog('[Toytype probe] diagnose current item: run ToytypeDiagnoseCurrentFinding().');
+  debugLog('[Toytype probe] full diagnose current item: run ToytypeFullDiagnoseCurrentFinding().');
+  debugLog('[Toytype probe] preflight current item: run ToytypePreflightCurrentFinding().');
+  debugLog('[Toytype probe] apply preflight item: run ToytypeApplyLastPreflightFinding({confirmMutation:true}).');
+  debugLog('[Toytype probe] preflight + apply current item: run ToytypeApplyCurrentFindingWithPreflight({confirmMutation:true}).');
+  debugLog('[Toytype probe] apply list item: run ToytypeApplyFindingAtIndex(0, {confirmMutation:true}).');
+  debugLog('[Toytype probe] apply current item: run ToytypeApplyCurrentFinding({confirmMutation:true}).');
   window.postMessage({ kind: 'typo-radar:page-bridge-ready' }, '*');
 })();

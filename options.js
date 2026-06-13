@@ -1,6 +1,8 @@
 'use strict';
 
 const DEFAULT_TOC_MAX_LEVEL = 4;
+const DEFAULT_CLEANUP_DAYS = 30;
+const CLEANUP_DAY_OPTIONS = [1, 7, 30, 60, 180];
 
 const DEFAULT_AI = {
   provider: 'codex',
@@ -25,6 +27,8 @@ const els = {
   workspaceDir: document.getElementById('workspaceDir'),
   outputDir: document.getElementById('outputDir'),
   openOutputDir: document.getElementById('openOutputDir'),
+  cleanupDays: document.getElementById('cleanupDays'),
+  cleanupGenerated: document.getElementById('cleanupGenerated'),
   requestTimeoutMs: document.getElementById('requestTimeoutMs'),
   maxDocumentChars: document.getElementById('maxDocumentChars'),
   tocMaxLevel: document.getElementById('tocMaxLevel'),
@@ -38,6 +42,10 @@ function aiFromSettings(settings) {
 
 function tocMaxLevelFromSettings(settings) {
   return clampNumber(settings && settings.tocMaxLevel, DEFAULT_TOC_MAX_LEVEL, 1, 5);
+}
+
+function cleanupDaysFromSettings(settings) {
+  return cleanupDaysValue(settings && settings.generatedJsonCleanupDays);
 }
 
 async function readSettings() {
@@ -76,6 +84,11 @@ function formToAi() {
     requestTimeoutMs: clampNumber(els.requestTimeoutMs.value, DEFAULT_AI.requestTimeoutMs, 5000, 3600000),
     maxDocumentChars: clampNumber(els.maxDocumentChars.value, DEFAULT_AI.maxDocumentChars, 1000, 1000000)
   };
+}
+
+function cleanupDaysValue(value) {
+  const n = Number(value);
+  return CLEANUP_DAY_OPTIONS.includes(n) ? n : DEFAULT_CLEANUP_DAYS;
 }
 
 function fillForm(ai) {
@@ -138,6 +151,23 @@ function formatStatus(res) {
   if (res.opened && res.outputDir) {
     return '저장 폴더를 열었습니다.\n\n' + res.outputDir;
   }
+  if (res.cleaned) {
+    const lines = [
+      '오래된 생성 JSON 제거 완료',
+      '',
+      '기준: ' + String(res.days) + '일 이전',
+      '삭제: ' + String(res.deleted) + '개',
+      '건너뜀: ' + String(res.skipped) + '개',
+      '무시: ' + String(res.ignored || 0) + '개',
+      '폴더: ' + String(res.outputDir || '')
+    ];
+    if (Array.isArray(res.deletedFiles) && res.deletedFiles.length) {
+      lines.push('', '삭제한 파일:');
+      for (const file of res.deletedFiles) lines.push('- ' + String(file.fileName || file));
+      if (res.deletedFilesTruncated) lines.push('- ...');
+    }
+    return lines.join('\n');
+  }
   return JSON.stringify(res, null, 2);
 }
 
@@ -147,6 +177,7 @@ async function save() {
   settings.ai = ai;
   settings.tocMaxLevel = clampNumber(els.tocMaxLevel.value, DEFAULT_TOC_MAX_LEVEL, 1, 5);
   settings.copyOnSelect = els.copyOnSelect.checked;
+  settings.generatedJsonCleanupDays = cleanupDaysValue(els.cleanupDays.value);
   await chrome.storage.local.set({ settings });
   fillForm(ai);
   setStatus('저장됨');
@@ -188,6 +219,13 @@ async function openOutputDir() {
   setStatus(res);
 }
 
+async function cleanupGenerated() {
+  const days = cleanupDaysValue(els.cleanupDays.value);
+  setStatus(String(days) + '일 이전 생성 JSON 제거 중...');
+  const res = await sendBridge('cleanupGenerated', { days });
+  setStatus(res);
+}
+
 function handleUiError(context, error) {
   console.error('[Toytype options] ' + context, error);
   setStatus(error && error.message ? error.message : String(error));
@@ -197,6 +235,7 @@ async function init() {
   const settings = await readSettings();
   fillForm(aiFromSettings(settings));
   els.tocMaxLevel.value = String(tocMaxLevelFromSettings(settings));
+  els.cleanupDays.value = String(cleanupDaysFromSettings(settings));
   els.copyOnSelect.checked = settings.copyOnSelect !== false;
   setStatus('설정을 불러왔습니다.');
   try {
@@ -246,6 +285,7 @@ els.health.addEventListener('click', () => { checkHealth().catch(error => handle
 els.testCodex.addEventListener('click', () => { test('codex').catch(error => handleUiError('codex test failed', error)); });
 els.testClaude.addEventListener('click', () => { test('claude').catch(error => handleUiError('claude test failed', error)); });
 els.openOutputDir.addEventListener('click', () => { openOutputDir().catch(error => handleUiError('open output directory failed', error)); });
+els.cleanupGenerated.addEventListener('click', () => { cleanupGenerated().catch(error => handleUiError('cleanup generated JSON failed', error)); });
 els.bridgeUrl.addEventListener('input', updateBridgeCommand);
 
 init().catch(error => handleUiError('init failed', error));

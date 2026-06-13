@@ -66,6 +66,19 @@
         </label>
         <button id="openOutputDir" class="btn" type="button">폴더 열기</button>
       </div>
+      <div class="field-with-action">
+        <label class="field">
+          <span>오래된 생성 JSON 제거</span>
+          <select id="cleanupDays">
+            <option value="1">1일 이전</option>
+            <option value="7">7일 이전</option>
+            <option value="30" selected>30일 이전</option>
+            <option value="60">60일 이전</option>
+            <option value="180">180일 이전</option>
+          </select>
+        </label>
+        <button id="cleanupGenerated" class="btn" type="button">제거</button>
+      </div>
       <div class="inline-fields">
         <label class="field">
           <span>요청 제한 시간(ms)</span>

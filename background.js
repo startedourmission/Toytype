@@ -108,6 +108,21 @@ async function callAiBridge(path, payload) {
   }
 }
 
+function aiBridgePath(action) {
+  const paths = {
+    health: '/health',
+    test: '/ai/test',
+    proofread: '/ai/proofread',
+    question: '/ai/question',
+    adjustLength: '/ai/adjust-length',
+    listGenerated: '/fs/list-generated',
+    openOutputDir: '/fs/open-output-dir',
+    cleanupGenerated: '/fs/cleanup-generated',
+    deleteSentenceSuggestion: '/fs/delete-sentence-suggestion'
+  };
+  return paths[action] || '';
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
 
@@ -164,12 +179,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'typo:aiBridge') {
     const action = msg.action;
     const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
-    const path = action === 'health' ? '/health'
-      : action === 'test' ? '/ai/test'
-        : action === 'proofread' ? '/ai/proofread'
-          : action === 'listGenerated' ? '/fs/list-generated'
-            : action === 'openOutputDir' ? '/fs/open-output-dir'
-              : '';
+    const path = aiBridgePath(action);
     if (!path) {
       sendResponse({ ok: false, error: 'unknown_ai_bridge_action' });
       return;

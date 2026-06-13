@@ -12,6 +12,9 @@ const VERSION = '1.0.0';
 const BRIDGE_FILE = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.resolve(path.dirname(BRIDGE_FILE), '..');
 const BUILTIN_RULES_PATH = path.join(PROJECT_ROOT, 'rules.json');
+const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
+const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
+const GENERATED_CLEANUP_DAYS = [1, 7, 30, 60, 180];
 let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
 
@@ -22,7 +25,12 @@ const DEFAULT_SETTINGS = {
   workspaceDir: '~/Dev/Toytype',
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 10 * 60 * 1000,
-  maxDocumentChars: 180000
+  maxDocumentChars: 180000,
+  questionCodexModel: '',
+  questionCodexReasoningEffort: 'low',
+  questionClaudeModel: 'fable',
+  questionContextBeforeChars: 3500,
+  questionContextAfterChars: 2500
 };
 
 class HttpError extends Error {
@@ -50,7 +58,12 @@ function mergeSettings(input) {
     workspaceDir: expandHome(typeof s.workspaceDir === 'string' && s.workspaceDir.trim() ? s.workspaceDir.trim() : DEFAULT_SETTINGS.workspaceDir),
     outputDir: expandHome(typeof s.outputDir === 'string' && s.outputDir.trim() ? s.outputDir.trim() : DEFAULT_SETTINGS.outputDir),
     requestTimeoutMs: clampNumber(s.requestTimeoutMs, DEFAULT_SETTINGS.requestTimeoutMs, 5000, 60 * 60 * 1000),
-    maxDocumentChars: clampNumber(s.maxDocumentChars, DEFAULT_SETTINGS.maxDocumentChars, 1000, 1000000)
+    maxDocumentChars: clampNumber(s.maxDocumentChars, DEFAULT_SETTINGS.maxDocumentChars, 1000, 1000000),
+    questionCodexModel: typeof s.questionCodexModel === 'string' ? s.questionCodexModel.trim() : DEFAULT_SETTINGS.questionCodexModel,
+    questionCodexReasoningEffort: typeof s.questionCodexReasoningEffort === 'string' && s.questionCodexReasoningEffort.trim() ? s.questionCodexReasoningEffort.trim() : DEFAULT_SETTINGS.questionCodexReasoningEffort,
+    questionClaudeModel: typeof s.questionClaudeModel === 'string' && s.questionClaudeModel.trim() ? s.questionClaudeModel.trim() : DEFAULT_SETTINGS.questionClaudeModel,
+    questionContextBeforeChars: clampNumber(s.questionContextBeforeChars, DEFAULT_SETTINGS.questionContextBeforeChars, 500, 20000),
+    questionContextAfterChars: clampNumber(s.questionContextAfterChars, DEFAULT_SETTINGS.questionContextAfterChars, 500, 20000)
   };
 }
 
@@ -201,6 +214,12 @@ async function runCodex(prompt, settings, options = {}) {
     '--output-last-message', lastMessagePath,
     '-'
   ];
+  if (typeof options.model === 'string' && options.model.trim()) {
+    args.splice(1, 0, '--model', options.model.trim());
+  }
+  if (typeof options.reasoningEffort === 'string' && options.reasoningEffort.trim()) {
+    args.splice(1, 0, '-c', `model_reasoning_effort="${options.reasoningEffort.trim()}"`);
+  }
   const result = await runCommand(settings.codexCommand, args, {
     cwd: settings.workspaceDir,
     input: prompt,
@@ -224,6 +243,9 @@ async function runClaude(prompt, settings, options = {}) {
     '--tools', '',
     '--no-session-persistence'
   ];
+  if (typeof options.model === 'string' && options.model.trim()) {
+    args.push('--model', options.model.trim());
+  }
   const result = await runCommand(settings.claudeCommand, args, {
     cwd: settings.workspaceDir,
     input: prompt,
@@ -259,6 +281,7 @@ function buildProofreadPrompt(document, settings) {
     'Use the book-editing manuscript review mode, the existing Toytype rules.json reference, and the document text below. Return only one valid JSON object. Do not wrap it in markdown.',
     refs,
     projectSpecificRuleInstructions(),
+    manuscriptNotationInstructions(),
     '',
     'Hard requirements:',
     '- Output JSON must have version, source, categories.',
@@ -295,6 +318,122 @@ function buildProofreadPrompt(document, settings) {
   ].join('\n');
 }
 
+function buildQuestionPrompt(document, settings) {
+  const title = document.title || document.id || 'Google Docs document';
+  const docId = document.id || '';
+  const url = document.url || '';
+  const before = String(document.contextBefore || document.textBefore || '').slice(-settings.questionContextBeforeChars);
+  const after = String(document.contextAfter || document.textAfter || '').slice(0, settings.questionContextAfterChars);
+  const meta = {
+    title,
+    docId,
+    url,
+    cursorOffset: Number.isFinite(Number(document.cursorOffset)) ? Number(document.cursorOffset) : null,
+    totalChars: Number.isFinite(Number(document.totalChars)) ? Number(document.totalChars) : null,
+    beforeChars: before.length,
+    afterChars: after.length
+  };
+
+  return [
+    'You write Korean reader prompts ("발문") for a manuscript.',
+    '',
+    'Generate one Korean 발문 to insert at the current cursor position.',
+    'Use the surrounding manuscript context to make it specific and natural.',
+    manuscriptNotationInstructions(),
+    '',
+    'Hard requirements:',
+    '- Return only the text to insert. No markdown, no heading, no label, no quotes, no bullets, no explanation.',
+    '- Write about 200 Korean characters. Target 160-240 characters.',
+    '- Use one compact paragraph.',
+    '- Make it a thoughtful reader-facing prompt or question that connects the preceding and following context.',
+    '- Do not summarize the whole document. Do not mention AI, cursor, context, or this instruction.',
+    '- Preserve the manuscript tone. Avoid exaggerated marketing copy.',
+    '',
+    'Document metadata:',
+    JSON.stringify(meta, null, 2),
+    '',
+    'Text before cursor:',
+    '<<<TOYTYPE_CONTEXT_BEFORE',
+    before,
+    'TOYTYPE_CONTEXT_BEFORE',
+    '',
+    'Text after cursor:',
+    '<<<TOYTYPE_CONTEXT_AFTER',
+    after,
+    'TOYTYPE_CONTEXT_AFTER'
+  ].join('\n');
+}
+
+function buildLengthAdjustmentPrompt(document) {
+  const selectedText = String(document.selectedText || '');
+  const targetPercent = clampNumber(document.targetPercent, 100, 10, 500);
+  const contextBefore = String(document.contextBefore || '').slice(-1200);
+  const contextAfter = String(document.contextAfter || '').slice(0, 1200);
+  const currentChars = Array.from(selectedText).length;
+  const targetChars = Math.max(1, Math.round(currentChars * targetPercent / 100));
+  const title = document.title || document.id || 'Google Docs document';
+  const meta = {
+    title,
+    docId: document.id || '',
+    targetPercent,
+    currentChars,
+    targetChars,
+    selectionStart: Number.isFinite(Number(document.selectionStart)) ? Number(document.selectionStart) : null,
+    selectionEnd: Number.isFinite(Number(document.selectionEnd)) ? Number(document.selectionEnd) : null
+  };
+
+  return [
+    'You adjust the length of a selected Korean manuscript sentence or passage.',
+    '',
+    'Return only one valid Toytype-compatible JSON object. Do not wrap it in markdown.',
+    manuscriptNotationInstructions(),
+    '',
+    'Hard requirements:',
+    '- Output JSON must have version, source, categories.',
+    `- Include exactly one rule whose sourceText is exactly the selected text below.`,
+    '- The replacement must preserve the meaning, tone, terminology, and factual claims.',
+    `- Adjust the replacement length toward ${targetPercent}% of the selected text. Target about ${targetChars} Korean characters; naturalness is more important than exact count.`,
+    '- If shortening, remove redundancy rather than changing the point.',
+    '- If lengthening, add clarifying connective detail grounded only in the provided context. Do not invent facts.',
+    '- Return no notes outside JSON.',
+    '- Use category id "ai-sentence-suggestions" and label "AI 문장 제안".',
+    '',
+    'Document metadata:',
+    JSON.stringify(meta, null, 2),
+    '',
+    'Context before selection:',
+    '<<<TOYTYPE_CONTEXT_BEFORE',
+    contextBefore,
+    'TOYTYPE_CONTEXT_BEFORE',
+    '',
+    'Selected text:',
+    '<<<TOYTYPE_SELECTED_TEXT',
+    selectedText,
+    'TOYTYPE_SELECTED_TEXT',
+    '',
+    'Context after selection:',
+    '<<<TOYTYPE_CONTEXT_AFTER',
+    contextAfter,
+    'TOYTYPE_CONTEXT_AFTER',
+    '',
+    'Required JSON shape:',
+    JSON.stringify({
+      version: 'YYYY-MM-DD',
+      source: 'sentence-suggestions:' + title,
+      categories: [{
+        id: SENTENCE_SUGGESTION_CATEGORY_ID,
+        label: SENTENCE_SUGGESTION_CATEGORY_LABEL,
+        defaultOn: true,
+        rules: [[selectedText, 'length-adjusted replacement']]
+      }]
+    }, null, 2)
+  ].join('\n');
+}
+
+function cheapModelForProvider(provider, settings) {
+  return provider === 'claude' ? settings.questionClaudeModel : settings.questionCodexModel;
+}
+
 function projectSpecificRuleInstructions() {
   return `Toytype project-specific rules (high priority):
 - The built-in rules intentionally prefer 붙여쓰기 for many auxiliary-verb-style forms. Do not "correct" these into spaced forms.
@@ -303,6 +442,14 @@ function projectSpecificRuleInstructions() {
 - The same applies to project rules that join "어 보/어 주/어 둡" style fragments into "어보/어주/어둡". Treat those joined forms as intentional Toytype style, not spacing errors.
 - Do not make style-only compression rules such as "하기 위해서" -> "하려면". Keep "하기 위해서" unless there is a concrete 비문 or content problem beyond length/style preference.
 - When a candidate is only generic Korean spacing advice and conflicts with these house rules, omit it.`;
+}
+
+function manuscriptNotationInstructions() {
+  return `Manuscript notation rules (high priority):
+- Use "➝" as the only arrow symbol in generated or replacement text. Do not use "->", "→", "⇒", or "=>".
+- Wrap buttons, menu items that must be clicked, and keyboard shortcuts/keys in square brackets. Examples: [확인], [Code 탭], [Enter], [⌘S].
+- For Mac keyboard shortcuts, use "⌥" for Option and "⌘" for Command. Do not spell those modifier keys as Option, 옵션, Command, 커맨드, or Cmd in replacement text.
+- For Toytype JSON rules, sourceText must still be copied exactly from the document even when it violates these notation rules. Apply these rules to replacementText, generated 발문 text, and notes.`;
 }
 
 function bookEditingReferenceInstructions() {
@@ -383,6 +530,40 @@ function extractJsonObject(text) {
     }
   }
   throw new HttpError(502, 'AI response did not contain a valid JSON object', { responseTail: tail(input) });
+}
+
+function normalizeGeneratedQuestionText(text) {
+  let out = String(text || '').trim();
+  out = out.replace(/^```(?:text|markdown|md)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  out = out.replace(/^(?:발문|AI\s*발문|삽입\s*발문)\s*[:：]\s*/i, '').trim();
+  if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
+    out = out.slice(1, -1).trim();
+  }
+  out = out
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*[-*]\s+/, '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!out) throw new HttpError(502, 'AI response did not contain question text', { responseTail: tail(text) });
+  return out;
+}
+
+function firstReplacementFromToytypeJson(json) {
+  if (!json || typeof json !== 'object') return '';
+  if (typeof json.replacement === 'string' && json.replacement.trim()) return json.replacement;
+  if (typeof json.text === 'string' && json.text.trim()) return json.text;
+  if (!Array.isArray(json.categories)) return '';
+  for (const cat of json.categories) {
+    if (!cat || !Array.isArray(cat.rules)) continue;
+    for (const rule of cat.rules) {
+      if (Array.isArray(rule) && typeof rule[1] === 'string' && rule[1].trim()) {
+        return rule[1];
+      }
+    }
+  }
+  return '';
 }
 
 function validateToytypeJson(json) {
@@ -578,6 +759,169 @@ function writeGeneratedJson(json, document, settings) {
   return { fileName, displayName: generatedJsonDisplayName(fileName), outputPath };
 }
 
+function sentenceSuggestionFileName(document) {
+  const docId = sanitizeFilename(document && (document.id || extractDocId(document.url)) || 'document');
+  return `${docId}-문장제안.json`;
+}
+
+function isSentenceSuggestionFileName(fileName) {
+  return /-문장제안\.json$/i.test(String(fileName || ''));
+}
+
+function createSentenceSuggestionJson(document) {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    version: today,
+    source: 'sentence-suggestions:' + (document.title || document.id || 'Google Docs document'),
+    categories: [{
+      id: SENTENCE_SUGGESTION_CATEGORY_ID,
+      label: SENTENCE_SUGGESTION_CATEGORY_LABEL,
+      defaultOn: true,
+      rules: []
+    }],
+    notes: [],
+    documentId: document.id || '',
+    documentTitle: document.title || '',
+    documentUrl: document.url || ''
+  };
+}
+
+function sentenceSuggestionCategory(json) {
+  if (!json || typeof json !== 'object') throw new HttpError(502, 'Toytype JSON must be an object');
+  if (!Array.isArray(json.categories)) json.categories = [];
+  let cat = json.categories.find(item => item && item.id === SENTENCE_SUGGESTION_CATEGORY_ID);
+  if (!cat) {
+    cat = {
+      id: SENTENCE_SUGGESTION_CATEGORY_ID,
+      label: SENTENCE_SUGGESTION_CATEGORY_LABEL,
+      defaultOn: true,
+      rules: []
+    };
+    json.categories.push(cat);
+  }
+  if (!Array.isArray(cat.rules)) cat.rules = [];
+  if (!cat.label) cat.label = SENTENCE_SUGGESTION_CATEGORY_LABEL;
+  return cat;
+}
+
+function buildSentenceSuggestionJson(document, rule, note) {
+  const json = createSentenceSuggestionJson(document);
+  sentenceSuggestionCategory(json).rules.push(rule);
+  if (note && typeof note === 'object') json.notes.push(note);
+  return validateToytypeJson(json);
+}
+
+function appendSentenceSuggestionJson(incoming, document, settings) {
+  fs.mkdirSync(settings.outputDir, { recursive: true });
+  const fileName = sentenceSuggestionFileName(document);
+  const outputPath = path.join(settings.outputDir, fileName);
+  let json = createSentenceSuggestionJson(document);
+  try {
+    if (fs.existsSync(outputPath)) {
+      json = validateToytypeJson(normalizeGeneratedToytypeJson(JSON.parse(fs.readFileSync(outputPath, 'utf8')), document));
+    }
+  } catch (_) {
+    json = createSentenceSuggestionJson(document);
+  }
+
+  json.version = new Date().toISOString().slice(0, 10);
+  json.source = 'sentence-suggestions:' + (document.title || document.id || 'Google Docs document');
+  json.documentId = document.id || '';
+  json.documentTitle = document.title || '';
+  json.documentUrl = document.url || '';
+  if (!Array.isArray(json.notes)) json.notes = [];
+
+  const target = sentenceSuggestionCategory(json);
+  const seen = new Set(target.rules.map(rule => JSON.stringify(rule)));
+  for (const cat of incoming.categories || []) {
+    if (!cat || !Array.isArray(cat.rules)) continue;
+    for (const rule of cat.rules) {
+      if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') continue;
+      if (!rule[0].trim() || rule[0] === rule[1]) continue;
+      const nextRule = rule.length === 3 && validRuleOptions(rule[2])
+        ? [rule[0], rule[1], cloneRuleOptions(rule[2])]
+        : [rule[0], rule[1]];
+      const key = JSON.stringify(nextRule);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      target.rules.push(nextRule);
+    }
+  }
+  if (Array.isArray(incoming.notes)) {
+    json.notes.push(...incoming.notes.filter(note => note && typeof note === 'object'));
+  }
+  validateToytypeJson(json);
+  fs.writeFileSync(outputPath, JSON.stringify(json, null, 2) + '\n', 'utf8');
+  return { fileName, displayName: generatedJsonDisplayName(fileName), outputPath, json };
+}
+
+function deleteSentenceSuggestionRule(body) {
+  const settings = mergeSettings(body.settings);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const request = body.rule && typeof body.rule === 'object' ? body.rule : {};
+  const sourceText = typeof request.sourceText === 'string' ? request.sourceText : '';
+  const replacementText = typeof request.replacementText === 'string' ? request.replacementText : '';
+  const categoryId = typeof request.categoryId === 'string' && request.categoryId ? request.categoryId : SENTENCE_SUGGESTION_CATEGORY_ID;
+  const ruleIndex = Number.isInteger(Number(request.ruleIndex)) ? Number(request.ruleIndex) : -1;
+  if (!sourceText && !replacementText) throw new HttpError(400, 'rule.sourceText or rule.replacementText is required');
+
+  const fileName = sentenceSuggestionFileName(document);
+  const outputPath = path.join(settings.outputDir, fileName);
+  let json = null;
+  try {
+    json = validateToytypeJson(normalizeGeneratedToytypeJson(JSON.parse(fs.readFileSync(outputPath, 'utf8')), document));
+  } catch (error) {
+    throw new HttpError(404, 'sentence suggestion JSON not found', { fileName, outputPath });
+  }
+
+  const cat = json.categories.find(item => item && item.id === categoryId && Array.isArray(item.rules));
+  if (!cat) throw new HttpError(404, 'sentence suggestion category not found', { fileName, categoryId });
+
+  let deleteIndex = -1;
+  if (ruleIndex >= 0 && ruleIndex < cat.rules.length && sentenceSuggestionRuleMatches(cat.rules[ruleIndex], request)) {
+    deleteIndex = ruleIndex;
+  } else {
+    deleteIndex = cat.rules.findIndex(rule => sentenceSuggestionRuleMatches(rule, request));
+  }
+  if (deleteIndex < 0) {
+    throw new HttpError(404, 'sentence suggestion rule not found', {
+      fileName,
+      categoryId,
+      sourceText,
+      replacementText
+    });
+  }
+
+  const removed = cat.rules.splice(deleteIndex, 1)[0];
+  json.version = new Date().toISOString().slice(0, 10);
+  json.documentId = document.id || json.documentId || '';
+  json.documentTitle = document.title || json.documentTitle || '';
+  json.documentUrl = document.url || json.documentUrl || '';
+  fs.writeFileSync(outputPath, JSON.stringify(json, null, 2) + '\n', 'utf8');
+  return {
+    ok: true,
+    deleted: true,
+    fileName,
+    displayName: generatedJsonDisplayName(fileName),
+    outputPath,
+    json,
+    removedRule: removed,
+    ruleCount: countRules(json)
+  };
+}
+
+function sentenceSuggestionRuleMatches(rule, request) {
+  if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') return false;
+  if (typeof request.sourceText === 'string' && rule[0] !== request.sourceText) return false;
+  if (typeof request.replacementText === 'string' && rule[1] !== request.replacementText) return false;
+  if (request.options && validRuleOptions(request.options)) {
+    const options = rule.length === 3 && validRuleOptions(rule[2]) ? cloneRuleOptions(rule[2]) : {};
+    return JSON.stringify(options) === JSON.stringify(cloneRuleOptions(request.options));
+  }
+  return true;
+}
+
 function migrateGeneratedJsonFiles(settings, document) {
   const docId = document && (document.id || extractDocId(document.url));
   if (!docId) return { renamed: 0, skipped: 0 };
@@ -593,6 +937,7 @@ function migrateGeneratedJsonFiles(settings, document) {
   let skipped = 0;
   for (const name of names) {
     if (!/\.json$/i.test(name)) continue;
+    if (isSentenceSuggestionFileName(name)) continue;
     const existingStamp = extractGeneratedJsonStamp(name);
     if (existingStamp && name === generatedJsonFileName(safeDocId, existingStamp)) continue;
     const filePath = path.join(settings.outputDir, name);
@@ -648,6 +993,7 @@ function generatedJsonFileNameMatchesPrefix(fileName, prefix) {
 }
 
 function generatedJsonDisplayName(fileName) {
+  if (isSentenceSuggestionFileName(fileName)) return '문장제안.json';
   const stamp = extractGeneratedJsonStamp(fileName);
   return stamp ? `ai 검토-${stamp}.json` : String(fileName || 'ai 검토.json');
 }
@@ -747,6 +1093,88 @@ async function openOutputDir(body) {
   return { ok: true, opened: true, outputDir: settings.outputDir };
 }
 
+function generatedCleanupDays(value) {
+  const n = Number(value);
+  if (GENERATED_CLEANUP_DAYS.includes(n)) return n;
+  throw new HttpError(400, 'invalid cleanup days', {
+    allowedDays: GENERATED_CLEANUP_DAYS
+  });
+}
+
+function isGeneratedCleanupFileName(fileName) {
+  const name = String(fileName || '');
+  return isSentenceSuggestionFileName(name) || !!extractGeneratedJsonStamp(name);
+}
+
+function cleanupGeneratedJsonFiles(body) {
+  const settings = mergeSettings(body.settings);
+  const days = generatedCleanupDays(body.days);
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  let names = [];
+  try {
+    names = fs.readdirSync(settings.outputDir);
+  } catch (_) {
+    return {
+      ok: true,
+      cleaned: true,
+      outputDir: settings.outputDir,
+      days,
+      cutoffMs,
+      deleted: 0,
+      skipped: 0,
+      ignored: 0,
+      deletedFiles: []
+    };
+  }
+
+  let skipped = 0;
+  let ignored = 0;
+  const deletedFiles = [];
+  for (const name of names) {
+    if (!/\.json$/i.test(name) || !isGeneratedCleanupFileName(name)) {
+      ignored++;
+      continue;
+    }
+    const filePath = path.join(settings.outputDir, name);
+    let stat = null;
+    let json = null;
+    try {
+      stat = fs.lstatSync(filePath);
+      if (!stat.isFile()) {
+        skipped++;
+        continue;
+      }
+      if (stat.mtimeMs >= cutoffMs) {
+        skipped++;
+        continue;
+      }
+      json = validateToytypeJson(normalizeGeneratedToytypeJson(JSON.parse(fs.readFileSync(filePath, 'utf8')), {}));
+      fs.unlinkSync(filePath);
+      deletedFiles.push({
+        fileName: name,
+        displayName: generatedJsonDisplayName(name),
+        mtimeMs: stat.mtimeMs,
+        ruleCount: countRules(json)
+      });
+    } catch (_) {
+      skipped++;
+    }
+  }
+
+  return {
+    ok: true,
+    cleaned: true,
+    outputDir: settings.outputDir,
+    days,
+    cutoffMs,
+    deleted: deletedFiles.length,
+    skipped,
+    ignored,
+    deletedFiles: deletedFiles.slice(0, 100),
+    deletedFilesTruncated: deletedFiles.length > 100
+  };
+}
+
 function extractDocId(urlOrId) {
   const value = String(urlOrId || '');
   let m = value.match(/\/document\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]+)/);
@@ -792,6 +1220,128 @@ async function generateProofread(body) {
     fileName: file.fileName,
     displayName: file.displayName,
     outputPath: file.outputPath,
+    elapsedMs: run.elapsedMs,
+    stdoutTail: tail(run.stdout, 1200),
+    stderrTail: tail(run.stderr, 1200)
+  };
+}
+
+async function generateQuestion(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const hasBefore = typeof document.contextBefore === 'string' || typeof document.textBefore === 'string';
+  const hasAfter = typeof document.contextAfter === 'string' || typeof document.textAfter === 'string';
+  if (!hasBefore && !hasAfter) {
+    throw new HttpError(400, 'document.contextBefore or document.contextAfter is required');
+  }
+
+  const insertionSource = String(document.insertionSource || '');
+  const insertionPrefixLength = clampNumber(document.insertionPrefixLength, 0, 0, insertionSource.length);
+  if (!insertionSource.trim()) {
+    throw new HttpError(400, 'document.insertionSource is required for suggestion JSON');
+  }
+
+  const prompt = buildQuestionPrompt(document, settings);
+  const model = cheapModelForProvider(provider, settings);
+  const run = await runProvider(provider, prompt, settings, {
+    model,
+    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      model,
+      stdout: tail(run.stdout),
+      stderr: tail(run.stderr)
+    });
+  }
+  const text = normalizeGeneratedQuestionText(run.response);
+  const replacement = insertionSource.slice(0, insertionPrefixLength) + text + insertionSource.slice(insertionPrefixLength);
+  const json = buildSentenceSuggestionJson(document, [insertionSource, replacement], {
+    category: SENTENCE_SUGGESTION_CATEGORY_ID,
+    type: 'ai-question',
+    source: insertionSource,
+    replacement,
+    createdAt: new Date().toISOString(),
+    reason: '커서 위치 기준 AI 발문 삽입 제안'
+  });
+  const file = appendSentenceSuggestionJson(json, document, settings);
+  return {
+    ok: true,
+    provider,
+    model,
+    text,
+    json: file.json,
+    ruleCount: countRules(file.json),
+    fileName: file.fileName,
+    displayName: file.displayName,
+    outputPath: file.outputPath,
+    chars: Array.from(text).length,
+    elapsedMs: run.elapsedMs,
+    stdoutTail: tail(run.stdout, 1200),
+    stderrTail: tail(run.stderr, 1200)
+  };
+}
+
+async function generateLengthAdjustment(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const selectedText = String(document.selectedText || '');
+  const targetPercent = clampNumber(document.targetPercent, 100, 10, 500);
+  if (!selectedText.trim()) throw new HttpError(400, 'document.selectedText is required');
+
+  const prompt = buildLengthAdjustmentPrompt(Object.assign({}, document, { targetPercent }));
+  const model = cheapModelForProvider(provider, settings);
+  const run = await runProvider(provider, prompt, settings, {
+    model,
+    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      model,
+      stdout: tail(run.stdout),
+      stderr: tail(run.stderr)
+    });
+  }
+
+  const aiJson = extractJsonObject(run.response);
+  const replacement = firstReplacementFromToytypeJson(aiJson);
+  if (!replacement.trim()) {
+    throw new HttpError(502, 'AI response did not contain a replacement', { responseTail: tail(run.response) });
+  }
+  const json = buildSentenceSuggestionJson(document, [selectedText, replacement], {
+    category: SENTENCE_SUGGESTION_CATEGORY_ID,
+    type: 'length-adjustment',
+    targetPercent,
+    source: selectedText,
+    replacement,
+    createdAt: new Date().toISOString(),
+    reason: `선택 문장 길이 ${targetPercent}% 조절`
+  });
+  const file = appendSentenceSuggestionJson(json, document, settings);
+  return {
+    ok: true,
+    provider,
+    model,
+    json: file.json,
+    ruleCount: countRules(file.json),
+    fileName: file.fileName,
+    displayName: file.displayName,
+    outputPath: file.outputPath,
+    targetPercent,
+    sourceChars: Array.from(selectedText).length,
+    replacementChars: Array.from(replacement).length,
     elapsedMs: run.elapsedMs,
     stdoutTail: tail(run.stdout, 1200),
     stderrTail: tail(run.stderr, 1200)
@@ -913,12 +1463,28 @@ async function route(req, res) {
     sendJson(res, 200, await generateProofread(body));
     return;
   }
+  if (url.pathname === '/ai/question') {
+    sendJson(res, 200, await generateQuestion(body));
+    return;
+  }
+  if (url.pathname === '/ai/adjust-length') {
+    sendJson(res, 200, await generateLengthAdjustment(body));
+    return;
+  }
   if (url.pathname === '/fs/list-generated') {
     sendJson(res, 200, listGeneratedJsonFiles(body));
     return;
   }
   if (url.pathname === '/fs/open-output-dir') {
     sendJson(res, 200, await openOutputDir(body));
+    return;
+  }
+  if (url.pathname === '/fs/cleanup-generated') {
+    sendJson(res, 200, cleanupGeneratedJsonFiles(body));
+    return;
+  }
+  if (url.pathname === '/fs/delete-sentence-suggestion') {
+    sendJson(res, 200, deleteSentenceSuggestionRule(body));
     return;
   }
   throw new HttpError(404, 'not found');
@@ -933,14 +1499,20 @@ function startServer(port = DEFAULT_PORT) {
     if (error && error.code === 'EADDRINUSE') {
       console.error(`Toytype AI bridge is already running or port ${port} is in use.`);
       console.error(`If Toytype is already working, you do not need to start another bridge.`);
-      console.error(`Check the current process with: lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+      console.error(`Restart: node tools/toytype_ai_bridge_ctl.mjs restart --port ${port}`);
+      console.error(`Stop:    node tools/toytype_ai_bridge_ctl.mjs stop --port ${port}`);
       process.exitCode = 1;
       return;
     }
     throw error;
   });
   server.listen(port, '127.0.0.1', () => {
-    console.log(`Toytype AI bridge listening on http://127.0.0.1:${port}`);
+    console.log(`Toytype AI bridge: http://127.0.0.1:${port}`);
+    console.log('Mode: foreground server. Keep this terminal open; press Ctrl-C to stop.');
+    console.log('Restart from another terminal (background):');
+    console.log(`  node tools/toytype_ai_bridge_ctl.mjs restart --port ${port}`);
+    console.log(`Stop: node tools/toytype_ai_bridge_ctl.mjs stop --port ${port}`);
+    console.log(`Log after background restart: tail -f /tmp/toytype-ai-bridge-${port}.log`);
   });
   return server;
 }
