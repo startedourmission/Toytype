@@ -38,20 +38,26 @@
   const GENERATED_RULES_CACHE_KEY = 'docsGeneratedRulesCacheV1';
   const GENERATED_RULES_CACHE_DOC_LIMIT = 20;
   const GENERATED_RULES_CACHE_FILE_LIMIT = 50;
+  const IGNORED_FINDINGS_CACHE_KEY = 'docsIgnoredFindingsV1';
+  const IGNORED_FINDINGS_DOC_LIMIT = 50;
+  const IGNORED_FINDINGS_PER_DOC_LIMIT = 500;
   const CURSOR_POLL_INTERVAL = 800;
+  const BRIDGE_STATUS_POLL_INTERVAL = 60000;
+  const BRIDGE_STATUS_STALE_MS = 30000;
+  const DEFAULT_BRIDGE_PORT = 17644;
   const FALLBACK_CSS =
     '.trd-wrap{font-family:sans-serif;font-size:13px;color:#202124;line-height:1.45}' +
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
     '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:17px;line-height:1;vertical-align:top}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
-    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 44px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-item.trd-copy-only{padding-right:18px}.trd-item.trd-suggestion-item .trd-fix{font-weight:500}.trd-apply-btn,.trd-suggestion-delete-btn{position:absolute;right:10px;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-suggestion-delete-btn{color:#5f6368}.trd-apply-btn:disabled,.trd-suggestion-delete-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
+    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 74px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-item.trd-copy-only{padding-right:18px}.trd-item.trd-suggestion-item .trd-fix{font-weight:500}.trd-apply-btn,.trd-ignore-btn,.trd-suggestion-delete-btn{position:absolute;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-apply-btn,.trd-suggestion-delete-btn{right:10px}.trd-ignore-btn{right:40px;color:#5f6368}.trd-suggestion-delete-btn{color:#5f6368}.trd-apply-btn:disabled,.trd-ignore-btn:disabled,.trd-suggestion-delete-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
     '.trd-cursor-marker{height:0;border-top:2px solid #1a73e8;margin:2px 0;position:relative}.trd-cursor-marker:before{content:"";position:absolute;left:12px;top:-4px;width:6px;height:6px;border-radius:50%;background:#1a73e8}' +
-    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix{font-size:12px}.trd-line{color:#80868b;margin-left:6px}' +
+    '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix,.trd-explain{font-size:12px}.trd-line{color:#80868b;margin-left:6px}.trd-explain{margin-top:4px;color:#5f6368}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
 
   const startedAt = Date.now();
 
@@ -103,10 +109,21 @@
   let currentCursorOffset = null;
   let cursorPollTimer = null;
   let cursorPollBusy = false;
+  let ignoredFindingKeys = new Set();
+  let ignoredFindingDocId = null;
   let applyingFindingKey = null;
   let addonBusyActions = new Set();
   let addonStatus = null;
   let addonStatusTimer = null;
+  let bridgeStatus = {
+    state: 'unknown',
+    checkedAt: 0,
+    port: DEFAULT_BRIDGE_PORT,
+    version: '',
+    error: ''
+  };
+  let bridgeStatusTimer = null;
+  let bridgeStatusBusy = false;
   let generatedRulesFiles = [];
   let generatedRulesLoadedDocId = null;
 
@@ -560,8 +577,11 @@
       currentCursorOffset = null;
       generatedRulesFiles = [];
       generatedRulesLoadedDocId = null;
+      await loadIgnoredFindingsForCurrentDoc();
       loadCachedGeneratedRulesListQuiet();
       refreshGeneratedRulesListQuiet();
+    } else if (ignoredFindingDocId !== docId) {
+      await loadIgnoredFindingsForCurrentDoc();
     }
     // quiet: 적용 파이프라인 내부 재스캔 — 목록을 '검사 중…'으로 비우지 않고
     // 기존 패널을 유지한 채 결과만 갱신한다 (불필요한 전체 리렌더 2회 제거).
@@ -656,7 +676,7 @@
     }
 
     const buildStartedAt = Date.now();
-    const findings = buildUIFindings(text, result.findings, textSource);
+    const findings = filterIgnoredFindings(buildUIFindings(text, result.findings, textSource));
     const categoryCounts = {};
     for (const f of findings) categoryCounts[f.cat] = (categoryCounts[f.cat] || 0) + 1;
     perf.buildMs = Date.now() - buildStartedAt;
@@ -750,6 +770,7 @@
     clearTimeout(cooldownTimer);
     stopAddonStatusTicker();
     stopCursorWatcher();
+    stopBridgeStatusWatcher();
   }
 
   function el(tag, className) {
@@ -771,6 +792,10 @@
 
   function closeIcon() {
     return strokedSvg(['M6 6l12 12', 'M18 6L6 18'], 'trd-close-icon');
+  }
+
+  function ignoreIcon() {
+    return strokedSvg(['M7 7l10 10', 'M17 7L7 17'], 'trd-apply-icon');
   }
 
   function applyIcon() {
@@ -887,6 +912,24 @@
     return wrap;
   }
 
+  function buildBridgeStatusBadge() {
+    const state = bridgeStatus && bridgeStatus.state ? bridgeStatus.state : 'unknown';
+    const btn = el('button', 'trd-bridge-badge trd-bridge-' + state);
+    btn.type = 'button';
+    btn.title = bridgeStatusTitle();
+    btn.setAttribute('aria-label', bridgeStatusAriaLabel());
+    const dot = el('span', 'trd-bridge-dot');
+    const label = el('span', 'trd-bridge-label');
+    label.textContent = bridgeStatusLabel();
+    btn.append(dot, label);
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleBridgeStatusBadgeClick();
+    });
+    return btn;
+  }
+
   function buildAddonsMenu() {
     const menu = el('div', 'trd-addons-menu');
     menu.setAttribute('role', 'menu');
@@ -960,6 +1003,7 @@
       scheduleCursorListFollow();
     }
     syncCursorWatcher();
+    syncBridgeStatusWatcher();
   }
 
   function shouldFollowCursorInOrderList() {
@@ -1134,7 +1178,7 @@
       footText.appendChild(statusLine);
     }
     footText.appendChild(l2);
-    foot.append(footText, buildFooterActions());
+    foot.append(buildBridgeStatusBadge(), footText, buildFooterActions());
     panel.appendChild(foot);
 
     const toast = el('div', 'trd-toast');
@@ -1542,6 +1586,130 @@
     };
   }
 
+  function filterIgnoredFindings(findings) {
+    if (!ignoredFindingKeys || ignoredFindingKeys.size === 0) return findings;
+    return findings.filter(f => !ignoredFindingKeys.has(findingIgnoreKey(f)));
+  }
+
+  function findingIgnoreKey(f) {
+    return JSON.stringify([
+      activeRulesSource || 'builtin',
+      f && f.cat || '',
+      f && f.src || '',
+      f && f.dst || '',
+      contextTail(f && f.contextBefore, 48),
+      contextHead(f && f.contextAfter, 48)
+    ]);
+  }
+
+  function contextTail(text, len) {
+    const value = normalizeIgnoreContext(text);
+    return value.slice(Math.max(0, value.length - len));
+  }
+
+  function contextHead(text, len) {
+    return normalizeIgnoreContext(text).slice(0, len);
+  }
+
+  function normalizeIgnoreContext(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function loadIgnoredFindingsForCurrentDoc() {
+    const docId = getDocId();
+    ignoredFindingDocId = docId || null;
+    ignoredFindingKeys = new Set();
+    if (!docId) return Promise.resolve(false);
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(IGNORED_FINDINGS_CACHE_KEY, items => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+            return;
+          }
+          const cache = items && items[IGNORED_FINDINGS_CACHE_KEY] && typeof items[IGNORED_FINDINGS_CACHE_KEY] === 'object'
+            ? items[IGNORED_FINDINGS_CACHE_KEY]
+            : {};
+          const docCache = cache[docId] && typeof cache[docId] === 'object' ? cache[docId] : null;
+          const keys = Array.isArray(docCache && docCache.keys) ? docCache.keys : [];
+          ignoredFindingKeys = new Set(keys.filter(key => typeof key === 'string' && key));
+          resolve(true);
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function saveIgnoredFindingsForCurrentDoc() {
+    const docId = getDocId();
+    if (!docId) return Promise.resolve(false);
+    const keys = Array.from(ignoredFindingKeys || []).filter(Boolean).slice(-IGNORED_FINDINGS_PER_DOC_LIMIT);
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(IGNORED_FINDINGS_CACHE_KEY, items => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+            return;
+          }
+          const cache = items && items[IGNORED_FINDINGS_CACHE_KEY] && typeof items[IGNORED_FINDINGS_CACHE_KEY] === 'object'
+            ? Object.assign({}, items[IGNORED_FINDINGS_CACHE_KEY])
+            : {};
+          cache[docId] = {
+            savedAt: Date.now(),
+            title: documentTitleForAddon(),
+            url: location.href,
+            keys
+          };
+          const docIds = Object.keys(cache).sort((a, b) => {
+            const am = cache[a] && Number(cache[a].savedAt) || 0;
+            const bm = cache[b] && Number(cache[b].savedAt) || 0;
+            return bm - am;
+          });
+          for (const oldDocId of docIds.slice(IGNORED_FINDINGS_DOC_LIMIT)) delete cache[oldDocId];
+          chrome.storage.local.set({ [IGNORED_FINDINGS_CACHE_KEY]: cache }, () => {
+            resolve(!chrome.runtime.lastError);
+          });
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function handleIgnoreFindingClick(f) {
+    const docId = getDocId();
+    if (!docId) {
+      showToast('문서 ID를 찾지 못했습니다');
+      return;
+    }
+    if (ignoredFindingDocId !== docId) {
+      ignoredFindingDocId = docId;
+      ignoredFindingKeys = new Set();
+    }
+    ignoredFindingKeys.add(findingIgnoreKey(f));
+    if (selectedFindingKey === findingKey(f)) selectedFindingKey = null;
+    removeFindingFromReport(f);
+    render({ preserveBodyScroll: true });
+    saveIgnoredFindingsForCurrentDoc().then(ok => {
+      showToast(ok ? '현재 문서에서 숨김' : '숨김 저장 실패', { durationMs: ok ? 1500 : 3200 });
+    });
+  }
+
+  function removeFindingFromReport(finding) {
+    if (!lastReport || !Array.isArray(lastReport.findings)) return false;
+    const index = lastReport.findings.indexOf(finding);
+    if (index === -1) return false;
+    lastReport.findings.splice(index, 1);
+    lastReport.total = lastReport.findings.length;
+    lastReport.categoryCounts = {};
+    for (const item of lastReport.findings) {
+      lastReport.categoryCounts[item.cat] = (lastReport.categoryCounts[item.cat] || 0) + 1;
+    }
+    sendCount(lastReport.total);
+    return true;
+  }
+
   function buildItem(f) {
     const isSuggestion = isSentenceSuggestionFinding(f);
     const item = el('div', 'trd-item' + (isSuggestion ? ' trd-suggestion-item trd-copy-only' : ''));
@@ -1557,13 +1725,30 @@
     if (f.after) ctx.appendChild(document.createTextNode(f.after + '…'));
 
     const fix = el('div', 'trd-fix');
-    fix.textContent = displayText(f.src) + ' → ' + displayText(f.dst);
+    fix.textContent = '➝ ' + displayText(f.dst);
     const ln = el('span', 'trd-line');
     ln.textContent = '¶' + f.line + (listMode === 'order' ? ' · ' + labelOf(f.cat) : '');
     fix.appendChild(ln);
 
     item.append(ctx, fix);
+    const explanation = isTechnicalAccuracyFinding(f) ? findingExplanationText(f) : '';
+    if (explanation) {
+      const explain = el('div', 'trd-explain');
+      explain.textContent = '해설: ' + explanation;
+      item.appendChild(explain);
+    }
     if (!isSuggestion) {
+      const ignoreBtn = el('button', 'trd-ignore-btn');
+      ignoreBtn.type = 'button';
+      ignoreBtn.appendChild(ignoreIcon());
+      ignoreBtn.title = '현재 문서에서 숨김';
+      ignoreBtn.setAttribute('aria-label', '현재 문서에서 숨김');
+      ignoreBtn.disabled = applyingFindingKey !== null;
+      ignoreBtn.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleIgnoreFindingClick(f);
+      });
       const applyBtn = el('button', 'trd-apply-btn');
       applyBtn.type = 'button';
       applyBtn.appendChild(applyIcon());
@@ -1575,6 +1760,7 @@
         ev.stopPropagation();
         handleApplyFindingClick(f);
       });
+      item.appendChild(ignoreBtn);
       item.appendChild(applyBtn);
     }
     item.addEventListener('click', () => {
@@ -1582,6 +1768,70 @@
       else handleFindingClick(f);
     });
     return item;
+  }
+
+  function isTechnicalAccuracyFinding(f) {
+    const cat = String(f && f.cat || '').toLowerCase();
+    const label = String(f && (f.catLabel || labelOf(f.cat)) || '');
+    return cat === 'book-editing-technical' || label === '기술 및 내용 정확성';
+  }
+
+  function findingExplanationText(f) {
+    const note = findFindingNote(f);
+    if (!note) return '';
+    const text = noteText(note);
+    return text ? text.slice(0, 320) : '';
+  }
+
+  function findFindingNote(f) {
+    if (!rulesJson || !Array.isArray(rulesJson.notes)) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const note of rulesJson.notes) {
+      if (!note || typeof note !== 'object') continue;
+      const score = findingNoteMatchScore(f, note);
+      if (score > bestScore) {
+        best = note;
+        bestScore = score;
+      }
+    }
+    return bestScore >= 80 ? best : null;
+  }
+
+  function findingNoteMatchScore(f, note) {
+    let score = 0;
+    const cat = String(f && f.cat || '');
+    const label = String(f && (f.catLabel || labelOf(f.cat)) || '');
+    const noteCategory = String(note.category || note.categoryId || '');
+    if (!noteCategory) score += 10;
+    else if (noteCategory === cat || noteCategory === label) score += 40;
+    else return 0;
+
+    const source = String(note.source || note.sourceText || '');
+    const replacement = String(note.replacement || note.replacementText || note.suggestedReplacement || '');
+    const src = String(f && f.src || '');
+    const dst = String(f && f.dst || '');
+    if (source && src) {
+      if (source === src) score += 70;
+      else if (source.includes(src) || src.includes(source)) score += 45;
+      else return 0;
+    }
+    if (replacement && dst) {
+      if (replacement === dst) score += 50;
+      else if (replacement.includes(dst) || dst.includes(replacement)) score += 25;
+    }
+    return score;
+  }
+
+  function noteText(note) {
+    for (const key of ['reason', 'finding', 'explanation', 'detail', 'message']) {
+      if (typeof note[key] === 'string' && note[key].trim()) return note[key].trim();
+    }
+    if (Array.isArray(note.sources)) {
+      const source = note.sources.find(item => item && typeof item.evidence === 'string' && item.evidence.trim());
+      if (source) return source.evidence.trim();
+    }
+    return '';
   }
 
   function handleFindingClick(f) {
@@ -1863,7 +2113,7 @@
     startAiProofreadStatus('본문 읽는 중');
     try {
       const doc = await readCurrentDocumentTextForAddon();
-      updateAiProofreadStatus('AI 응답 대기 중');
+      updateAiProofreadStatus('사실 확인/AI 교정 중');
       const res = await sendAiBridge('proofread', {
         document: {
           id: doc.docId,
@@ -1904,6 +2154,9 @@
       }
       if (res.displayName || res.fileName) {
         finalStatus += ' · ' + (res.displayName || res.fileName);
+      }
+      if (res.factCheck && res.factCheck.model) {
+        finalStatus += ' · 사실확인 ' + res.factCheck.model;
       }
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2249,13 +2502,15 @@
         successToast = '문서에 추출할 이미지가 없습니다';
       } else {
         const skippedCount = Number(res.skippedImageCount || 0);
-        const downloadState = res.chromeDownloadId ? 'Chrome 다운로드 시작' : (res.chromeDownloadError ? 'Chrome 다운로드 실패' : 'ZIP 저장됨');
+        const downloadState = res.chromeDownloadId ? 'Chrome 다운로드 시작' : (res.chromeDownloadError ? 'Chrome 다운로드 실패' : '다운로드 준비됨');
         finalStatus = '이미지 추출 완료 · ' + imageCount + '개 · ' + downloadState;
         if (skippedCount > 0) finalStatus += ' · 빈 이미지 제외 ' + skippedCount + '개';
         if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
         successToast = res.chromeDownloadId
           ? '이미지 ZIP 다운로드 시작: ' + (res.displayName || res.fileName || imageCount + '개')
-          : '이미지 ZIP 저장됨: ' + (res.displayName || res.fileName || imageCount + '개');
+          : (res.chromeDownloadError
+              ? '이미지 ZIP 생성됨 · Chrome 다운로드 실패'
+              : '이미지 ZIP 다운로드 준비됨: ' + (res.displayName || res.fileName || imageCount + '개'));
       }
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2582,6 +2837,114 @@
         resolve({ ok: false, error: 'extension_message_failed', message: e && e.message ? e.message : String(e) });
       }
     });
+  }
+
+  function bridgeStatusLabel() {
+    if (bridgeStatus.state === 'error') return '꺼짐';
+    return '브릿지';
+  }
+
+  function bridgeStatusTitle() {
+    if (bridgeStatus.state === 'ok') {
+      const meta = [bridgeStatus.version ? 'v' + bridgeStatus.version : '', bridgeStatus.port ? 'port ' + bridgeStatus.port : ''].filter(Boolean).join(' · ');
+      return '브릿지 연결됨' + (meta ? ' · ' + meta : '') + ' · 클릭하면 상태를 다시 확인합니다';
+    }
+    if (bridgeStatus.state === 'checking') return '브릿지 상태 확인 중';
+    if (bridgeStatus.state === 'error') return '브릿지 꺼짐 · 클릭하면 재시작 명령을 복사합니다';
+    return '브릿지 상태 확인 전';
+  }
+
+  function bridgeStatusAriaLabel() {
+    if (bridgeStatus.state === 'ok') return '브릿지 연결됨';
+    if (bridgeStatus.state === 'checking') return '브릿지 상태 확인 중';
+    if (bridgeStatus.state === 'error') return '브릿지 꺼짐';
+    return '브릿지 상태 확인 전';
+  }
+
+  function handleBridgeStatusBadgeClick() {
+    if (bridgeStatus.state === 'error') {
+      const command = bridgeRestartCommand();
+      copyText(command).then(
+        () => showToast('브릿지 재시작 명령 복사됨'),
+        () => showToast(command, { durationMs: 4200 })
+      );
+      return;
+    }
+    pollBridgeStatus(true);
+  }
+
+  function bridgeRestartCommand() {
+    const port = Number.isFinite(Number(bridgeStatus.port)) ? Math.floor(Number(bridgeStatus.port)) : DEFAULT_BRIDGE_PORT;
+    return 'node tools/toytype_ai_bridge_ctl.mjs restart --port ' + port;
+  }
+
+  function syncBridgeStatusWatcher() {
+    if (!expanded) {
+      stopBridgeStatusWatcher();
+      return;
+    }
+    if (!bridgeStatusTimer) {
+      bridgeStatusTimer = setInterval(() => { pollBridgeStatus(false); }, BRIDGE_STATUS_POLL_INTERVAL);
+    }
+    if (!bridgeStatus.checkedAt || Date.now() - bridgeStatus.checkedAt > BRIDGE_STATUS_STALE_MS) {
+      pollBridgeStatus(false);
+    }
+  }
+
+  function stopBridgeStatusWatcher() {
+    if (!bridgeStatusTimer) return;
+    clearInterval(bridgeStatusTimer);
+    bridgeStatusTimer = null;
+    bridgeStatusBusy = false;
+  }
+
+  function pollBridgeStatus(force) {
+    if (bridgeStatusBusy) return;
+    if (!force && bridgeStatus.checkedAt && Date.now() - bridgeStatus.checkedAt <= BRIDGE_STATUS_STALE_MS) return;
+    bridgeStatusBusy = true;
+    bridgeStatus = Object.assign({}, bridgeStatus, { state: 'checking' });
+    if (expanded) render({ preserveBodyScroll: true });
+    sendAiBridge('health', {}).then(res => {
+      if (res && res.ok) {
+        bridgeStatus = {
+          state: 'ok',
+          checkedAt: Date.now(),
+          port: Number.isFinite(Number(res.port)) ? Math.floor(Number(res.port)) : bridgeStatus.port,
+          version: typeof res.version === 'string' ? res.version : '',
+          error: ''
+        };
+        return;
+      }
+      const bridgeUrl = res && typeof res.bridgeUrl === 'string' ? res.bridgeUrl : '';
+      bridgeStatus = {
+        state: 'error',
+        checkedAt: Date.now(),
+        port: bridgePortFromUrl(bridgeUrl) || bridgeStatus.port || DEFAULT_BRIDGE_PORT,
+        version: '',
+        error: res && (res.error || res.message) ? String(res.error || res.message) : 'bridge_unavailable'
+      };
+    }).catch(error => {
+      bridgeStatus = {
+        state: 'error',
+        checkedAt: Date.now(),
+        port: bridgeStatus.port || DEFAULT_BRIDGE_PORT,
+        version: '',
+        error: error && error.message ? error.message : String(error)
+      };
+    }).finally(() => {
+      bridgeStatusBusy = false;
+      if (expanded) render({ preserveBodyScroll: true });
+    });
+  }
+
+  function bridgePortFromUrl(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+      return Number.isFinite(port) ? port : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function loadCachedGeneratedRulesListQuiet() {

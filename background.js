@@ -105,7 +105,8 @@ async function callAiBridge(path, payload) {
     return {
       ok: false,
       error: e && e.name === 'AbortError' ? 'bridge_timeout' : 'bridge_unavailable',
-      message: e && e.message ? e.message : String(e)
+      message: e && e.message ? e.message : String(e),
+      bridgeUrl: ai.bridgeUrl
     };
   } finally {
     clearTimeout(timer);

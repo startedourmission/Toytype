@@ -31,6 +31,11 @@ const DEFAULT_SETTINGS = {
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 10 * 60 * 1000,
   maxDocumentChars: 180000,
+  proofreadFactCheckEnabled: true,
+  proofreadFactCheckCodexModel: 'gpt-5.5',
+  proofreadFactCheckCodexReasoningEffort: 'medium',
+  proofreadFactCheckClaudeModel: 'sonnet',
+  proofreadFactCheckTimeoutMs: 240000,
   questionCodexModel: '',
   questionCodexReasoningEffort: 'low',
   questionClaudeModel: 'fable',
@@ -64,6 +69,11 @@ function mergeSettings(input) {
     outputDir: expandHome(typeof s.outputDir === 'string' && s.outputDir.trim() ? s.outputDir.trim() : DEFAULT_SETTINGS.outputDir),
     requestTimeoutMs: clampNumber(s.requestTimeoutMs, DEFAULT_SETTINGS.requestTimeoutMs, 5000, 60 * 60 * 1000),
     maxDocumentChars: clampNumber(s.maxDocumentChars, DEFAULT_SETTINGS.maxDocumentChars, 1000, 1000000),
+    proofreadFactCheckEnabled: s.proofreadFactCheckEnabled !== false,
+    proofreadFactCheckCodexModel: typeof s.proofreadFactCheckCodexModel === 'string' && s.proofreadFactCheckCodexModel.trim() ? s.proofreadFactCheckCodexModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexModel,
+    proofreadFactCheckCodexReasoningEffort: typeof s.proofreadFactCheckCodexReasoningEffort === 'string' && s.proofreadFactCheckCodexReasoningEffort.trim() ? s.proofreadFactCheckCodexReasoningEffort.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexReasoningEffort,
+    proofreadFactCheckClaudeModel: typeof s.proofreadFactCheckClaudeModel === 'string' && s.proofreadFactCheckClaudeModel.trim() ? s.proofreadFactCheckClaudeModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckClaudeModel,
+    proofreadFactCheckTimeoutMs: clampNumber(s.proofreadFactCheckTimeoutMs, DEFAULT_SETTINGS.proofreadFactCheckTimeoutMs, 30000, 10 * 60 * 1000),
     questionCodexModel: typeof s.questionCodexModel === 'string' ? s.questionCodexModel.trim() : DEFAULT_SETTINGS.questionCodexModel,
     questionCodexReasoningEffort: typeof s.questionCodexReasoningEffort === 'string' && s.questionCodexReasoningEffort.trim() ? s.questionCodexReasoningEffort.trim() : DEFAULT_SETTINGS.questionCodexReasoningEffort,
     questionClaudeModel: typeof s.questionClaudeModel === 'string' && s.questionClaudeModel.trim() ? s.questionClaudeModel.trim() : DEFAULT_SETTINGS.questionClaudeModel,
@@ -245,9 +255,13 @@ async function runClaude(prompt, settings, options = {}) {
     '-p',
     '--output-format', 'text',
     '--permission-mode', 'dontAsk',
-    '--tools', '',
     '--no-session-persistence'
   ];
+  if (options.allowWebTools === true) {
+    args.push('--tools', 'WebFetch,WebSearch');
+  } else {
+    args.push('--tools', '');
+  }
   if (typeof options.model === 'string' && options.model.trim()) {
     args.push('--model', options.model.trim());
   }
@@ -269,7 +283,7 @@ function readBuiltinRulesReference() {
   return builtinRulesReferenceCache;
 }
 
-function buildProofreadPrompt(document, settings) {
+function buildProofreadPrompt(document, settings, factCheck) {
   const title = document.title || document.id || 'Google Docs document';
   const docId = document.id || '';
   const url = document.url || '';
@@ -293,6 +307,9 @@ function buildProofreadPrompt(document, settings) {
     '- Each category.rules item must be [sourceText, replacementText]. Use optional third item {"rejectBefore":[],"rejectAfter":[]} only when a rule needs context exceptions.',
     '- sourceText must be exact text found in the document and should usually be at least 8 Korean characters unless it is a clear typo.',
     '- Do not include uncertain fixes in rules. Put uncertain or structural issues only in notes.',
+    '- Use the fact-check subagent report below as external evidence. Convert only high-confidence contradicted factual issues with exact safe replacements into rules.',
+    '- Put medium-confidence, unverifiable, or context-dependent factual issues in notes only. Do not invent replacement facts.',
+    '- When a factual note cites web evidence, preserve the source URLs in the note object.',
     '- Do not rewrite long paragraphs. Generate precise, safe replacements for local awkward phrasing and sentence-level polish only.',
     '- Existing rules.json already covers simple spelling, spacing, notation, and common typo replacements. Do not duplicate corrections already covered by those deterministic rules.',
     '- The Toytype project-specific rules section has higher priority than generic Korean spacing advice.',
@@ -302,6 +319,8 @@ function buildProofreadPrompt(document, settings) {
     '- English glosses may be superscript annotations in Google Docs. The text export can show them directly after Korean text, so consecutive Korean-English or English-English terms are not automatically errors.',
     '- Do not add parentheses around English glosses or propose wrapping adjacent English glosses in parentheses.',
     '- Prefer categories book-editing-proofread, book-editing-terms, book-editing-technical, book-editing-format.',
+    '- Use category label "기술 및 내용 정확성" for book-editing-technical.',
+    '- For every book-editing-technical rule, add a matching notes item with category "book-editing-technical", exact source, exact replacement, and a concise Korean reason. Toytype shows that reason under the item.',
     '- Limit rules to the most important 120 items.',
     '',
     `Use version "${today}".`,
@@ -309,6 +328,12 @@ function buildProofreadPrompt(document, settings) {
     '',
     'Document metadata:',
     JSON.stringify({ title, docId, url, truncated, textChars: sourceText.length, includedChars: text.length, rulesReferenceChars: builtinRules.length }, null, 2),
+    '',
+    'Fact-check subagent report:',
+    'Use this report for factual/content-error review. It was produced before this pass by a web-enabled fact-checker. If it is unavailable or marks a claim as unverifiable, do not turn that item into an automatic replacement rule.',
+    '<<<TOYTYPE_FACT_CHECK_JSON',
+    JSON.stringify(factCheck && factCheck.report ? factCheck.report : { ok: false, claims: [], notes: ['fact-check report unavailable'] }, null, 2),
+    'TOYTYPE_FACT_CHECK_JSON',
     '',
     'Existing Toytype rules.json reference:',
     'These deterministic rules are already applied by Toytype. Use them to avoid duplicating simple spelling/spacing/notation fixes and to focus on higher-level manuscript issues.',
@@ -321,6 +346,187 @@ function buildProofreadPrompt(document, settings) {
     text,
     'TOYTYPE_DOCUMENT_TEXT'
   ].join('\n');
+}
+
+function buildProofreadFactCheckPrompt(document, settings, provider, model) {
+  const title = document.title || document.id || 'Google Docs document';
+  const docId = document.id || '';
+  const url = document.url || '';
+  const sourceText = String(document.text || '');
+  const maxChars = Math.min(settings.maxDocumentChars, 120000);
+  const truncated = sourceText.length > maxChars;
+  const text = truncated ? sourceText.slice(0, maxChars) : sourceText;
+  const today = new Date().toISOString().slice(0, 10);
+
+  return [
+    'You are the Toytype factual verification subagent for a Korean manuscript proofread.',
+    '',
+    'Use web search/fetch tools when available. For Claude, WebFetch and WebSearch are enabled for this pass. For Codex, use the available web/search/fetch capability if the runtime provides it.',
+    'Your job is not style editing. Verify concrete factual claims that could be wrong or stale: dates, names, organizations, product behavior, legal/technical claims, historical claims, statistics, URLs, and cross-document consistency claims.',
+    '',
+    'Hard requirements:',
+    '- Return only one valid JSON object. No markdown.',
+    '- Check claims carefully with external sources when possible. Prefer primary or authoritative sources.',
+    '- Do not send automatic rewrite rules. This is only an evidence report for the next proofread pass.',
+    '- Every claim item must include exact sourceText copied from the manuscript.',
+    '- If you cannot verify a claim with available sources, use status "unverifiable"; do not guess.',
+    '- Use status "contradicted" only when the manuscript conflicts with reliable evidence.',
+    '- Include suggestedReplacement only when the corrected wording is directly supported and safe.',
+    '- Keep quotes short. Store URLs for evidence in sources.',
+    '- Limit to the most important 40 claim items.',
+    '',
+    'Allowed status values: supported, contradicted, unverifiable, needs_context.',
+    'Allowed confidence values: high, medium, low.',
+    '',
+    'Document metadata:',
+    JSON.stringify({ title, docId, url, provider, model, today, truncated, textChars: sourceText.length, includedChars: text.length }, null, 2),
+    '',
+    'Required JSON shape:',
+    JSON.stringify({
+      ok: true,
+      checkedAt: today,
+      provider,
+      model,
+      webAccess: 'used|unavailable|partial',
+      claims: [{
+        sourceText: 'exact manuscript text',
+        status: 'supported|contradicted|unverifiable|needs_context',
+        confidence: 'high|medium|low',
+        finding: 'short Korean finding',
+        suggestedReplacement: 'safe replacement text or empty string',
+        sources: [{
+          title: 'source title',
+          url: 'https://example.com',
+          publisher: 'publisher',
+          date: 'YYYY-MM-DD or empty',
+          evidence: 'short evidence summary'
+        }]
+      }],
+      notes: ['short note']
+    }, null, 2),
+    '',
+    'Document text:',
+    '<<<TOYTYPE_DOCUMENT_TEXT',
+    text,
+    'TOYTYPE_DOCUMENT_TEXT'
+  ].join('\n');
+}
+
+async function runProofreadFactCheck(document, settings, provider, totalTimeoutMs) {
+  if (settings.proofreadFactCheckEnabled === false) {
+    return {
+      enabled: false,
+      provider,
+      model: '',
+      elapsedMs: 0,
+      report: { ok: false, webAccess: 'disabled', claims: [], notes: ['fact-check disabled'] }
+    };
+  }
+  const model = proofreadFactCheckModel(provider, settings);
+  const timeoutMs = Math.min(
+    settings.proofreadFactCheckTimeoutMs,
+    Math.max(30000, Math.floor(Number(totalTimeoutMs || settings.requestTimeoutMs) * 0.4))
+  );
+  const prompt = buildProofreadFactCheckPrompt(document, settings, provider, model);
+  const run = await runProvider(provider, prompt, settings, {
+    model,
+    reasoningEffort: provider === 'codex' ? settings.proofreadFactCheckCodexReasoningEffort : undefined,
+    allowWebTools: provider === 'claude',
+    timeoutMs
+  });
+  if (!run.ok) {
+    throw new HttpError(502, `${provider} fact-check exited with code ${run.exitCode}`, {
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      model,
+      stdout: tail(run.stdout),
+      stderr: tail(run.stderr)
+    });
+  }
+  const report = normalizeFactCheckReport(extractJsonObject(run.response), document, {
+    provider,
+    model,
+    elapsedMs: run.elapsedMs
+  });
+  return {
+    enabled: true,
+    provider,
+    model,
+    elapsedMs: run.elapsedMs,
+    report,
+    stdoutTail: tail(run.stdout, 1200),
+    stderrTail: tail(run.stderr, 1200)
+  };
+}
+
+function proofreadFactCheckModel(provider, settings) {
+  return provider === 'claude' ? settings.proofreadFactCheckClaudeModel : settings.proofreadFactCheckCodexModel;
+}
+
+function normalizeFactCheckReport(report, document, meta) {
+  if (!report || typeof report !== 'object') {
+    throw new HttpError(502, 'fact-check response must be a JSON object');
+  }
+  const text = String(document.text || '');
+  const claims = Array.isArray(report.claims) ? report.claims : [];
+  const outClaims = [];
+  for (const claim of claims.slice(0, 60)) {
+    if (!claim || typeof claim !== 'object') continue;
+    const sourceText = typeof claim.sourceText === 'string' ? claim.sourceText : '';
+    if (!sourceText.trim()) continue;
+    const status = normalizeFactCheckStatus(claim.status);
+    const confidence = normalizeFactCheckConfidence(claim.confidence);
+    outClaims.push({
+      sourceText,
+      inDocument: text.includes(sourceText),
+      status: text.includes(sourceText) ? status : 'unverifiable',
+      confidence,
+      finding: typeof claim.finding === 'string' ? claim.finding.slice(0, 600) : '',
+      suggestedReplacement: typeof claim.suggestedReplacement === 'string' ? claim.suggestedReplacement : '',
+      sources: normalizeFactCheckSources(claim.sources)
+    });
+    if (outClaims.length >= 40) break;
+  }
+  return {
+    ok: report.ok !== false,
+    checkedAt: typeof report.checkedAt === 'string' && report.checkedAt ? report.checkedAt : new Date().toISOString(),
+    provider: meta.provider,
+    model: meta.model,
+    elapsedMs: meta.elapsedMs,
+    webAccess: typeof report.webAccess === 'string' && report.webAccess ? report.webAccess : 'partial',
+    claims: outClaims,
+    notes: Array.isArray(report.notes)
+      ? report.notes.filter(note => typeof note === 'string').map(note => note.slice(0, 600)).slice(0, 20)
+      : []
+  };
+}
+
+function normalizeFactCheckStatus(value) {
+  const status = String(value || '').toLowerCase();
+  if (status === 'supported' || status === 'contradicted' || status === 'unverifiable' || status === 'needs_context') return status;
+  return 'unverifiable';
+}
+
+function normalizeFactCheckConfidence(value) {
+  const confidence = String(value || '').toLowerCase();
+  if (confidence === 'high' || confidence === 'medium' || confidence === 'low') return confidence;
+  return 'low';
+}
+
+function normalizeFactCheckSources(sources) {
+  if (!Array.isArray(sources)) return [];
+  return sources
+    .filter(source => source && typeof source === 'object')
+    .map(source => ({
+      title: typeof source.title === 'string' ? source.title.slice(0, 200) : '',
+      url: typeof source.url === 'string' ? source.url.slice(0, 500) : '',
+      publisher: typeof source.publisher === 'string' ? source.publisher.slice(0, 120) : '',
+      date: typeof source.date === 'string' ? source.date.slice(0, 80) : '',
+      evidence: typeof source.evidence === 'string' ? source.evidence.slice(0, 500) : ''
+    }))
+    .filter(source => source.url || source.title || source.evidence)
+    .slice(0, 5);
 }
 
 function buildQuestionPrompt(document, settings) {
@@ -443,9 +649,9 @@ function projectSpecificRuleInstructions() {
   return `Toytype project-specific rules (high priority):
 - The built-in rules intentionally prefer 붙여쓰기 for many auxiliary-verb-style forms. Do not "correct" these into spaced forms.
 - Keep forms like "해두면", "해둔", "해둡니다", "해주면", "해준", "해줍니다", "해줄", "해보면", "해본", "해볼", "해냈", "해넣" as joined text when they already appear joined.
-- Do not propose replacements such as "해두면" -> "해 두면", "해주면" -> "해 주면", "...어두면" -> "...어 두면", "...아두면" -> "...아 두면", or "...여두면" -> "...여 두면".
+- Do not propose replacements such as "해두면" ➝ "해 두면", "해주면" ➝ "해 주면", "...어두면" ➝ "...어 두면", "...아두면" ➝ "...아 두면", or "...여두면" ➝ "...여 두면".
 - The same applies to project rules that join "어 보/어 주/어 둡" style fragments into "어보/어주/어둡". Treat those joined forms as intentional Toytype style, not spacing errors.
-- Do not make style-only compression rules such as "하기 위해서" -> "하려면". Keep "하기 위해서" unless there is a concrete 비문 or content problem beyond length/style preference.
+- Do not make style-only compression rules such as "하기 위해서" ➝ "하려면". Keep "하기 위해서" unless there is a concrete 비문 or content problem beyond length/style preference.
 - When a candidate is only generic Korean spacing advice and conflicts with these house rules, omit it.`;
 }
 
@@ -466,6 +672,8 @@ function bookEditingReferenceInstructions() {
 - Follow Toytype project-specific spacing rules even when they differ from generic Korean spacing advice.
 - Do not rewrite paragraphs or restructure the manuscript. Toytype rules are exact search/replace pairs, so only include corrections that can be safely applied as text replacement.
 - Put uncertain factual issues, structural issues, author-confirmation items, duplicated-content observations, or long rewrite issues in notes only.
+- Use these category labels when possible: book-editing-proofread = "원고 교열", book-editing-terms = "용어 일관성", book-editing-technical = "기술 및 내용 정확성", book-editing-format = "형식".
+- Every rule in book-editing-technical must have a matching notes item whose category/source/replacement match the rule and whose reason explains why the correction is needed.
 - Keep code, URLs, file paths, shell commands, JSON, identifiers, and quoted code strings untouched unless the correction is definitely safe.
 - Treat adjacent English glosses as intentional when they may be superscript bilingual annotations from Google Docs; do not wrap them in parentheses.
 - Prefer Korean book style: formal polite prose when correcting endings, consistent terms, no decorative special characters in body prose, and Korean publication spelling conventions.
@@ -765,7 +973,6 @@ function writeGeneratedJson(json, document, settings) {
 }
 
 function extractImagesFromDocx(body) {
-  const settings = mergeSettings(body.settings);
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (!document.id) document.id = extractDocId(document.url);
   const base64 = typeof document.docxBase64 === 'string' ? document.docxBase64 : '';
@@ -818,13 +1025,16 @@ function extractImagesFromDocx(body) {
     data: image.data
   }));
   const zipBuffer = createStoredZip(files);
-  fs.mkdirSync(settings.outputDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const docId = sanitizeFilename(document.id || extractDocId(document.url) || document.title || 'document');
   const fileName = `${docId}-images-${stamp}.zip`;
-  const outputPath = path.join(settings.outputDir, fileName);
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toytype-images-'));
+  const outputPath = path.join(outputDir, fileName);
   fs.writeFileSync(outputPath, zipBuffer);
-  const download = createDownloadToken(outputPath, fileName, 'application/zip');
+  const download = createDownloadToken(outputPath, fileName, 'application/zip', {
+    deleteAfterDownload: true,
+    cleanupDir: outputDir
+  });
   return {
     ok: true,
     imageCount: images.length,
@@ -834,6 +1044,7 @@ function extractImagesFromDocx(body) {
     fileName,
     displayName: `이미지-${stamp}.zip`,
     outputPath,
+    temporary: true,
     downloadToken: download.token,
     downloadUrlPath: download.urlPath,
     files: files.map((file, index) => ({
@@ -1137,13 +1348,15 @@ function crc32Table() {
   return table;
 }
 
-function createDownloadToken(outputPath, fileName, contentType) {
+function createDownloadToken(outputPath, fileName, contentType, options = {}) {
   pruneDownloadTokens();
   const token = randomUUID();
   downloadTokens.set(token, {
     outputPath,
     fileName,
     contentType: contentType || 'application/octet-stream',
+    deleteAfterDownload: options.deleteAfterDownload === true,
+    cleanupDir: typeof options.cleanupDir === 'string' ? options.cleanupDir : '',
     expiresAt: Date.now() + DOWNLOAD_TOKEN_TTL_MS
   });
   return {
@@ -1155,7 +1368,10 @@ function createDownloadToken(outputPath, fileName, contentType) {
 function pruneDownloadTokens() {
   const now = Date.now();
   for (const [token, entry] of downloadTokens) {
-    if (!entry || entry.expiresAt <= now) downloadTokens.delete(token);
+    if (!entry || entry.expiresAt <= now) {
+      cleanupDownloadEntry(entry);
+      downloadTokens.delete(token);
+    }
   }
 }
 
@@ -1182,7 +1398,28 @@ function sendDownload(res, url) {
     'cache-control': 'no-store',
     'access-control-allow-origin': '*'
   });
-  fs.createReadStream(entry.outputPath).pipe(res);
+  const stream = fs.createReadStream(entry.outputPath);
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    downloadTokens.delete(token);
+    cleanupDownloadEntry(entry);
+  };
+  stream.on('close', cleanup);
+  stream.on('error', cleanup);
+  res.on('close', cleanup);
+  stream.pipe(res);
+}
+
+function cleanupDownloadEntry(entry) {
+  if (!entry || entry.deleteAfterDownload !== true) return;
+  try {
+    if (entry.outputPath) fs.rmSync(entry.outputPath, { force: true });
+  } catch (_) {}
+  try {
+    if (entry.cleanupDir) fs.rmSync(entry.cleanupDir, { recursive: true, force: true });
+  } catch (_) {}
 }
 
 function contentDispositionAttachment(fileName) {
@@ -1629,8 +1866,11 @@ async function generateProofread(body) {
   }
   if (!document.id) document.id = extractDocId(document.url);
 
-  const prompt = buildProofreadPrompt(document, settings);
-  const run = await runProvider(provider, prompt, settings);
+  const totalTimeoutMs = clampNumber(body.timeoutMs, settings.requestTimeoutMs, 30000, settings.requestTimeoutMs);
+  const factCheck = await runProofreadFactCheck(document, settings, provider, totalTimeoutMs);
+  const remainingTimeoutMs = Math.max(30000, totalTimeoutMs - Math.ceil(Number(factCheck.elapsedMs || 0)) - 5000);
+  const prompt = buildProofreadPrompt(document, settings, factCheck);
+  const run = await runProvider(provider, prompt, settings, { timeoutMs: remainingTimeoutMs });
   if (!run.ok) {
     throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
       exitCode: run.exitCode,
@@ -1652,6 +1892,14 @@ async function generateProofread(body) {
     compactedRules: compact.compacted,
     droppedRules: compact.dropped,
     migratedFiles: migration.renamed,
+    factCheck: {
+      enabled: factCheck.enabled,
+      provider: factCheck.provider,
+      model: factCheck.model,
+      elapsedMs: factCheck.elapsedMs,
+      webAccess: factCheck.report && factCheck.report.webAccess || '',
+      claimCount: factCheck.report && Array.isArray(factCheck.report.claims) ? factCheck.report.claims.length : 0
+    },
     fileName: file.fileName,
     displayName: file.displayName,
     outputPath: file.outputPath,
@@ -1951,7 +2199,7 @@ function startServer(port = DEFAULT_PORT) {
   });
   server.listen(port, '127.0.0.1', () => {
     console.log(`Toytype AI bridge: http://127.0.0.1:${port}`);
-    console.log('Mode: foreground server. Keep this terminal open; press Ctrl-C to stop.');
+    console.log('Mode: foreground server. Keep this terminal open; press [Ctrl-C] to stop.');
     console.log('Restart from another terminal (background):');
     console.log(`  node tools/toytype_ai_bridge_ctl.mjs restart --port ${port}`);
     console.log(`Stop: node tools/toytype_ai_bridge_ctl.mjs stop --port ${port}`);
