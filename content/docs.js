@@ -31,6 +31,8 @@
   const AI_QUESTION_TIMEOUT = 180000;
   const AI_LENGTH_CONTEXT = 1200;
   const AI_LENGTH_TIMEOUT = 180000;
+  const DOCX_FETCH_TIMEOUT = 180000;
+  const IMAGE_EXTRACT_TIMEOUT = 300000;
   const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
   const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
   const GENERATED_RULES_CACHE_KEY = 'docsGeneratedRulesCacheV1';
@@ -389,6 +391,32 @@
         return t.replace(/\r/g, ''); // 그 외 트리밍·공백 정리 금지 (space1 보존)
       })
       .finally(() => clearTimeout(timer));
+  }
+
+  function fetchDocxExport(docId) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), DOCX_FETCH_TIMEOUT);
+    const um = location.pathname.match(/\/document\/u\/(\d+)\//);
+    const url = 'https://docs.google.com/document/' + (um ? 'u/' + um[1] + '/' : '') +
+      'd/' + docId + '/export?format=docx';
+    return fetch(url, { signal: ctrl.signal })
+      .then(res => {
+        if (!res.ok) throw new Error('docx export http ' + res.status);
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (ct && ct.indexOf('text/html') !== -1) throw new Error('docx export content-type: ' + ct);
+        return res.arrayBuffer();
+      })
+      .finally(() => clearTimeout(timer));
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
   }
 
   function fetchModelText(docId) {
@@ -780,6 +808,7 @@
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
       { id: 'ai-question', label: 'AI 발문 삽입', run: handleAiQuestionAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
+      { id: 'extract-images', label: '이미지 추출', run: handleExtractImagesAddon },
       { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
     ];
   }
@@ -2185,6 +2214,64 @@
     return Math.round(n);
   }
 
+  async function handleExtractImagesAddon() {
+    const actionId = 'extract-images';
+    if (isAddonBusy(actionId)) return;
+    const docId = getDocId();
+    if (!docId) {
+      showToast('문서 ID를 찾지 못했습니다', { durationMs: 3200 });
+      return;
+    }
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startImageExtractStatus('DOCX 다운로드 중');
+    try {
+      const docxBuffer = await fetchDocxExport(docId);
+      updateImageExtractStatus('브릿지로 전송 중');
+      const res = await sendAiBridge('extractImages', {
+        timeoutMs: IMAGE_EXTRACT_TIMEOUT,
+        document: {
+          id: docId,
+          title: documentTitleForAddon(),
+          url: location.href,
+          docxBase64: arrayBufferToBase64(docxBuffer),
+          docxBytes: docxBuffer.byteLength
+        }
+      });
+      if (!res || !res.ok) {
+        throw aiBridgeError(res, '이미지 추출 실패');
+      }
+      const imageCount = Number(res.imageCount || 0);
+      if (imageCount <= 0) {
+        finalStatus = '이미지 없음';
+        successToast = '문서에 추출할 이미지가 없습니다';
+      } else {
+        const skippedCount = Number(res.skippedImageCount || 0);
+        const downloadState = res.chromeDownloadId ? 'Chrome 다운로드 시작' : (res.chromeDownloadError ? 'Chrome 다운로드 실패' : 'ZIP 저장됨');
+        finalStatus = '이미지 추출 완료 · ' + imageCount + '개 · ' + downloadState;
+        if (skippedCount > 0) finalStatus += ' · 빈 이미지 제외 ' + skippedCount + '개';
+        if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
+        successToast = res.chromeDownloadId
+          ? '이미지 ZIP 다운로드 시작: ' + (res.displayName || res.fileName || imageCount + '개')
+          : '이미지 ZIP 저장됨: ' + (res.displayName || res.fileName || imageCount + '개');
+      }
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] image extract failed', summary);
+      finalStatus = error && error.userMessage ? error.userMessage : '이미지 추출 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishImageExtractStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 4200 });
+      else if (successToast) showToast(successToast, { durationMs: 2800 });
+    }
+  }
+
   function handleExtractTocAddon() {
     const actionId = 'extract-toc';
     if (isAddonBusy(actionId)) return;
@@ -2332,6 +2419,45 @@
     addonStatus = {
       type: 'ai-length',
       label: 'AI 문장',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startImageExtractStatus(phase) {
+    addonStatus = {
+      type: 'extract-images',
+      label: '이미지 추출',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateImageExtractStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'extract-images' || addonStatus.state !== 'running') {
+      startImageExtractStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishImageExtractStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'extract-images' ? addonStatus : null;
+    addonStatus = {
+      type: 'extract-images',
+      label: '이미지 추출',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,

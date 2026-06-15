@@ -96,6 +96,10 @@ async function callAiBridge(path, payload) {
     if (!res.ok) {
       return Object.assign({ ok: false, status: res.status }, json);
     }
+    if (path === '/docs/extract-images' && json && json.ok && json.downloadUrlPath && json.fileName) {
+      const download = await downloadBridgeFile(ai.bridgeUrl, json.downloadUrlPath, json.fileName);
+      return Object.assign({}, json, download);
+    }
     return json;
   } catch (e) {
     return {
@@ -108,6 +112,32 @@ async function callAiBridge(path, payload) {
   }
 }
 
+function downloadBridgeFile(bridgeUrl, urlPath, fileName) {
+  return new Promise(resolve => {
+    if (!chrome.downloads || typeof chrome.downloads.download !== 'function') {
+      resolve({ chromeDownloadError: 'downloads API unavailable' });
+      return;
+    }
+    const url = normalizeBridgeUrl(bridgeUrl) + urlPath;
+    chrome.downloads.download({
+      url,
+      filename: safeDownloadFileName(fileName),
+      conflictAction: 'uniquify',
+      saveAs: false
+    }, downloadId => {
+      if (chrome.runtime.lastError) {
+        resolve({ chromeDownloadError: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve({ chromeDownloadId: downloadId });
+    });
+  });
+}
+
+function safeDownloadFileName(fileName) {
+  return String(fileName || 'toytype-images.zip').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'toytype-images.zip';
+}
+
 function aiBridgePath(action) {
   const paths = {
     health: '/health',
@@ -115,6 +145,7 @@ function aiBridgePath(action) {
     proofread: '/ai/proofread',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
+    extractImages: '/docs/extract-images',
     listGenerated: '/fs/list-generated',
     openOutputDir: '/fs/open-output-dir',
     cleanupGenerated: '/fs/cleanup-generated',

@@ -3,11 +3,13 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_PORT = Number(process.env.TOYTYPE_AI_BRIDGE_PORT || 17644);
-const MAX_BODY_BYTES = 50 * 1024 * 1024;
+const MAX_BODY_BYTES = 200 * 1024 * 1024;
 const VERSION = '1.0.0';
 const BRIDGE_FILE = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.resolve(path.dirname(BRIDGE_FILE), '..');
@@ -15,8 +17,11 @@ const BUILTIN_RULES_PATH = path.join(PROJECT_ROOT, 'rules.json');
 const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
 const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
 const GENERATED_CLEANUP_DAYS = [1, 7, 30, 60, 180];
+const DOWNLOAD_TOKEN_TTL_MS = 10 * 60 * 1000;
 let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
+let crc32TableCache = null;
+const downloadTokens = new Map();
 
 const DEFAULT_SETTINGS = {
   provider: 'codex',
@@ -759,6 +764,436 @@ function writeGeneratedJson(json, document, settings) {
   return { fileName, displayName: generatedJsonDisplayName(fileName), outputPath };
 }
 
+function extractImagesFromDocx(body) {
+  const settings = mergeSettings(body.settings);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const base64 = typeof document.docxBase64 === 'string' ? document.docxBase64 : '';
+  if (!base64.trim()) throw new HttpError(400, 'document.docxBase64 is required');
+
+  let docx = null;
+  try {
+    docx = Buffer.from(base64, 'base64');
+  } catch (_) {
+    throw new HttpError(400, 'invalid docxBase64');
+  }
+  if (!docx || docx.length < 64) throw new HttpError(400, 'empty DOCX payload');
+
+  const zip = readZipEntries(docx);
+  const relationships = parseDocxRelationships(zip);
+  const orderedTargets = parseDocxImageTargets(zip, relationships);
+  const images = [];
+  const skippedImages = [];
+  for (const target of orderedTargets) {
+    const entry = zip.get(target) || zip.get(decodeURIComponentSafe(target));
+    if (!entry || entry.dir) continue;
+    const data = inflateZipEntry(docx, entry);
+    const skipReason = skipExtractedImageReason(target, data);
+    if (skipReason) {
+      skippedImages.push({ sourcePath: target, reason: skipReason, bytes: data.length });
+      continue;
+    }
+    images.push({
+      sourcePath: target,
+      data
+    });
+  }
+
+  if (!images.length) {
+    return {
+      ok: true,
+      imageCount: 0,
+      docxBytes: docx.length,
+      fileName: '',
+      displayName: '',
+      outputPath: '',
+      skippedImageCount: skippedImages.length,
+      skippedImages
+    };
+  }
+
+  const width = Math.max(3, String(images.length).length);
+  const files = images.map((image, index) => ({
+    name: String(index + 1).padStart(width, '0') + imageExtension(image.sourcePath, image.data),
+    data: image.data
+  }));
+  const zipBuffer = createStoredZip(files);
+  fs.mkdirSync(settings.outputDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const docId = sanitizeFilename(document.id || extractDocId(document.url) || document.title || 'document');
+  const fileName = `${docId}-images-${stamp}.zip`;
+  const outputPath = path.join(settings.outputDir, fileName);
+  fs.writeFileSync(outputPath, zipBuffer);
+  const download = createDownloadToken(outputPath, fileName, 'application/zip');
+  return {
+    ok: true,
+    imageCount: images.length,
+    skippedImageCount: skippedImages.length,
+    docxBytes: docx.length,
+    zipBytes: zipBuffer.length,
+    fileName,
+    displayName: `이미지-${stamp}.zip`,
+    outputPath,
+    downloadToken: download.token,
+    downloadUrlPath: download.urlPath,
+    files: files.map((file, index) => ({
+      fileName: file.name,
+      sourcePath: images[index].sourcePath,
+      bytes: file.data.length
+    })),
+    skippedImages
+  };
+}
+
+function readZipEntries(buffer) {
+  const eocdOffset = findEndOfCentralDirectory(buffer);
+  const total = buffer.readUInt16LE(eocdOffset + 10);
+  const cdSize = buffer.readUInt32LE(eocdOffset + 12);
+  const cdOffset = buffer.readUInt32LE(eocdOffset + 16);
+  if (cdOffset + cdSize > buffer.length) throw new HttpError(400, 'invalid DOCX central directory');
+  const entries = new Map();
+  entries.buffer = buffer;
+  let offset = cdOffset;
+  for (let i = 0; i < total; i++) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) throw new HttpError(400, 'invalid DOCX central directory entry');
+    const flags = buffer.readUInt16LE(offset + 8);
+    const method = buffer.readUInt16LE(offset + 10);
+    const crc = buffer.readUInt32LE(offset + 16);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const nameBuffer = buffer.subarray(offset + 46, offset + 46 + nameLength);
+    const name = nameBuffer.toString(flags & 0x0800 ? 'utf8' : 'utf8');
+    entries.set(normalizeZipPath(name), {
+      name: normalizeZipPath(name),
+      method,
+      crc,
+      compressedSize,
+      uncompressedSize,
+      localOffset,
+      dir: /\/$/.test(name)
+    });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function findEndOfCentralDirectory(buffer) {
+  const min = Math.max(0, buffer.length - 0xffff - 22);
+  for (let offset = buffer.length - 22; offset >= min; offset--) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  throw new HttpError(400, 'invalid DOCX zip footer');
+}
+
+function inflateZipEntry(zipBuffer, entry) {
+  if (zipBuffer.readUInt32LE(entry.localOffset) !== 0x04034b50) throw new HttpError(400, 'invalid DOCX local header');
+  const nameLength = zipBuffer.readUInt16LE(entry.localOffset + 26);
+  const extraLength = zipBuffer.readUInt16LE(entry.localOffset + 28);
+  const dataStart = entry.localOffset + 30 + nameLength + extraLength;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > zipBuffer.length) throw new HttpError(400, 'invalid DOCX entry size');
+  const compressed = zipBuffer.subarray(dataStart, dataEnd);
+  if (entry.method === 0) return Buffer.from(compressed);
+  if (entry.method === 8) return zlib.inflateRawSync(compressed);
+  throw new HttpError(400, 'unsupported DOCX compression method: ' + entry.method);
+}
+
+function readZipText(zip, zipBuffer, fileName) {
+  const entry = zip.get(fileName);
+  if (!entry || entry.dir) return '';
+  return inflateZipEntry(zipBuffer, entry).toString('utf8');
+}
+
+function parseDocxRelationships(zip) {
+  const relEntry = zip.get('word/_rels/document.xml.rels');
+  if (!relEntry) throw new HttpError(400, 'DOCX document relationships not found');
+  const relXml = inflateZipEntryFromMap(zip, relEntry).toString('utf8');
+  const out = new Map();
+  const relRe = /<Relationship\b[^>]*>/g;
+  let match = null;
+  while ((match = relRe.exec(relXml)) !== null) {
+    const attrs = xmlAttrs(match[0]);
+    const id = attrs.Id || attrs.id;
+    const type = attrs.Type || attrs.type || '';
+    const target = attrs.Target || attrs.target || '';
+    const targetMode = attrs.TargetMode || attrs.targetMode || '';
+    if (!id || !target || targetMode === 'External' || !/\/image$/i.test(type)) continue;
+    out.set(id, normalizeRelationshipTarget('word', target));
+  }
+  return out;
+}
+
+function inflateZipEntryFromMap(zip, entry) {
+  const source = zip.buffer;
+  if (source) return inflateZipEntry(source, entry);
+  throw new HttpError(500, 'zip source buffer missing');
+}
+
+function parseDocxImageTargets(zip, relationships) {
+  const docEntry = zip.get('word/document.xml');
+  if (!docEntry) throw new HttpError(400, 'DOCX document.xml not found');
+  const documentXml = inflateZipEntryFromMap(zip, docEntry).toString('utf8');
+  const targets = [];
+  const tagRe = /<(?:a:blip|asvg:svgBlip|v:imagedata)\b[^>]*>/g;
+  let match = null;
+  while ((match = tagRe.exec(documentXml)) !== null) {
+    const attrs = xmlAttrs(match[0]);
+    const relId = attrs['r:embed'] || attrs['r:id'] || attrs['r:link'];
+    const target = relId && relationships.get(relId);
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+
+function xmlAttrs(tag) {
+  const attrs = {};
+  const attrRe = /([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"/g;
+  let match = null;
+  while ((match = attrRe.exec(tag)) !== null) {
+    attrs[match[1]] = decodeXmlAttr(match[2]);
+  }
+  return attrs;
+}
+
+function decodeXmlAttr(value) {
+  return String(value || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function normalizeRelationshipTarget(baseDir, target) {
+  const raw = String(target || '').replace(/\\/g, '/');
+  if (raw.startsWith('/')) return normalizeZipPath(raw.slice(1));
+  return normalizeZipPath(path.posix.join(baseDir, raw));
+}
+
+function normalizeZipPath(value) {
+  return path.posix.normalize(String(value || '').replace(/\\/g, '/')).replace(/^(\.\.\/)+/, '');
+}
+
+function decodeURIComponentSafe(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (_) {
+    return value;
+  }
+}
+
+function imageExtension(sourcePath, data) {
+  const ext = path.posix.extname(String(sourcePath || '')).toLowerCase();
+  if (/^\.(png|jpe?g|gif|bmp|webp|tiff?|svg|emf|wmf)$/.test(ext)) return ext === '.jpeg' ? '.jpg' : ext;
+  if (data && data.length >= 12) {
+    if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return '.png';
+    if (data[0] === 0xff && data[1] === 0xd8) return '.jpg';
+    if (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46) return '.gif';
+    if (data[0] === 0x42 && data[1] === 0x4d) return '.bmp';
+    if (data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') return '.webp';
+  }
+  return '.bin';
+}
+
+function skipExtractedImageReason(sourcePath, data) {
+  if (!data || data.length === 0) return 'empty-file';
+  const size = imageDimensions(sourcePath, data);
+  if (size && size.width <= 2 && size.height <= 2) return 'tiny-placeholder';
+  return '';
+}
+
+function imageDimensions(sourcePath, data) {
+  const ext = path.posix.extname(String(sourcePath || '')).toLowerCase();
+  if (ext === '.png' || (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47)) {
+    if (data.length >= 24) return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+    return null;
+  }
+  if (ext === '.gif' || (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46)) {
+    if (data.length >= 10) return { width: data.readUInt16LE(6), height: data.readUInt16LE(8) };
+    return null;
+  }
+  if (ext === '.bmp' || (data[0] === 0x42 && data[1] === 0x4d)) {
+    if (data.length >= 26) return { width: Math.abs(data.readInt32LE(18)), height: Math.abs(data.readInt32LE(22)) };
+    return null;
+  }
+  if (ext === '.jpg' || ext === '.jpeg' || (data[0] === 0xff && data[1] === 0xd8)) {
+    return jpegDimensions(data);
+  }
+  return null;
+}
+
+function jpegDimensions(data) {
+  if (!data || data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < data.length) {
+    if (data[offset] !== 0xff) {
+      offset++;
+      continue;
+    }
+    const marker = data[offset + 1];
+    if (marker === 0xd9 || marker === 0xda) break;
+    const length = data.readUInt16BE(offset + 2);
+    if (length < 2 || offset + 2 + length > data.length) break;
+    if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
+      return { width: data.readUInt16BE(offset + 7), height: data.readUInt16BE(offset + 5) };
+    }
+    offset += 2 + length;
+  }
+  return null;
+}
+
+function createStoredZip(files) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const { time, date } = dosDateTime(new Date());
+  for (const file of files) {
+    const nameBuffer = Buffer.from(file.name, 'utf8');
+    const data = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data || '');
+    const crc = crc32(data);
+    const local = Buffer.alloc(30 + nameBuffer.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuffer.length, 26);
+    local.writeUInt16LE(0, 28);
+    nameBuffer.copy(local, 30);
+    localParts.push(local, data);
+
+    const central = Buffer.alloc(46 + nameBuffer.length);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(time, 12);
+    central.writeUInt16LE(date, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuffer.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    nameBuffer.copy(central, 46);
+    centralParts.push(central);
+    offset += local.length + data.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(files.length, 8);
+  eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(centralSize, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+  return Buffer.concat(localParts.concat(centralParts, eocd));
+}
+
+function dosDateTime(dateObj) {
+  const date = dateObj instanceof Date ? dateObj : new Date();
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+  };
+}
+
+function crc32(buffer) {
+  const table = crc32Table();
+  let crc = 0xffffffff;
+  for (let i = 0; i < buffer.length; i++) {
+    crc = table[(crc ^ buffer[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function crc32Table() {
+  if (crc32TableCache) return crc32TableCache;
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  crc32TableCache = table;
+  return table;
+}
+
+function createDownloadToken(outputPath, fileName, contentType) {
+  pruneDownloadTokens();
+  const token = randomUUID();
+  downloadTokens.set(token, {
+    outputPath,
+    fileName,
+    contentType: contentType || 'application/octet-stream',
+    expiresAt: Date.now() + DOWNLOAD_TOKEN_TTL_MS
+  });
+  return {
+    token,
+    urlPath: '/fs/download?token=' + encodeURIComponent(token)
+  };
+}
+
+function pruneDownloadTokens() {
+  const now = Date.now();
+  for (const [token, entry] of downloadTokens) {
+    if (!entry || entry.expiresAt <= now) downloadTokens.delete(token);
+  }
+}
+
+function sendDownload(res, url) {
+  pruneDownloadTokens();
+  const token = url.searchParams.get('token') || '';
+  const entry = downloadTokens.get(token);
+  if (!entry) throw new HttpError(404, 'download token not found or expired');
+  if (entry.expiresAt <= Date.now()) {
+    downloadTokens.delete(token);
+    throw new HttpError(404, 'download token expired');
+  }
+  let stat = null;
+  try {
+    stat = fs.statSync(entry.outputPath);
+  } catch (_) {
+    throw new HttpError(404, 'download file not found');
+  }
+  if (!stat.isFile()) throw new HttpError(404, 'download target is not a file');
+  res.writeHead(200, {
+    'content-type': entry.contentType,
+    'content-length': String(stat.size),
+    'content-disposition': contentDispositionAttachment(entry.fileName),
+    'cache-control': 'no-store',
+    'access-control-allow-origin': '*'
+  });
+  fs.createReadStream(entry.outputPath).pipe(res);
+}
+
+function contentDispositionAttachment(fileName) {
+  const safe = String(fileName || 'download.bin').replace(/[\\/\r\n"]/g, '_');
+  return `attachment; filename="${safe}"; filename*=UTF-8''${encodeRFC5987ValueChars(safe)}`;
+}
+
+function encodeRFC5987ValueChars(value) {
+  return encodeURIComponent(value).replace(/['()*]/g, ch => '%' + ch.charCodeAt(0).toString(16).toUpperCase());
+}
+
 function sentenceSuggestionFileName(document) {
   const docId = sanitizeFilename(document && (document.id || extractDocId(document.url)) || 'document');
   return `${docId}-문장제안.json`;
@@ -1449,6 +1884,10 @@ async function route(req, res) {
     sendJson(res, 200, health({}));
     return;
   }
+  if (req.method === 'GET' && url.pathname === '/fs/download') {
+    sendDownload(res, url);
+    return;
+  }
   if (req.method !== 'POST') throw new HttpError(404, 'not found');
   const body = await readRequestBody(req);
   if (url.pathname === '/health') {
@@ -1469,6 +1908,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/ai/adjust-length') {
     sendJson(res, 200, await generateLengthAdjustment(body));
+    return;
+  }
+  if (url.pathname === '/docs/extract-images') {
+    sendJson(res, 200, extractImagesFromDocx(body));
     return;
   }
   if (url.pathname === '/fs/list-generated') {
