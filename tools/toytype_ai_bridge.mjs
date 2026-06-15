@@ -88,6 +88,89 @@ function clampNumber(value, fallback, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function countChars(value) {
+  return Array.from(String(value || '')).length;
+}
+
+function truncateLogValue(value, max = 96) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function formatLogValue(value) {
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(truncateLogValue(value));
+}
+
+function formatLogFields(fields) {
+  const parts = [];
+  for (const [key, value] of Object.entries(fields || {})) {
+    if (value === undefined || value === null || value === '') continue;
+    parts.push(`${key}=${formatLogValue(value)}`);
+  }
+  return parts.length ? ' ' + parts.join(' ') : '';
+}
+
+function bridgeLog(event, fields) {
+  console.log(`[${new Date().toISOString()}] ${event}${formatLogFields(fields)}`);
+}
+
+function bridgeError(event, fields) {
+  console.error(`[${new Date().toISOString()}] ${event}${formatLogFields(fields)}`);
+}
+
+function requestDocumentSummary(body) {
+  const document = body && body.document && typeof body.document === 'object' ? body.document : {};
+  const docId = document.id || extractDocId(document.url);
+  const before = typeof document.contextBefore === 'string' ? document.contextBefore : document.textBefore;
+  const after = typeof document.contextAfter === 'string' ? document.contextAfter : document.textAfter;
+  return {
+    docId,
+    title: document.title,
+    textChars: typeof document.text === 'string' ? countChars(document.text) : undefined,
+    selectedChars: typeof document.selectedText === 'string' ? countChars(document.selectedText) : undefined,
+    beforeChars: typeof before === 'string' ? countChars(before) : undefined,
+    afterChars: typeof after === 'string' ? countChars(after) : undefined,
+    insertionChars: typeof document.insertionSource === 'string' ? countChars(document.insertionSource) : undefined,
+    targetPercent: document.targetPercent
+  };
+}
+
+function aiRequestLogFields(body) {
+  const settings = mergeSettings(body && body.settings);
+  const provider = body && body.provider === 'claude' ? 'claude' : settings.provider;
+  return Object.assign({
+    provider,
+    timeoutMs: body && body.timeoutMs
+  }, requestDocumentSummary(body));
+}
+
+function aiResultLogFields(payload, elapsedMs) {
+  return {
+    provider: payload && payload.provider,
+    model: payload && payload.model,
+    elapsedMs,
+    runElapsedMs: payload && payload.elapsedMs,
+    fileName: payload && payload.fileName,
+    ruleCount: payload && payload.ruleCount,
+    chars: payload && payload.chars,
+    targetPercent: payload && payload.targetPercent,
+    sourceChars: payload && payload.sourceChars,
+    replacementChars: payload && payload.replacementChars
+  };
+}
+
+function aiErrorLogFields(error, elapsedMs) {
+  return {
+    elapsedMs,
+    status: error && error.status,
+    message: error && error.message,
+    exitCode: error && error.details && error.details.exitCode,
+    timedOut: error && error.details && error.details.timedOut,
+    model: error && error.details && error.details.model
+  };
+}
+
 function parseCommand(command) {
   const input = String(command || '').trim();
   if (!input) return [];
@@ -428,6 +511,14 @@ async function runProofreadFactCheck(document, settings, provider, totalTimeoutM
     Math.max(30000, Math.floor(Number(totalTimeoutMs || settings.requestTimeoutMs) * 0.4))
   );
   const prompt = buildProofreadFactCheckPrompt(document, settings, provider, model);
+  bridgeLog('AI proofread fact-check start', {
+    provider,
+    model,
+    docId: document.id || extractDocId(document.url),
+    title: document.title,
+    textChars: countChars(document.text),
+    timeoutMs
+  });
   const run = await runProvider(provider, prompt, settings, {
     model,
     reasoningEffort: provider === 'codex' ? settings.proofreadFactCheckCodexReasoningEffort : undefined,
@@ -435,6 +526,13 @@ async function runProofreadFactCheck(document, settings, provider, totalTimeoutM
     timeoutMs
   });
   if (!run.ok) {
+    bridgeError('AI proofread fact-check failed', {
+      provider,
+      model,
+      elapsedMs: run.elapsedMs,
+      exitCode: run.exitCode,
+      timedOut: run.timedOut
+    });
     throw new HttpError(502, `${provider} fact-check exited with code ${run.exitCode}`, {
       exitCode: run.exitCode,
       signal: run.signal,
@@ -448,6 +546,13 @@ async function runProofreadFactCheck(document, settings, provider, totalTimeoutM
     provider,
     model,
     elapsedMs: run.elapsedMs
+  });
+  bridgeLog('AI proofread fact-check done', {
+    provider,
+    model,
+    elapsedMs: run.elapsedMs,
+    webAccess: report.webAccess,
+    claimCount: Array.isArray(report.claims) ? report.claims.length : 0
   });
   return {
     enabled: true,
@@ -1567,6 +1672,7 @@ function deleteSentenceSuggestionRule(body) {
   }
 
   const removed = cat.rules.splice(deleteIndex, 1)[0];
+  const removedNotes = pruneSentenceSuggestionNotes(json, categoryId, removed);
   json.version = new Date().toISOString().slice(0, 10);
   json.documentId = document.id || json.documentId || '';
   json.documentTitle = document.title || json.documentTitle || '';
@@ -1580,8 +1686,25 @@ function deleteSentenceSuggestionRule(body) {
     outputPath,
     json,
     removedRule: removed,
+    removedNotes,
     ruleCount: countRules(json)
   };
+}
+
+function pruneSentenceSuggestionNotes(json, categoryId, rule) {
+  if (!json || !Array.isArray(json.notes) || !Array.isArray(rule)) return 0;
+  const before = json.notes.length;
+  json.notes = json.notes.filter(note => !sentenceSuggestionNoteMatchesRule(note, categoryId, rule));
+  return before - json.notes.length;
+}
+
+function sentenceSuggestionNoteMatchesRule(note, categoryId, rule) {
+  if (!note || typeof note !== 'object') return false;
+  const noteCategory = typeof note.category === 'string' ? note.category : note.categoryId;
+  if (noteCategory && noteCategory !== categoryId) return false;
+  const source = typeof note.source === 'string' ? note.source : note.sourceText;
+  const replacement = typeof note.replacement === 'string' ? note.replacement : note.replacementText;
+  return source === rule[0] && replacement === rule[1];
 }
 
 function sentenceSuggestionRuleMatches(rule, request) {
@@ -1871,8 +1994,21 @@ async function generateProofread(body) {
   const factCheck = await runProofreadFactCheck(document, settings, provider, totalTimeoutMs);
   const remainingTimeoutMs = Math.max(30000, totalTimeoutMs - Math.ceil(Number(factCheck.elapsedMs || 0)) - 5000);
   const prompt = buildProofreadPrompt(document, settings, factCheck);
+  bridgeLog('AI proofread main start', {
+    provider,
+    docId: document.id || extractDocId(document.url),
+    title: document.title,
+    textChars: countChars(document.text),
+    timeoutMs: remainingTimeoutMs
+  });
   const run = await runProvider(provider, prompt, settings, { timeoutMs: remainingTimeoutMs });
   if (!run.ok) {
+    bridgeError('AI proofread main failed', {
+      provider,
+      elapsedMs: run.elapsedMs,
+      exitCode: run.exitCode,
+      timedOut: run.timedOut
+    });
     throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
       exitCode: run.exitCode,
       signal: run.signal,
@@ -2124,6 +2260,19 @@ function sendError(res, error) {
   });
 }
 
+async function sendLoggedAiJson(res, action, body, handler) {
+  const startedAt = Date.now();
+  bridgeLog(`${action} start`, aiRequestLogFields(body));
+  try {
+    const payload = await handler(body);
+    bridgeLog(`${action} done`, aiResultLogFields(payload, Date.now() - startedAt));
+    sendJson(res, 200, payload);
+  } catch (error) {
+    bridgeError(`${action} failed`, aiErrorLogFields(error, Date.now() - startedAt));
+    throw error;
+  }
+}
+
 async function route(req, res) {
   if (req.method === 'OPTIONS') {
     sendJson(res, 200, { ok: true });
@@ -2149,15 +2298,15 @@ async function route(req, res) {
     return;
   }
   if (url.pathname === '/ai/proofread') {
-    sendJson(res, 200, await generateProofread(body));
+    await sendLoggedAiJson(res, 'AI proofread', body, generateProofread);
     return;
   }
   if (url.pathname === '/ai/question') {
-    sendJson(res, 200, await generateQuestion(body));
+    await sendLoggedAiJson(res, 'AI question', body, generateQuestion);
     return;
   }
   if (url.pathname === '/ai/adjust-length') {
-    sendJson(res, 200, await generateLengthAdjustment(body));
+    await sendLoggedAiJson(res, 'AI adjust-length', body, generateLengthAdjustment);
     return;
   }
   if (url.pathname === '/docs/extract-images') {

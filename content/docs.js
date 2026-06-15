@@ -134,6 +134,9 @@
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
+  let nativeControlInteractionUntil = 0;
+  let deferredRenderOptions = null;
+  let deferredRenderTimer = null;
   let toastTimer = null;
   let cooldownTimer = null;
   let settingsTimer = null;
@@ -766,6 +769,10 @@
     if (host) host.remove();
     host = shadowRoot = shadowView = null;
     expanded = false;
+    nativeControlInteractionUntil = 0;
+    deferredRenderOptions = null;
+    clearTimeout(deferredRenderTimer);
+    deferredRenderTimer = null;
     clearTimeout(toastTimer);
     clearTimeout(cooldownTimer);
     stopAddonStatusTicker();
@@ -996,6 +1003,10 @@
   function render(options) {
     if (!shadowView) return;
     const opts = options && typeof options === 'object' ? options : {};
+    if (shouldDeferRenderForNativeControl(opts)) {
+      deferRender(opts);
+      return;
+    }
     const prevBody = opts.preserveBodyScroll ? shadowView.querySelector('.trd-body') : null;
     const prevBodyScrollTop = prevBody ? prevBody.scrollTop : 0;
     shadowView.textContent = '';
@@ -1008,6 +1019,42 @@
     }
     syncCursorWatcher();
     syncBridgeStatusWatcher();
+  }
+
+  function noteNativeControlInteraction(ms) {
+    const duration = Number.isFinite(Number(ms)) ? Number(ms) : 1200;
+    nativeControlInteractionUntil = Math.max(nativeControlInteractionUntil, Date.now() + Math.max(0, duration));
+  }
+
+  function shouldDeferRenderForNativeControl(opts) {
+    if (!expanded || opts.force) return false;
+    return isNativeControlInteractionActive();
+  }
+
+  function isNativeControlInteractionActive() {
+    return Date.now() < nativeControlInteractionUntil;
+  }
+
+  function deferRender(opts) {
+    const next = Object.assign({}, deferredRenderOptions || {}, opts || {});
+    if ((deferredRenderOptions && deferredRenderOptions.preserveBodyScroll) || (opts && opts.preserveBodyScroll)) {
+      next.preserveBodyScroll = true;
+    }
+    deferredRenderOptions = next;
+    clearTimeout(deferredRenderTimer);
+    deferredRenderTimer = setTimeout(flushDeferredRender, Math.max(80, nativeControlInteractionUntil - Date.now() + 80));
+  }
+
+  function flushDeferredRender() {
+    if (!deferredRenderOptions) return;
+    if (isNativeControlInteractionActive()) {
+      deferRender(deferredRenderOptions);
+      return;
+    }
+    const opts = deferredRenderOptions;
+    deferredRenderOptions = null;
+    deferredRenderTimer = null;
+    render(Object.assign({}, opts, { force: true }));
   }
 
   function shouldFollowCursorInOrderList() {
@@ -1505,11 +1552,25 @@
       select.appendChild(uploadedOption);
     }
     select.value = canUseRulesSource(activeRulesSource) && !isSentenceSuggestionSource(activeRulesSource) ? activeRulesSource : 'builtin';
-    select.addEventListener('click', ev => {
+    const holdNativeSelect = ev => {
+      noteNativeControlInteraction(1800);
       ev.stopPropagation();
+    };
+    ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'keydown', 'keyup'].forEach(type => {
+      select.addEventListener(type, holdNativeSelect);
     });
-    select.addEventListener('change', () => {
+    select.addEventListener('focus', () => {
+      noteNativeControlInteraction(4000);
+    });
+    select.addEventListener('blur', () => {
+      noteNativeControlInteraction(120);
+      setTimeout(flushDeferredRender, 140);
+    });
+    select.addEventListener('change', ev => {
+      noteNativeControlInteraction(250);
+      ev.stopPropagation();
       handleRulesSourceChange(select.value);
+      setTimeout(flushDeferredRender, 280);
     });
     return select;
   }
@@ -1552,7 +1613,7 @@
 
   function pollCursorSelection() {
     // 적용 진행 중에는 모델 호출 경합을 피하려고 커서 폴링을 쉰다.
-    if (cursorPollBusy || applyingFindingKey !== null || addonBusyActions.size > 0) return;
+    if (cursorPollBusy || applyingFindingKey !== null || addonBusyActions.size > 0 || isNativeControlInteractionActive()) return;
     cursorPollBusy = true;
     fetchDocsSelection().then(selection => {
       if (updateCursorOffset(selection) && expanded && listMode === 'order') render();

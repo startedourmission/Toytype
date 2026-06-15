@@ -74,6 +74,8 @@ node tools/toytype_ai_bridge_ctl.mjs restart --port 17644
 tail -f /tmp/toytype-ai-bridge-17644.log
 ```
 
+AI 교정 생성, AI 발문 삽입, AI 문장 길이 조절은 브리지 콘솔에 시작/완료/실패 로그를 남깁니다. 백그라운드로 실행한 경우 같은 내용이 위 로그 파일에 기록됩니다.
+
 재시작 후에도 터미널을 서버로 잡아 두고 싶으면 다음처럼 실행합니다.
 
 ```bash
