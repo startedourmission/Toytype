@@ -1396,7 +1396,8 @@ function sendDownload(res, url) {
     'content-length': String(stat.size),
     'content-disposition': contentDispositionAttachment(entry.fileName),
     'cache-control': 'no-store',
-    'access-control-allow-origin': '*'
+    'access-control-allow-origin': '*',
+    'access-control-allow-private-network': 'true'
   });
   const stream = fs.createReadStream(entry.outputPath);
   let cleaned = false;
@@ -2108,6 +2109,7 @@ function sendJson(res, status, payload) {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type',
+    'access-control-allow-private-network': 'true',
     'content-length': Buffer.byteLength(data)
   });
   res.end(data);

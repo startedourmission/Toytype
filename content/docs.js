@@ -919,9 +919,13 @@
     btn.title = bridgeStatusTitle();
     btn.setAttribute('aria-label', bridgeStatusAriaLabel());
     const dot = el('span', 'trd-bridge-dot');
-    const label = el('span', 'trd-bridge-label');
-    label.textContent = bridgeStatusLabel();
-    btn.append(dot, label);
+    btn.appendChild(dot);
+    const labelText = bridgeStatusLabel();
+    if (labelText) {
+      const label = el('span', 'trd-bridge-label');
+      label.textContent = labelText;
+      btn.appendChild(label);
+    }
     btn.addEventListener('click', ev => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -2127,7 +2131,6 @@
         throw aiBridgeError(res, 'AI 교정 생성 실패');
       }
       updateAiProofreadStatus('JSON 저장/업로드 중');
-      setUploadedRulesJson(res.json, res.fileName || 'ai-proofread.json');
       if (res.fileName) {
         upsertGeneratedRulesFile({
           fileName: res.fileName,
@@ -2137,6 +2140,8 @@
           json: res.json
         });
         useRulesSource(generatedRulesSourceValue(res.fileName));
+      } else {
+        setUploadedRulesJson(res.json, 'ai-proofread.json');
       }
       refreshGeneratedRulesListQuiet();
       const n = countRulesInJson(res.json);
@@ -2180,7 +2185,6 @@
     if (!res || !res.json) return 0;
     const fileName = res.fileName || fallbackFileName || 'ai-generated.json';
     const isSentenceSuggestionFile = isSentenceSuggestionFileName(fileName);
-    if (!isSentenceSuggestionFile) setUploadedRulesJson(res.json, fileName);
     if (res.fileName) {
       upsertGeneratedRulesFile({
         fileName: res.fileName,
@@ -2195,6 +2199,8 @@
       } else {
         useRulesSource(generatedRulesSourceValue(res.fileName));
       }
+    } else if (!isSentenceSuggestionFile) {
+      setUploadedRulesJson(res.json, fileName);
     }
     refreshGeneratedRulesListQuiet();
     const n = countRulesInJson(res.json);
@@ -2820,6 +2826,82 @@
   }
 
   function sendAiBridge(action, payload) {
+    if (shouldUseDirectAiBridge(action)) return sendAiBridgeDirect(action, payload);
+    return sendAiBridgeViaBackground(action, payload);
+  }
+
+  function shouldUseDirectAiBridge(action) {
+    return action === 'proofread' || action === 'question' || action === 'adjustLength';
+  }
+
+  function directAiBridgePath(action) {
+    if (action === 'proofread') return '/ai/proofread';
+    if (action === 'question') return '/ai/question';
+    if (action === 'adjustLength') return '/ai/adjust-length';
+    return '';
+  }
+
+  async function sendAiBridgeDirect(action, payload) {
+    const config = await getAiBridgeConfig();
+    if (!config || !config.ok) return config || { ok: false, error: 'extension_message_failed' };
+    const path = directAiBridgePath(action);
+    if (!path) return { ok: false, error: 'unknown_ai_bridge_action' };
+    const defaults = config.payloadDefaults && typeof config.payloadDefaults === 'object' ? config.payloadDefaults : {};
+    const sourcePayload = payload && typeof payload === 'object' ? payload : {};
+    const bridgePayload = Object.assign({}, sourcePayload, {
+      provider: sourcePayload.provider || defaults.provider,
+      settings: defaults.settings || {}
+    });
+    const ctrl = new AbortController();
+    const timeoutMs = Number.isFinite(Number(sourcePayload.timeoutMs))
+      ? Math.max(5000, Number(sourcePayload.timeoutMs))
+      : Math.max(5000, Number(config.requestTimeoutMs) || 600000);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs + 5000);
+    try {
+      const res = await fetch(String(config.bridgeUrl || '').replace(/\/+$/, '') + path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(bridgePayload),
+        signal: ctrl.signal
+      });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch (_) {
+        return { ok: false, error: 'bridge_invalid_json', status: res.status, body: text.slice(0, 2000) };
+      }
+      if (!res.ok) return Object.assign({ ok: false, status: res.status }, json);
+      return json;
+    } catch (e) {
+      return {
+        ok: false,
+        error: e && e.name === 'AbortError' ? 'bridge_timeout' : 'bridge_unavailable',
+        message: e && e.message ? e.message : String(e),
+        bridgeUrl: config.bridgeUrl || ''
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function getAiBridgeConfig() {
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'typo:getAiBridgeConfig' }, res => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: 'extension_message_failed', message: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(res);
+        });
+      } catch (e) {
+        resolve({ ok: false, error: 'extension_message_failed', message: e && e.message ? e.message : String(e) });
+      }
+    });
+  }
+
+  function sendAiBridgeViaBackground(action, payload) {
     return new Promise(resolve => {
       try {
         chrome.runtime.sendMessage({
@@ -2841,7 +2923,7 @@
 
   function bridgeStatusLabel() {
     if (bridgeStatus.state === 'error') return '꺼짐';
-    return '브릿지';
+    return '';
   }
 
   function bridgeStatusTitle() {
@@ -3141,8 +3223,10 @@
   function aiBridgeError(res, fallbackMessage) {
     const code = res && (res.error || res.message);
     let userMessage = fallbackMessage;
-    if (code === 'bridge_unavailable' || code === 'extension_message_failed') {
+    if (code === 'bridge_unavailable') {
       userMessage = '로컬 브리지가 꺼져 있습니다 · 터미널에서 브리지를 실행하세요';
+    } else if (code === 'extension_message_failed') {
+      userMessage = '확장 background 응답이 끊겼습니다 · Google Docs 또는 확장 프로그램을 새로고침하세요';
     } else if (code === 'bridge_timeout') {
       userMessage = 'AI 응답 시간 초과';
     } else if (res && res.status === 404 && res.error === 'not found') {

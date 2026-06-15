@@ -62,10 +62,8 @@ function clampNumber(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
-async function callAiBridge(path, payload) {
-  const settings = await readSettings();
-  const ai = mergeAiSettings(settings);
-  const bridgePayload = Object.assign({}, payload || {}, {
+function buildAiBridgePayload(ai, payload) {
+  return Object.assign({}, payload || {}, {
     provider: payload && payload.provider || ai.provider,
     settings: {
       provider: ai.provider,
@@ -77,6 +75,12 @@ async function callAiBridge(path, payload) {
       maxDocumentChars: ai.maxDocumentChars
     }
   });
+}
+
+async function callAiBridge(path, payload) {
+  const settings = await readSettings();
+  const ai = mergeAiSettings(settings);
+  const bridgePayload = buildAiBridgePayload(ai, payload);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ai.requestTimeoutMs + 5000);
   try {
@@ -204,8 +208,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(() => {
         rulesCache = null;
         sendResponse({ ok: false, error: 'rules_load_failed' });
-      });
+    });
     return true; // 비동기 응답
+  }
+
+  if (msg.type === 'typo:getAiBridgeConfig') {
+    readSettings()
+      .then(settings => {
+        const ai = mergeAiSettings(settings);
+        sendResponse({
+          ok: true,
+          bridgeUrl: ai.bridgeUrl,
+          requestTimeoutMs: ai.requestTimeoutMs,
+          payloadDefaults: buildAiBridgePayload(ai, {})
+        });
+      })
+      .catch(error => {
+        sendResponse({ ok: false, error: 'settings_load_failed', message: error && error.message ? error.message : String(error) });
+      });
+    return true;
   }
 
   if (msg.type === 'typo:aiBridge') {
