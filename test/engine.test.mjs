@@ -152,6 +152,25 @@ test('실데이터: 살펴 보/살펴 봅 붙여쓰기', () => {
   assert.equal(f.dst, '살펴봅');
 });
 
+test('실데이터: 따라가는 붙여 쓰고 따라 가만 잡는다', () => {
+  initAll();
+  assert.ok(!srcs(E.scan('문맥을 따라가 보자')).includes('따라가'));
+
+  const f = E.scan('문맥을 따라 가자').findings.find((x) => x.src === '따라 가');
+  assert.ok(f, "'따라 가' 미검출");
+  assert.equal(f.dst, '따라가');
+});
+
+test('실데이터: 기록하고는 붙여 쓰고 기록 하고만 잡는다', () => {
+  initAll();
+  assert.ok(!srcs(E.scan('내용을 기록하고 저장한다')).includes('록하고'));
+  assert.ok(!srcs(E.scan('자료를 등록하고 수록하고 마친다')).includes('록하고'));
+
+  const f = E.scan('내용을 기록 하고 저장한다').findings.find((x) => x.src === '기록 하고');
+  assert.ok(f, "'기록 하고' 미검출");
+  assert.equal(f.dst, '기록하고');
+});
+
 test('실데이터: 운영체제 표기는 macOS·리눅스·윈도우로 통일', () => {
   initAll();
   assert.equal(E.scan('macOS에서 실행한다').findings.length, 0);
