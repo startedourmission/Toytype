@@ -26,6 +26,11 @@ function bridgeLogPath(port) {
   return `/tmp/toytype-ai-bridge-${port}.log`;
 }
 
+function printControlCommands(port) {
+  console.log(`Stop:    node tools/toytype_ai_bridge_ctl.mjs stop --port ${port}`);
+  console.log(`Restart: node tools/toytype_ai_bridge_ctl.mjs restart --port ${port}`);
+}
+
 function listenPids(port) {
   const result = spawnSync('lsof', [`-tiTCP:${port}`, '-sTCP:LISTEN'], {
     encoding: 'utf8'
@@ -61,6 +66,7 @@ async function stopPort(port) {
 function startForeground(port) {
   console.log(`Starting Toytype AI bridge on http://127.0.0.1:${port}`);
   console.log('Foreground mode: keep this terminal open. Press Ctrl-C to stop.');
+  printControlCommands(port);
   const child = spawn(process.execPath, [BRIDGE_PATH, '--port', String(port)], {
     stdio: 'inherit'
   });
@@ -80,6 +86,7 @@ function startBackground(port) {
   child.unref();
   console.log(`Started Toytype AI bridge in background on http://127.0.0.1:${port}`);
   console.log(`PID: ${child.pid}`);
+  printControlCommands(port);
   console.log(`Log: tail -f ${logPath}`);
 }
 
