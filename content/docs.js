@@ -43,8 +43,8 @@
   const IGNORED_FINDINGS_DOC_LIMIT = 50;
   const IGNORED_FINDINGS_PER_DOC_LIMIT = 500;
   const CURSOR_POLL_INTERVAL = 800;
-  const BRIDGE_STATUS_POLL_INTERVAL = 60000;
-  const BRIDGE_STATUS_STALE_MS = 30000;
+  const BRIDGE_STATUS_POLL_INTERVAL = 5000;
+  const BRIDGE_STATUS_STALE_MS = 4000;
   const DEFAULT_BRIDGE_PORT = 17644;
   const FALLBACK_CSS =
     '.trd-wrap{font-family:sans-serif;font-size:13px;color:#202124;line-height:1.45}' +
@@ -3407,8 +3407,11 @@
     if (bridgeStatusBusy) return;
     if (!force && bridgeStatus.checkedAt && Date.now() - bridgeStatus.checkedAt <= BRIDGE_STATUS_STALE_MS) return;
     bridgeStatusBusy = true;
-    bridgeStatus = Object.assign({}, bridgeStatus, { state: 'checking' });
-    if (expanded) render({ preserveBodyScroll: true });
+    const showChecking = force || !bridgeStatus || bridgeStatus.state !== 'ok';
+    if (showChecking) {
+      bridgeStatus = Object.assign({}, bridgeStatus, { state: 'checking' });
+      if (expanded) render({ preserveBodyScroll: true });
+    }
     sendAiBridge('health', {}).then(res => {
       if (res && res.ok) {
         bridgeStatus = {
