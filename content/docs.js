@@ -31,6 +31,7 @@
   const AI_QUESTION_TIMEOUT = 180000;
   const AI_LENGTH_CONTEXT = 1200;
   const AI_LENGTH_TIMEOUT = 180000;
+  const AI_TERMS_TIMEOUT = 180000;
   const DOCX_FETCH_TIMEOUT = 180000;
   const IMAGE_EXTRACT_TIMEOUT = 300000;
   const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
@@ -57,7 +58,7 @@
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
 
   const startedAt = Date.now();
 
@@ -126,6 +127,11 @@
   let bridgeStatusBusy = false;
   let generatedRulesFiles = [];
   let generatedRulesLoadedDocId = null;
+  let termsViewOpen = false;
+  let termReport = null;
+  let termReportDocId = null;
+  let autoTermsStartedDocId = null;
+  let autoTermsTimer = null;
 
   let host = null;
   let shadowRoot = null;
@@ -778,6 +784,8 @@
     stopAddonStatusTicker();
     stopCursorWatcher();
     stopBridgeStatusWatcher();
+    clearTimeout(autoTermsTimer);
+    autoTermsTimer = null;
   }
 
   function el(tag, className) {
@@ -811,6 +819,10 @@
 
   function suggestionsIcon() {
     return strokedSvg(['M8 7h8', 'M8 12h6', 'M5 4h14v14H8l-3 3z'], 'trd-svg-icon');
+  }
+
+  function termsIcon() {
+    return strokedSvg(['M4 6h16', 'M4 12h16', 'M4 18h16', 'M8 6v12', 'M15 6v12'], 'trd-svg-icon');
   }
 
   // 추가기능 아이콘 — 격자 4칸(기능 묶음) 모양
@@ -869,6 +881,7 @@
       ev.stopPropagation();
       addonsMenuOpen = !addonsMenuOpen;
       suggestionsViewOpen = false;
+      termsViewOpen = false;
       render();
     });
     wrap.appendChild(btn);
@@ -887,6 +900,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      termsViewOpen = false;
       suggestionsViewOpen = !suggestionsViewOpen;
       if (suggestionsViewOpen) {
         loadCachedGeneratedRulesListQuiet();
@@ -894,6 +908,34 @@
         if (cachedText === null) enqueueScan(true, { quiet: true });
       }
       render();
+    });
+    return btn;
+  }
+
+  function buildTermsButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-terms-btn' + (termsViewOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.appendChild(termsIcon());
+    btn.setAttribute('aria-label', 'AI 용어 표');
+    btn.setAttribute('aria-pressed', termsViewOpen ? 'true' : 'false');
+    btn.title = 'AI 용어 표';
+    btn.disabled = isAddonBusy('ai-terms');
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addonsMenuOpen = false;
+      suggestionsViewOpen = false;
+      const docId = getDocId();
+      if (termsViewOpen && termReport && termReportDocId === docId) {
+        termsViewOpen = false;
+        render();
+        return;
+      }
+      termsViewOpen = true;
+      render();
+      if (!termReport || termReportDocId !== docId) {
+        handleAiTermsAddon();
+      }
     });
     return btn;
   }
@@ -908,6 +950,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      termsViewOpen = false;
       openSettingsPageFromDocs();
     });
     return btn;
@@ -915,7 +958,7 @@
 
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildSuggestionsButton(), buildAddonsButton());
+    wrap.append(buildSettingsButton(), buildTermsButton(), buildSuggestionsButton(), buildAddonsButton());
     return wrap;
   }
 
@@ -1019,6 +1062,28 @@
     }
     syncCursorWatcher();
     syncBridgeStatusWatcher();
+    scheduleAutoTermsAnalysis();
+  }
+
+  function scheduleAutoTermsAnalysis() {
+    if (!expanded) return;
+    if (autoTermsTimer) return;
+    autoTermsTimer = setTimeout(() => {
+      autoTermsTimer = null;
+      maybeStartAutoTermsAnalysis();
+    }, 0);
+  }
+
+  function maybeStartAutoTermsAnalysis() {
+    if (!expanded) return;
+    if (!bridgeStatus || bridgeStatus.state !== 'ok') return;
+    const docId = getDocId();
+    if (!docId) return;
+    if (autoTermsStartedDocId === docId) return;
+    if (termReport && termReportDocId === docId) return;
+    if (addonBusyActions.size > 0) return;
+    autoTermsStartedDocId = docId;
+    handleAiTermsAddon({ openView: false, toast: false });
   }
 
   function noteNativeControlInteraction(ms) {
@@ -1169,7 +1234,9 @@
 
     // 본문
     const body = el('div', 'trd-body');
-    if (suggestionsViewOpen) {
+    if (termsViewOpen) {
+      appendTermsView(body);
+    } else if (suggestionsViewOpen) {
       appendSentenceSuggestionsView(body);
     } else if (status === 'error') {
       const msg = el('div', 'trd-msg trd-error');
@@ -1219,7 +1286,7 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    const ruleSource = suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json'));
+    const ruleSource = termsViewOpen ? 'AI 용어 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
     l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
     const addonStatusText = addonStatusLineText();
     if (addonStatusText) {
@@ -1258,6 +1325,94 @@
     for (let i = 0; i < rules.length; i++) {
       body.appendChild(buildSentenceSuggestionItem(rules[i], i));
     }
+  }
+
+  function appendTermsView(body) {
+    const docId = getDocId();
+    const report = termReportDocId === docId ? termReport : null;
+    const wrap = el('div', 'trd-terms-view');
+    const head = el('div', 'trd-terms-head');
+    const title = el('div', 'trd-terms-title');
+    title.textContent = 'AI 용어 표';
+    const refreshBtn = el('button', 'trd-btn trd-terms-refresh');
+    refreshBtn.type = 'button';
+    refreshBtn.textContent = '재분석';
+    refreshBtn.disabled = isAddonBusy('ai-terms');
+    refreshBtn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleAiTermsAddon({ force: true });
+    });
+    head.append(title, refreshBtn);
+    wrap.appendChild(head);
+
+    if (isAddonBusy('ai-terms') && !report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '용어 분석 중…';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+    if (!report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '아직 용어 분석 결과가 없습니다.';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+
+    const terms = Array.isArray(report.terms) ? report.terms : [];
+    if (terms.length === 0) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '혼용된 용어를 찾지 못했습니다.';
+      wrap.appendChild(msg);
+    } else {
+      const tableWrap = el('div', 'trd-terms-table-wrap');
+      const table = document.createElement('table');
+      table.className = 'trd-terms-table';
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      for (const label of ['혼용', '권장', '근거']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for (const term of terms) tbody.appendChild(buildTermRow(term));
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+      wrap.appendChild(tableWrap);
+    }
+
+    body.appendChild(wrap);
+  }
+
+  function buildTermRow(term) {
+    const tr = document.createElement('tr');
+    const variants = document.createElement('td');
+    variants.appendChild(buildVariantList(term && term.variants));
+    const recommended = document.createElement('td');
+    recommended.textContent = displayText(term && term.recommended || '');
+    const evidence = document.createElement('td');
+    const reason = String(term && term.reason || '').trim();
+    const snippets = Array.isArray(term && term.evidence) ? term.evidence.filter(Boolean) : [];
+    evidence.textContent = displayText(reason || snippets[0] || '');
+    tr.append(variants, recommended, evidence);
+    return tr;
+  }
+
+  function buildVariantList(variants) {
+    const list = el('div', 'trd-terms-variants');
+    for (const variant of Array.isArray(variants) ? variants : []) {
+      const item = el('div', 'trd-terms-variant');
+      const text = String(variant && variant.text || '');
+      const count = Number(variant && variant.count) || 0;
+      item.textContent = displayText(text) + (count > 0 ? ' (' + count + ')' : '');
+      list.appendChild(item);
+    }
+    return list;
   }
 
   function sentenceSuggestionRules() {
@@ -1589,6 +1744,7 @@
       return;
     }
     suggestionsViewOpen = false;
+    termsViewOpen = false;
     showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
     enqueueScan(cachedText === null);
   }
@@ -2257,6 +2413,7 @@
       if (isSentenceSuggestionFile) {
         if (isSentenceSuggestionSource(activeRulesSource)) useRulesSource('builtin');
         suggestionsViewOpen = true;
+        termsViewOpen = false;
       } else {
         useRulesSource(generatedRulesSourceValue(res.fileName));
       }
@@ -2273,6 +2430,100 @@
       console.error('[Toytype addons] post-AI suggestion scan failed', error);
     });
     return n;
+  }
+
+  async function handleAiTermsAddon(options) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const openView = opts.openView !== false;
+    const showCompletionToast = opts.toast !== false;
+    const actionId = 'ai-terms';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    if (openView) {
+      termsViewOpen = true;
+      suggestionsViewOpen = false;
+    }
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startAiTermsStatus('본문 읽는 중');
+    try {
+      const doc = await readCurrentDocumentTextForAddon();
+      if (!doc.text || !doc.text.trim()) {
+        const error = new Error('document text is blank');
+        error.userMessage = '용어를 분석할 본문을 읽지 못했습니다';
+        throw error;
+      }
+      updateAiTermsStatus('AI 용어 분석 중');
+      const res = await sendAiBridge('terms', {
+        timeoutMs: AI_TERMS_TIMEOUT,
+        force: opts.force === true,
+        document: {
+          id: doc.docId,
+          title: doc.title,
+          url: location.href,
+          textSource: doc.source,
+          text: doc.text
+        }
+      });
+      if (!res || !res.ok || !res.report) {
+        throw aiBridgeError(res, 'AI 용어 분석 실패');
+      }
+      termReport = normalizeTermReportForView(res.report, res);
+      termReportDocId = doc.docId;
+      const n = Array.isArray(termReport.terms) ? termReport.terms.length : 0;
+      const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : 'AI 용어 분석 완료';
+      finalStatus = n ? doneLabel + ' · ' + n + '건' : doneLabel + ' · 혼용 없음';
+      if (res.model) finalStatus += ' · ' + res.model;
+      if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
+      successToast = finalStatus;
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] AI terms failed', summary);
+      debugLog('[Toytype addons] AI terms failed detail', {
+        response: error && error.response !== undefined ? error.response : null,
+        stack: error && error.stack ? error.stack : ''
+      });
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 용어 분석 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishAiTermsStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (showCompletionToast && errorToast) showToast(errorToast, { durationMs: 4200 });
+      else if (showCompletionToast && successToast) showToast(successToast);
+    }
+  }
+
+  function normalizeTermReportForView(report, res) {
+    const source = report && typeof report === 'object' ? report : {};
+    return {
+      generatedAt: source.checkedAt || new Date().toISOString(),
+      provider: source.provider || (res && res.provider) || '',
+      model: source.model || (res && res.model) || '',
+      terms: Array.isArray(source.terms) ? source.terms.map(normalizeTermItemForView).filter(Boolean) : [],
+      notes: Array.isArray(source.notes) ? source.notes.filter(note => typeof note === 'string' && note.trim()).slice(0, 20) : []
+    };
+  }
+
+  function normalizeTermItemForView(item) {
+    if (!item || typeof item !== 'object') return null;
+    const variants = Array.isArray(item.variants)
+      ? item.variants.map(variant => ({
+          text: String(variant && variant.text || '').trim(),
+          count: Math.max(0, Math.round(Number(variant && variant.count) || 0))
+        })).filter(variant => variant.text)
+      : [];
+    if (variants.length < 2) return null;
+    return {
+      concept: String(item.concept || '').trim(),
+      recommended: String(item.recommended || '').trim(),
+      variants,
+      severity: item.severity === 'major' ? 'major' : 'minor',
+      evidence: Array.isArray(item.evidence) ? item.evidence.filter(text => typeof text === 'string' && text.trim()).slice(0, 4) : [],
+      reason: String(item.reason || '').trim()
+    };
   }
 
   async function handleAiQuestionAddon() {
@@ -2783,6 +3034,45 @@
     if (expanded) render();
   }
 
+  function startAiTermsStatus(phase) {
+    addonStatus = {
+      type: 'ai-terms',
+      label: 'AI 용어',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateAiTermsStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-terms' || addonStatus.state !== 'running') {
+      startAiTermsStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishAiTermsStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'ai-terms' ? addonStatus : null;
+    addonStatus = {
+      type: 'ai-terms',
+      label: 'AI 용어',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
   function startAiLengthStatus(phase) {
     addonStatus = {
       type: 'ai-length',
@@ -2963,11 +3253,12 @@
   }
 
   function shouldUseDirectAiBridge(action) {
-    return action === 'proofread' || action === 'question' || action === 'adjustLength';
+    return action === 'proofread' || action === 'terms' || action === 'question' || action === 'adjustLength';
   }
 
   function directAiBridgePath(action) {
     if (action === 'proofread') return '/ai/proofread';
+    if (action === 'terms') return '/ai/terms';
     if (action === 'question') return '/ai/question';
     if (action === 'adjustLength') return '/ai/adjust-length';
     return '';

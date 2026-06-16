@@ -317,16 +317,66 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   align-items: center;
 }
 .trd-settings-btn,
+.trd-terms-btn,
 .trd-suggestions-btn,
 .trd-addons-btn {
   width: 28px;
   height: 28px;
   color: #5f6368;
 }
+.trd-terms-btn.trd-on,
 .trd-suggestions-btn.trd-on {
   background: #e8f0fe;
   color: #174ea6;
 }
+
+.trd-terms-view {
+  padding: 10px 10px 12px;
+}
+.trd-terms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.trd-terms-title {
+  font-weight: 700;
+  color: #202124;
+}
+.trd-terms-refresh {
+  height: 26px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.trd-terms-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+.trd-terms-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.trd-terms-table th,
+.trd-terms-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f1f3f4;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+.trd-terms-table th {
+  background: #f8f9fa;
+  color: #5f6368;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.trd-terms-table tr:last-child td { border-bottom: 0; }
+.trd-terms-variant + .trd-terms-variant { margin-top: 2px; }
 .trd-addons-menu {
   position: absolute;
   right: 0;

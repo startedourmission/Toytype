@@ -152,6 +152,40 @@ test('실데이터: 살펴 보/살펴 봅 붙여쓰기', () => {
   assert.equal(f.dst, '살펴봅');
 });
 
+test('실데이터: 운영체제 표기는 macOS·리눅스·윈도우로 통일', () => {
+  initAll();
+  assert.equal(E.scan('macOS에서 실행한다').findings.length, 0);
+  assert.equal(E.scan('리눅스Linux와 윈도우Windows를 병기한다').findings.length, 0);
+  assert.equal(E.scan('Linux리눅스와 Windows윈도우를 병기한다').findings.length, 0);
+
+  let f = E.scan('맥 OS X에서 실행한다').findings.find((x) => x.src === '맥 OS X');
+  assert.ok(f, "'맥 OS X' 미검출");
+  assert.equal(f.dst, 'macOS');
+
+  f = E.scan('Linux에서 실행한다').findings.find((x) => x.src === 'Linux');
+  assert.ok(f, "'Linux' 미검출");
+  assert.equal(f.dst, '리눅스');
+
+  f = E.scan('리눅스(Linux)를 지원한다').findings.find((x) => x.src === 'Linux');
+  assert.ok(f, "괄호 병기 'Linux' 미검출");
+  assert.equal(f.dst, '리눅스');
+
+  f = E.scan('Windows에서 실행한다').findings.find((x) => x.src === 'Windows');
+  assert.ok(f, "'Windows' 미검출");
+  assert.equal(f.dst, '윈도우');
+
+  f = E.scan('윈도우즈 환경').findings.find((x) => x.src === '윈도우즈');
+  assert.ok(f, "'윈도우즈' 미검출");
+  assert.equal(f.dst, '윈도우');
+});
+
+test('실데이터: 동글뱅이 숫자는 앞뒤 띄어쓰기를 잡지 않는다', () => {
+  initAll();
+  assert.equal(E.scan('➌에서 테스트를 작성했다').findings.length, 0);
+  assert.equal(E.scan('➍에서 확인한다').findings.length, 0);
+  assert.equal(E.scan('➊ 클릭하고 ➋ 에서 확인한다').findings.length, 0);
+});
+
 test('T4 가드 A: ASCII 단어 경계 (합성)', () => {
   E.init(synth([cat('convert', [['Git', '깃']])]), ['convert']);
   assert.equal(E.scan('GitHub').findings.length, 0);

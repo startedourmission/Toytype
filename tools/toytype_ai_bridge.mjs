@@ -18,6 +18,10 @@ const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
 const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
 const GENERATED_CLEANUP_DAYS = [1, 7, 30, 60, 180];
 const DOWNLOAD_TOKEN_TTL_MS = 10 * 60 * 1000;
+const TERM_REPORT_MAX_ROWS = 12;
+const TERM_PROMPT_MAX_CHARS = 40000;
+const TERM_REPORT_FILE_SUFFIX = '-용어표.json';
+const TERM_REPORT_SCHEMA_VERSION = '2026-06-16.2';
 let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
 let crc32TableCache = null;
@@ -159,7 +163,10 @@ function aiResultLogFields(payload, elapsedMs) {
     targetPercent: payload && payload.targetPercent,
     targetChars: payload && payload.targetChars,
     sourceChars: payload && payload.sourceChars,
-    replacementChars: payload && payload.replacementChars
+    replacementChars: payload && payload.replacementChars,
+    termCount: payload && payload.termCount,
+    includedChars: payload && payload.includedChars,
+    fromCache: payload && payload.fromCache
   };
 }
 
@@ -635,6 +642,228 @@ function normalizeFactCheckSources(sources) {
     }))
     .filter(source => source.url || source.title || source.evidence)
     .slice(0, 5);
+}
+
+function buildTermConsistencyPrompt(document, settings) {
+  const title = document.title || document.id || 'Google Docs document';
+  const docId = document.id || '';
+  const url = document.url || '';
+  const sourceText = String(document.text || '');
+  const maxChars = Math.min(settings.maxDocumentChars, TERM_PROMPT_MAX_CHARS);
+  const truncated = sourceText.length > maxChars;
+  const text = truncated ? sourceText.slice(0, maxChars) : sourceText;
+
+  return [
+    'You are a fast Korean manuscript terminology consistency reviewer.',
+    '',
+    'Find clear terminology inconsistencies. Return compact JSON only.',
+    '',
+    'Hard requirements:',
+    '- This is a read-only table report. Do not create rewrite rules.',
+    '- Report only obvious terminology inconsistency: two or more different surface forms used for the same concept.',
+    '- Focus on nouns, product names, feature names, technical terms, and UI labels in prose.',
+    '- Include a row when one variant appears only once if it is clearly a mixed term for the same concept.',
+    '- Do not proofread sentences, rewrite style, or list wording preferences that are not terminology consistency issues.',
+    '- Exclude adjacent Korean-English bilingual glosses that look like superscript annotations in Google Docs plain text, such as "클로드 코드Claude Code" or "에이전트agent". Do not treat those as mixed terminology.',
+    '- Exclude first-use definitions or parenthetical bilingual definitions such as "Claude Code(클로드 코드)" when they are clearly explanatory.',
+    '- Do not report code identifiers, shell commands, URLs, file paths, JSON keys, bracketed UI labels, or quoted code strings as terms.',
+    '- Do not force translation between Korean and English. Product names and official feature names may intentionally stay in English.',
+    '- Prefer the manuscript-majority form as recommended unless context clearly defines another canonical form.',
+    '- Operating system names in Korean prose must be "macOS", "리눅스", and "윈도우". English "Linux"/"Windows" is allowed only in adjacent bilingual glosses such as "리눅스Linux" and "윈도우Windows"; parenthetical forms such as "리눅스(Linux)" and "윈도우(Windows)" should be reported.',
+    '- For the Microsoft Windows operating system in Korean prose, recommend "윈도우", not "윈도우즈".',
+    '- If unsure, omit the item.',
+    `- Return at most ${TERM_REPORT_MAX_ROWS} term rows.`,
+    '- Keep each reason under 80 Korean characters.',
+    '',
+    'Output JSON shape:',
+    JSON.stringify({
+      terms: [{
+        recommended: 'recommended term',
+        variants: [{ text: 'variant as written in the document', count: 2 }],
+        reason: 'short Korean reason'
+      }]
+    }),
+    '',
+    'Document metadata:',
+    JSON.stringify({ title, docId, url, truncated, textChars: sourceText.length, includedChars: text.length }),
+    '',
+    'Manuscript text:',
+    '<<<TOYTYPE_MANUSCRIPT',
+    text,
+    'TOYTYPE_MANUSCRIPT'
+  ].join('\n');
+}
+
+function termConsistencyFileName(document) {
+  const docId = sanitizeFilename(document && (document.id || extractDocId(document.url)) || 'document');
+  return `${docId}${TERM_REPORT_FILE_SUFFIX}`;
+}
+
+function isTermConsistencyFileName(fileName) {
+  return String(fileName || '').endsWith(TERM_REPORT_FILE_SUFFIX);
+}
+
+function termConsistencyDisplayName() {
+  return '용어표.json';
+}
+
+function termConsistencyOutputPath(document, settings) {
+  return path.join(settings.outputDir, termConsistencyFileName(document));
+}
+
+function writeTermConsistencyReport(report, document, settings, extra = {}) {
+  fs.mkdirSync(settings.outputDir, { recursive: true });
+  const fileName = termConsistencyFileName(document);
+  const outputPath = path.join(settings.outputDir, fileName);
+  const json = Object.assign({}, report, {
+    type: 'toytype-term-consistency-report',
+    schemaVersion: TERM_REPORT_SCHEMA_VERSION,
+    savedAt: new Date().toISOString(),
+    documentId: document.id || '',
+    documentTitle: document.title || '',
+    documentUrl: document.url || '',
+    includedChars: extra.includedChars
+  });
+  fs.writeFileSync(outputPath, JSON.stringify(json, null, 2) + '\n', 'utf8');
+  return { fileName, displayName: termConsistencyDisplayName(), outputPath, json };
+}
+
+function readTermConsistencyReport(document, settings) {
+  const fileName = termConsistencyFileName(document);
+  const outputPath = termConsistencyOutputPath(document, settings);
+  let stat = null;
+  let raw = null;
+  try {
+    stat = fs.statSync(outputPath);
+    if (!stat.isFile()) return null;
+    raw = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.schemaVersion !== TERM_REPORT_SCHEMA_VERSION) return null;
+  if (raw.type && raw.type !== 'toytype-term-consistency-report') return null;
+  const report = normalizeTermConsistencyReport(raw, document, {
+    provider: raw.provider || '',
+    model: raw.model || '',
+    elapsedMs: Number(raw.elapsedMs) || 0
+  });
+  return {
+    fileName,
+    displayName: termConsistencyDisplayName(),
+    outputPath,
+    mtimeMs: stat.mtimeMs,
+    report,
+    includedChars: Number(raw.includedChars) || undefined
+  };
+}
+
+function normalizeTermConsistencyReport(report, document, meta) {
+  if (!report || typeof report !== 'object') {
+    throw new HttpError(502, 'term consistency response must be a JSON object');
+  }
+  const text = String(document.text || '');
+  const rawTerms = Array.isArray(report.terms) ? report.terms : [];
+  const terms = [];
+  for (const item of rawTerms.slice(0, TERM_REPORT_MAX_ROWS * 2)) {
+    if (!item || typeof item !== 'object') continue;
+    const variants = normalizeTermVariants(item.variants, text);
+    if (variants.length < 2) continue;
+    const recommended = normalizeRecommendedTerm(item.recommended, variants);
+    terms.push({
+      concept: cleanShortText(item.concept, 160) || recommended,
+      recommended,
+      variants,
+      severity: normalizeTermSeverity(item.severity),
+      evidence: normalizeStringArray(item.evidence, 2, 180),
+      reason: cleanShortText(item.reason, 180),
+      totalCount: variants.reduce((sum, variant) => sum + variant.count, 0)
+    });
+    if (terms.length >= TERM_REPORT_MAX_ROWS) break;
+  }
+  return {
+    ok: report.ok !== false,
+    checkedAt: new Date().toISOString(),
+    provider: meta.provider,
+    model: meta.model,
+    elapsedMs: meta.elapsedMs,
+    docId: document.id || extractDocId(document.url),
+    title: document.title || '',
+    terms,
+    notes: normalizeStringArray(report.notes, 3, 300)
+  };
+}
+
+function normalizeRecommendedTerm(value, variants) {
+  const recommended = cleanShortText(value, 120);
+  const variantTexts = new Set((Array.isArray(variants) ? variants : []).map(variant => variant && variant.text).filter(Boolean));
+  if (recommended === 'MacOS' || recommended === 'Mac OS' || recommended === 'Mac OS X' || recommended === '맥OS' || recommended === '맥 OS' || variantTexts.has('MacOS') || variantTexts.has('Mac OS') || variantTexts.has('Mac OS X') || variantTexts.has('맥OS') || variantTexts.has('맥 OS')) {
+    return 'macOS';
+  }
+  if (recommended === 'Linux' || recommended === 'linux' || recommended === 'LINUX' || variantTexts.has('Linux') || variantTexts.has('linux') || variantTexts.has('LINUX')) {
+    return '리눅스';
+  }
+  if (recommended === 'Windows' || recommended === 'windows' || recommended === 'WINDOWS' || recommended === '윈도우즈' || variantTexts.has('Windows') || variantTexts.has('windows') || variantTexts.has('WINDOWS') || variantTexts.has('윈도우즈')) {
+    return '윈도우';
+  }
+  return recommended || (variants[0] && variants[0].text) || '';
+}
+
+function normalizeTermVariants(value, documentText) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const variants = [];
+  for (const item of value) {
+    const rawText = typeof item === 'string'
+      ? item
+      : item && typeof item.text === 'string'
+        ? item.text
+        : '';
+    const text = cleanShortText(rawText, 120);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    const counted = countPlainOccurrences(documentText, text);
+    const provided = item && typeof item === 'object' ? Number(item.count) : 0;
+    const count = Math.max(counted, Number.isFinite(provided) ? Math.max(0, Math.round(provided)) : 0);
+    if (count <= 0) continue;
+    variants.push({ text, count });
+  }
+  return variants.sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
+}
+
+function countPlainOccurrences(text, needle) {
+  const source = String(text || '');
+  const target = String(needle || '');
+  if (!target) return 0;
+  let count = 0;
+  let index = 0;
+  while ((index = source.indexOf(target, index)) !== -1) {
+    count++;
+    index += Math.max(1, target.length);
+  }
+  return count;
+}
+
+function cleanShortText(value, max) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > max ? text.slice(0, max - 1) + '…' : text;
+}
+
+function normalizeStringArray(value, limit, maxLen) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const text = cleanShortText(item, maxLen);
+    if (text) out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function normalizeTermSeverity(value) {
+  const severity = String(value || '').toLowerCase();
+  return severity === 'major' ? 'major' : 'minor';
 }
 
 function buildQuestionPrompt(document, settings) {
@@ -1774,6 +2003,7 @@ function migrateGeneratedJsonFiles(settings, document) {
   for (const name of names) {
     if (!/\.json$/i.test(name)) continue;
     if (isSentenceSuggestionFileName(name)) continue;
+    if (isTermConsistencyFileName(name)) continue;
     const existingStamp = extractGeneratedJsonStamp(name);
     if (existingStamp && name === generatedJsonFileName(safeDocId, existingStamp)) continue;
     const filePath = path.join(settings.outputDir, name);
@@ -1939,7 +2169,7 @@ function generatedCleanupDays(value) {
 
 function isGeneratedCleanupFileName(fileName) {
   const name = String(fileName || '');
-  return isSentenceSuggestionFileName(name) || !!extractGeneratedJsonStamp(name);
+  return isSentenceSuggestionFileName(name) || isTermConsistencyFileName(name) || !!extractGeneratedJsonStamp(name);
 }
 
 function cleanupGeneratedJsonFiles(body) {
@@ -2080,6 +2310,80 @@ async function generateProofread(body) {
     fileName: file.fileName,
     displayName: file.displayName,
     outputPath: file.outputPath,
+    elapsedMs: run.elapsedMs,
+    stdoutTail: tail(run.stdout, 1200),
+    stderrTail: tail(run.stderr, 1200)
+  };
+}
+
+async function generateTermConsistency(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (typeof document.text !== 'string' || !document.text.trim()) {
+    throw new HttpError(400, 'document.text is required');
+  }
+  if (!document.id) document.id = extractDocId(document.url);
+
+  if (body.force !== true) {
+    const cached = readTermConsistencyReport(document, settings);
+    if (cached) {
+      return {
+        ok: true,
+        provider: cached.report.provider || provider,
+        model: cached.report.model || '',
+        report: cached.report,
+        terms: cached.report.terms,
+        notes: cached.report.notes,
+        termCount: cached.report.terms.length,
+        includedChars: cached.includedChars,
+        fileName: cached.fileName,
+        displayName: cached.displayName,
+        outputPath: cached.outputPath,
+        fromCache: true,
+        elapsedMs: 0
+      };
+    }
+  }
+
+  const prompt = buildTermConsistencyPrompt(document, settings);
+  const includedChars = countChars(String(document.text || '').slice(0, Math.min(settings.maxDocumentChars, TERM_PROMPT_MAX_CHARS)));
+  const model = cheapModelForProvider(provider, settings);
+  const run = await runProvider(provider, prompt, settings, {
+    model,
+    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      model,
+      stdout: tail(run.stdout),
+      stderr: tail(run.stderr)
+    });
+  }
+
+  const report = normalizeTermConsistencyReport(extractJsonObject(run.response), document, {
+    provider,
+    model,
+    elapsedMs: run.elapsedMs
+  });
+  const file = writeTermConsistencyReport(report, document, settings, { includedChars });
+  return {
+    ok: true,
+    provider,
+    model,
+    report,
+    terms: report.terms,
+    notes: report.notes,
+    termCount: report.terms.length,
+    includedChars,
+    fileName: file.fileName,
+    displayName: file.displayName,
+    outputPath: file.outputPath,
+    fromCache: false,
     elapsedMs: run.elapsedMs,
     stdoutTail: tail(run.stdout, 1200),
     stderrTail: tail(run.stderr, 1200)
@@ -2349,6 +2653,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/ai/proofread') {
     await sendLoggedAiJson(res, 'AI proofread', body, generateProofread);
+    return;
+  }
+  if (url.pathname === '/ai/terms') {
+    await sendLoggedAiJson(res, 'AI terms', body, generateTermConsistency);
     return;
   }
   if (url.pathname === '/ai/question') {
