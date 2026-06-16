@@ -132,7 +132,9 @@ function requestDocumentSummary(body) {
     beforeChars: typeof before === 'string' ? countChars(before) : undefined,
     afterChars: typeof after === 'string' ? countChars(after) : undefined,
     insertionChars: typeof document.insertionSource === 'string' ? countChars(document.insertionSource) : undefined,
-    targetPercent: document.targetPercent
+    insertionMode: typeof document.insertionMode === 'string' ? document.insertionMode : undefined,
+    targetPercent: document.targetPercent,
+    targetChars: document.targetChars
   };
 }
 
@@ -155,6 +157,7 @@ function aiResultLogFields(payload, elapsedMs) {
     ruleCount: payload && payload.ruleCount,
     chars: payload && payload.chars,
     targetPercent: payload && payload.targetPercent,
+    targetChars: payload && payload.targetChars,
     sourceChars: payload && payload.sourceChars,
     replacementChars: payload && payload.replacementChars
   };
@@ -640,30 +643,48 @@ function buildQuestionPrompt(document, settings) {
   const url = document.url || '';
   const before = String(document.contextBefore || document.textBefore || '').slice(-settings.questionContextBeforeChars);
   const after = String(document.contextAfter || document.textAfter || '').slice(0, settings.questionContextAfterChars);
+  const insertionMode = normalizeInsertionMode(document.insertionMode);
+  const modeInstruction = insertionMode === 'question'
+    ? [
+        'Placement mode: title-below reader prompt.',
+        'Generate one Korean 발문 for the line below a title or section heading.',
+        'It may be a question or reader-facing prompt that opens the section and makes the reader curious about the next explanation.'
+      ]
+    : [
+        'Placement mode: body explanation sentence.',
+        'Generate one Korean explanatory or connective sentence for the current body position.',
+        'Use the preceding and following context to bridge the flow, clarify a missing premise, or add a short explanation grounded only in the provided manuscript.',
+        'Do not turn it into a reader question unless the surrounding manuscript is already using explicit questions.'
+      ];
   const meta = {
     title,
     docId,
     url,
     cursorOffset: Number.isFinite(Number(document.cursorOffset)) ? Number(document.cursorOffset) : null,
     totalChars: Number.isFinite(Number(document.totalChars)) ? Number(document.totalChars) : null,
+    insertionMode,
+    insertionModeReason: typeof document.insertionModeReason === 'string' ? document.insertionModeReason : '',
+    insertionPreviousLine: typeof document.insertionPreviousLine === 'string' ? document.insertionPreviousLine.slice(0, 200) : '',
+    insertionCurrentLinePrefix: typeof document.insertionCurrentLinePrefix === 'string' ? document.insertionCurrentLinePrefix.slice(-200) : '',
+    insertionCurrentLineSuffix: typeof document.insertionCurrentLineSuffix === 'string' ? document.insertionCurrentLineSuffix.slice(0, 200) : '',
     beforeChars: before.length,
     afterChars: after.length
   };
 
   return [
-    'You write Korean reader prompts ("발문") for a manuscript.',
+    'You write one Korean sentence to insert into a manuscript.',
     '',
-    'Generate one Korean 발문 to insert at the current cursor position.',
+    ...modeInstruction,
     'Use the surrounding manuscript context to make it specific and natural.',
     manuscriptNotationInstructions(),
     '',
     'Hard requirements:',
     '- Return only the text to insert. No markdown, no heading, no label, no quotes, no bullets, no explanation.',
-    '- Write about 200 Korean characters. Target 160-240 characters.',
-    '- Use one compact paragraph.',
-    '- Make it a thoughtful reader-facing prompt or question that connects the preceding and following context.',
+    '- Write one compact Korean paragraph. Target 80-180 Korean characters; use up to 240 only when the context needs it.',
+    '- Preserve the manuscript tone and terminology.',
+    '- Do not introduce facts, tools, names, examples, code, URLs, or claims that are not grounded in the provided context.',
     '- Do not summarize the whole document. Do not mention AI, cursor, context, or this instruction.',
-    '- Preserve the manuscript tone. Avoid exaggerated marketing copy.',
+    '- Avoid exaggerated marketing copy.',
     '',
     'Document metadata:',
     JSON.stringify(meta, null, 2),
@@ -680,20 +701,28 @@ function buildQuestionPrompt(document, settings) {
   ].join('\n');
 }
 
+function normalizeInsertionMode(value) {
+  return value === 'question' ? 'question' : 'explanation';
+}
+
 function buildLengthAdjustmentPrompt(document) {
   const selectedText = String(document.selectedText || '');
-  const targetPercent = clampNumber(document.targetPercent, 100, 10, 500);
   const contextBefore = String(document.contextBefore || '').slice(-1200);
   const contextAfter = String(document.contextAfter || '').slice(0, 1200);
   const currentChars = Array.from(selectedText).length;
-  const targetChars = Math.max(1, Math.round(currentChars * targetPercent / 100));
+  const targetChars = normalizeTargetChars(document, currentChars);
+  const toleranceChars = 15;
+  const targetMinChars = Math.max(1, targetChars - toleranceChars);
+  const targetMaxChars = targetChars + toleranceChars;
   const title = document.title || document.id || 'Google Docs document';
   const meta = {
     title,
     docId: document.id || '',
-    targetPercent,
     currentChars,
     targetChars,
+    toleranceChars,
+    targetMinChars,
+    targetMaxChars,
     selectionStart: Number.isFinite(Number(document.selectionStart)) ? Number(document.selectionStart) : null,
     selectionEnd: Number.isFinite(Number(document.selectionEnd)) ? Number(document.selectionEnd) : null
   };
@@ -708,7 +737,10 @@ function buildLengthAdjustmentPrompt(document) {
     '- Output JSON must have version, source, categories.',
     `- Include exactly one rule whose sourceText is exactly the selected text below.`,
     '- The replacement must preserve the meaning, tone, terminology, and factual claims.',
-    `- Adjust the replacement length toward ${targetPercent}% of the selected text. Target about ${targetChars} Korean characters; naturalness is more important than exact count.`,
+    `- Adjust the replacement toward ${targetChars} Korean characters.`,
+    `- Try to keep the replacement between ${targetMinChars} and ${targetMaxChars} Korean characters (target +/- ${toleranceChars}).`,
+    '- Naturalness is more important than an exact count, but do not ignore the target length.',
+    '- Do not pad with filler or cut essential meaning just to hit the exact number.',
     '- If shortening, remove redundancy rather than changing the point.',
     '- If lengthening, add clarifying connective detail grounded only in the provided context. Do not invent facts.',
     '- Return no notes outside JSON.',
@@ -746,6 +778,14 @@ function buildLengthAdjustmentPrompt(document) {
   ].join('\n');
 }
 
+function normalizeTargetChars(document, currentChars) {
+  const direct = Number(document && document.targetChars);
+  if (Number.isFinite(direct) && direct >= 1) return Math.round(Math.min(direct, 20000));
+  const percent = clampNumber(document && document.targetPercent, 100, 10, 500);
+  const base = Math.max(1, Number(currentChars) || 1);
+  return Math.max(1, Math.round(base * percent / 100));
+}
+
 function cheapModelForProvider(provider, settings) {
   return provider === 'claude' ? settings.questionClaudeModel : settings.questionCodexModel;
 }
@@ -765,7 +805,7 @@ function manuscriptNotationInstructions() {
 - Use "➝" as the only arrow symbol in generated or replacement text. Do not use "->", "→", "⇒", or "=>".
 - Wrap buttons, menu items that must be clicked, and keyboard shortcuts/keys in square brackets. Examples: [확인], [Code 탭], [Enter], [⌘S].
 - For Mac keyboard shortcuts, use "⌥" for Option and "⌘" for Command. Do not spell those modifier keys as Option, 옵션, Command, 커맨드, or Cmd in replacement text.
-- For Toytype JSON rules, sourceText must still be copied exactly from the document even when it violates these notation rules. Apply these rules to replacementText, generated 발문 text, and notes.`;
+- For Toytype JSON rules, sourceText must still be copied exactly from the document even when it violates these notation rules. Apply these rules to replacementText, generated insertion text, and notes.`;
 }
 
 function bookEditingReferenceInstructions() {
@@ -853,7 +893,7 @@ function extractJsonObject(text) {
 function normalizeGeneratedQuestionText(text) {
   let out = String(text || '').trim();
   out = out.replace(/^```(?:text|markdown|md)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  out = out.replace(/^(?:발문|AI\s*발문|삽입\s*발문)\s*[:：]\s*/i, '').trim();
+  out = out.replace(/^(?:발문|AI\s*발문|삽입\s*발문|문장|AI\s*문장|삽입\s*문장|설명\s*문장)\s*[:：]\s*/i, '').trim();
   if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
     out = out.slice(1, -1).trim();
   }
@@ -864,7 +904,7 @@ function normalizeGeneratedQuestionText(text) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!out) throw new HttpError(502, 'AI response did not contain question text', { responseTail: tail(text) });
+  if (!out) throw new HttpError(502, 'AI response did not contain insertion text', { responseTail: tail(text) });
   return out;
 }
 
@@ -2081,14 +2121,18 @@ async function generateQuestion(body) {
     });
   }
   const text = normalizeGeneratedQuestionText(run.response);
+  const insertionMode = normalizeInsertionMode(document.insertionMode);
   const replacement = insertionSource.slice(0, insertionPrefixLength) + text + insertionSource.slice(insertionPrefixLength);
   const json = buildSentenceSuggestionJson(document, [insertionSource, replacement], {
     category: SENTENCE_SUGGESTION_CATEGORY_ID,
-    type: 'ai-question',
+    type: insertionMode === 'question' ? 'ai-question' : 'ai-sentence-insertion',
+    insertionMode,
     source: insertionSource,
     replacement,
     createdAt: new Date().toISOString(),
-    reason: '커서 위치 기준 AI 발문 삽입 제안'
+    reason: insertionMode === 'question'
+      ? '제목 아래 커서 위치 기준 AI 발문 삽입 제안'
+      : '커서 앞뒤 문맥 기준 AI 설명 문장 삽입 제안'
   });
   const file = appendSentenceSuggestionJson(json, document, settings);
   return {
@@ -2114,10 +2158,12 @@ async function generateLengthAdjustment(body) {
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (!document.id) document.id = extractDocId(document.url);
   const selectedText = String(document.selectedText || '');
-  const targetPercent = clampNumber(document.targetPercent, 100, 10, 500);
   if (!selectedText.trim()) throw new HttpError(400, 'document.selectedText is required');
+  const sourceChars = Array.from(selectedText).length;
+  const targetChars = normalizeTargetChars(document, sourceChars);
+  const toleranceChars = 15;
 
-  const prompt = buildLengthAdjustmentPrompt(Object.assign({}, document, { targetPercent }));
+  const prompt = buildLengthAdjustmentPrompt(Object.assign({}, document, { targetChars }));
   const model = cheapModelForProvider(provider, settings);
   const run = await runProvider(provider, prompt, settings, {
     model,
@@ -2143,11 +2189,14 @@ async function generateLengthAdjustment(body) {
   const json = buildSentenceSuggestionJson(document, [selectedText, replacement], {
     category: SENTENCE_SUGGESTION_CATEGORY_ID,
     type: 'length-adjustment',
-    targetPercent,
+    targetChars,
+    toleranceChars,
+    sourceChars,
+    replacementChars: Array.from(replacement).length,
     source: selectedText,
     replacement,
     createdAt: new Date().toISOString(),
-    reason: `선택 문장 길이 ${targetPercent}% 조절`
+    reason: `선택 문장 길이 목표 ${targetChars}자 조절`
   });
   const file = appendSentenceSuggestionJson(json, document, settings);
   return {
@@ -2159,8 +2208,9 @@ async function generateLengthAdjustment(body) {
     fileName: file.fileName,
     displayName: file.displayName,
     outputPath: file.outputPath,
-    targetPercent,
-    sourceChars: Array.from(selectedText).length,
+    targetChars,
+    toleranceChars,
+    sourceChars,
     replacementChars: Array.from(replacement).length,
     elapsedMs: run.elapsedMs,
     stdoutTail: tail(run.stdout, 1200),
@@ -2302,7 +2352,7 @@ async function route(req, res) {
     return;
   }
   if (url.pathname === '/ai/question') {
-    await sendLoggedAiJson(res, 'AI question', body, generateQuestion);
+    await sendLoggedAiJson(res, 'AI sentence insert', body, generateQuestion);
     return;
   }
   if (url.pathname === '/ai/adjust-length') {

@@ -838,7 +838,7 @@
   function addonActions() {
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
-      { id: 'ai-question', label: 'AI 발문 삽입', run: handleAiQuestionAddon },
+      { id: 'ai-question', label: 'AI 문장 삽입', run: handleAiQuestionAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
       { id: 'extract-images', label: '이미지 추출', run: handleExtractImagesAddon },
       { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
@@ -2308,7 +2308,8 @@
 
       const context = buildAiQuestionContext(doc.text, offset);
       const anchor = buildInsertionSuggestionAnchor(doc.text, offset);
-      updateAiQuestionStatus('AI 발문 생성 중');
+      const insertionProfile = classifyAiSentenceInsertion(doc.text, offset);
+      updateAiQuestionStatus(insertionProfile.mode === 'question' ? 'AI 발문 생성 중' : 'AI 설명 문장 생성 중');
       const res = await sendAiBridge('question', {
         timeoutMs: AI_QUESTION_TIMEOUT,
         document: {
@@ -2320,35 +2321,40 @@
           totalChars: doc.text.length,
           contextBefore: context.before,
           contextAfter: context.after,
+          insertionMode: insertionProfile.mode,
+          insertionModeReason: insertionProfile.reason,
+          insertionPreviousLine: insertionProfile.previousLine,
+          insertionCurrentLinePrefix: insertionProfile.currentLinePrefix,
+          insertionCurrentLineSuffix: insertionProfile.currentLineSuffix,
           insertionSource: anchor.source,
           insertionPrefixLength: anchor.prefixLength
         }
       });
       if (!res || !res.ok || !res.json) {
-        throw aiBridgeError(res, 'AI 발문 생성 실패');
+        throw aiBridgeError(res, 'AI 문장 생성 실패');
       }
 
       updateAiQuestionStatus('문장 제안 JSON 저장 중');
       const n = activateGeneratedRulesResponse(res, '문장제안.json');
-      debugLog('[Toytype addons] AI question suggestion result', {
+      debugLog('[Toytype addons] AI sentence insertion suggestion result', {
         chars: typeof res.text === 'string' ? Array.from(res.text).length : null,
         provider: res.provider || '',
         model: res.model || ''
       });
-      finalStatus = 'AI 발문 제안 저장 완료';
+      finalStatus = 'AI 문장 제안 저장 완료';
       if (n) finalStatus += ' · 누적 ' + n + '건';
       if (res.model) finalStatus += ' · ' + res.model;
-      successToast = 'AI 발문 제안을 저장했습니다';
+      successToast = 'AI 문장 제안을 저장했습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
       if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
-      console.error('[Toytype addons] AI question suggestion failed', summary);
-      debugLog('[Toytype addons] AI question suggestion failed detail', {
+      console.error('[Toytype addons] AI sentence insertion suggestion failed', summary);
+      debugLog('[Toytype addons] AI sentence insertion suggestion failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
-      finalStatus = error && error.userMessage ? error.userMessage : 'AI 발문 제안 저장 실패';
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 문장 제안 저장 실패';
       errorToast = finalStatus;
     } finally {
       setAddonBusy(actionId, false);
@@ -2365,6 +2371,64 @@
       before: source.slice(Math.max(0, pos - AI_QUESTION_CONTEXT_BEFORE), pos),
       after: source.slice(pos, pos + AI_QUESTION_CONTEXT_AFTER)
     };
+  }
+
+  function classifyAiSentenceInsertion(text, offset) {
+    const source = String(text || '');
+    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
+    const lineStart = pos > 0 ? source.lastIndexOf('\n', pos - 1) + 1 : 0;
+    const lineEndIndex = source.indexOf('\n', pos);
+    const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex;
+    const currentLinePrefix = source.slice(lineStart, pos);
+    const currentLineSuffix = source.slice(pos, lineEnd);
+    const previous = previousNonEmptyLine(source, lineStart);
+    const onlyWhitespaceSincePrevious = previous
+      ? source.slice(previous.end, pos).trim() === ''
+      : false;
+    const atParagraphStart = currentLinePrefix.trim() === '';
+    const titleLike = previous ? looksLikeTitleLine(previous.text) : false;
+    if (previous && atParagraphStart && onlyWhitespaceSincePrevious && titleLike) {
+      return {
+        mode: 'question',
+        reason: 'title-below',
+        previousLine: previous.text,
+        currentLinePrefix: currentLinePrefix,
+        currentLineSuffix: currentLineSuffix
+      };
+    }
+    return {
+      mode: 'explanation',
+      reason: previous ? 'body-context' : 'document-start',
+      previousLine: previous ? previous.text : '',
+      currentLinePrefix: currentLinePrefix,
+      currentLineSuffix: currentLineSuffix
+    };
+  }
+
+  function previousNonEmptyLine(text, lineStart) {
+    let end = Math.max(0, Number(lineStart) || 0);
+    while (end > 0) {
+      const prevBreak = text.lastIndexOf('\n', end - 2);
+      const start = prevBreak === -1 ? 0 : prevBreak + 1;
+      const lineEnd = end > 0 && text.charCodeAt(end - 1) === 10 ? end - 1 : end;
+      const raw = text.slice(start, lineEnd);
+      const trimmed = raw.trim();
+      if (trimmed) return { text: trimmed, start, end: lineEnd };
+      if (prevBreak === -1) break;
+      end = prevBreak + 1;
+    }
+    return null;
+  }
+
+  function looksLikeTitleLine(line) {
+    const text = String(line || '').trim();
+    if (!text) return false;
+    const chars = Array.from(text).length;
+    if (chars < 2 || chars > 80) return false;
+    if (/^[\-*+•]\s+/.test(text)) return false;
+    if (/[.?!。！？]$/.test(text) && !/^\d+(?:[.)]|장)\s+\S/.test(text)) return false;
+    if (/[.!?。！？].+[.!?。！？]/.test(text)) return false;
+    return true;
   }
 
   function buildInsertionSuggestionAnchor(text, offset) {
@@ -2395,7 +2459,7 @@
     }
     if (best) return best;
     const error = new Error('insertion anchor unavailable');
-    error.userMessage = '발문을 넣을 기준 문맥을 찾지 못했습니다';
+    error.userMessage = '문장을 넣을 기준 문맥을 찾지 못했습니다';
     throw error;
   }
 
@@ -2467,8 +2531,9 @@
         error.userMessage = '공백이 아닌 문장을 선택하세요';
         throw error;
       }
-      const targetPercent = promptAiLengthPercent();
-      if (targetPercent === null) {
+      const selectedChars = Array.from(selectedText).length;
+      const targetChars = promptAiLengthTargetChars(selectedChars);
+      if (targetChars === null) {
         finalStatus = 'AI 문장 길이 조절 취소';
         return;
       }
@@ -2484,7 +2549,8 @@
           selectionStart: range.start,
           selectionEnd: range.end,
           selectedText,
-          targetPercent,
+          selectedChars,
+          targetChars,
           contextBefore: doc.text.slice(Math.max(0, range.start - AI_LENGTH_CONTEXT), range.start),
           contextAfter: doc.text.slice(range.end, range.end + AI_LENGTH_CONTEXT)
         }
@@ -2494,7 +2560,7 @@
       }
       updateAiLengthStatus('문장 제안 JSON 저장 중');
       const n = activateGeneratedRulesResponse(res, '문장제안.json');
-      finalStatus = 'AI 문장 제안 저장 완료 · ' + targetPercent + '%';
+      finalStatus = 'AI 문장 제안 저장 완료 · 목표 ' + targetChars + '자';
       if (n) finalStatus += ' · 누적 ' + n + '건';
       if (res.model) finalStatus += ' · ' + res.model;
       successToast = 'AI 문장 제안을 저장했습니다';
@@ -2517,18 +2583,23 @@
     }
   }
 
-  function promptAiLengthPercent() {
+  function promptAiLengthTargetChars(currentChars) {
+    const current = Math.max(1, Math.round(Number(currentChars) || 0));
     let raw = null;
     try {
-      raw = window.prompt('원하는 문장 길이 비율을 입력하세요 (10~500%)', '100');
+      raw = window.prompt('현재 선택 영역: ' + current + '자\n목표 글자수를 입력하세요', String(current));
     } catch (_) {
       raw = null;
     }
     if (raw === null) return null;
-    const value = String(raw).replace(/%/g, '').trim();
+    const value = String(raw).replace(/,/g, '').replace(/글자|자/g, '').trim();
+    if (!/^\d+$/.test(value)) {
+      showToast('목표 글자수를 숫자로 입력하세요', { durationMs: 3200 });
+      return null;
+    }
     const n = Number(value);
-    if (!Number.isFinite(n) || n < 10 || n > 500) {
-      showToast('10~500 사이 숫자를 입력하세요', { durationMs: 3200 });
+    if (!Number.isFinite(n) || n < 1 || n > 20000) {
+      showToast('1~20000 사이 목표 글자수를 입력하세요', { durationMs: 3200 });
       return null;
     }
     return Math.round(n);
@@ -2676,7 +2747,7 @@
   function startAiQuestionStatus(phase) {
     addonStatus = {
       type: 'ai-question',
-      label: 'AI 발문',
+      label: 'AI 문장 삽입',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -2701,7 +2772,7 @@
     const previous = addonStatus && addonStatus.type === 'ai-question' ? addonStatus : null;
     addonStatus = {
       type: 'ai-question',
-      label: 'AI 발문',
+      label: 'AI 문장 삽입',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,

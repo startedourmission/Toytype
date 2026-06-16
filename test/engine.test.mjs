@@ -143,6 +143,15 @@ test('실데이터: 요구사항 표기로 통일', () => {
   assert.equal(f.dst, '요구사항');
 });
 
+test('실데이터: 살펴 보/살펴 봅 붙여쓰기', () => {
+  initAll();
+  assert.ok(srcs(E.scan('코드를 살펴 보자')).includes('살펴 보'));
+
+  const f = E.scan('예제를 살펴 봅니다').findings.find((x) => x.src === '살펴 봅');
+  assert.ok(f, "'살펴 봅' 미검출");
+  assert.equal(f.dst, '살펴봅');
+});
+
 test('T4 가드 A: ASCII 단어 경계 (합성)', () => {
   E.init(synth([cat('convert', [['Git', '깃']])]), ['convert']);
   assert.equal(E.scan('GitHub').findings.length, 0);
