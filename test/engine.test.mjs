@@ -187,11 +187,12 @@ test('실데이터: 자격 증명은 자격증명으로 붙이지 않는다', ()
 
 test('실데이터: 요청 제거 룰은 더 이상 잡지 않는다', () => {
   initAll();
-  const findings = E.scan('이것입니다. 이것 입니다. 되어 줄 수 있다. 스크린샷. 텍스트: 예시. 결과: 성공. 코드: 0. 예제: 입력. 예: 출력. 페이지: 1').findings;
+  const findings = E.scan('이것입니다. 이것 입니다. 되어 줄 수 있다. 스크린샷. 하지만, 계속한다. 텍스트: 예시. 결과: 성공. 코드: 0. 예제: 입력. 예: 출력. 페이지: 1').findings;
   assert.ok(!findings.some((x) => x.src === '것입니다' && x.dst === '겁니다'));
   assert.ok(!findings.some((x) => x.src === '것 입니다' && x.dst === '겁니다'));
   assert.ok(!findings.some((x) => x.src === '되어 줄' && x.dst === '되어줄'));
   assert.ok(!findings.some((x) => x.src === '스크린샷' && x.dst === '스크린숏'));
+  assert.ok(!findings.some((x) => x.src === '하지만,' && x.dst === '하지만'));
   assert.ok(!findings.some((x) => x.src === '텍스트:' && x.dst === '텍스트 :'));
   assert.ok(!findings.some((x) => x.src.endsWith(':') && x.dst === x.src.replace(/:$/, ' :')));
 });
