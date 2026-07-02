@@ -7,6 +7,7 @@ import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { Garu } from 'garu-ko';
 
 const DEFAULT_PORT = Number(process.env.TOYTYPE_AI_BRIDGE_PORT || 17644);
 const MAX_BODY_BYTES = 200 * 1024 * 1024;
@@ -21,10 +22,12 @@ const DOWNLOAD_TOKEN_TTL_MS = 10 * 60 * 1000;
 const TERM_REPORT_MAX_ROWS = 12;
 const TERM_PROMPT_MAX_CHARS = 40000;
 const TERM_REPORT_FILE_SUFFIX = '-용어표.json';
-const TERM_REPORT_SCHEMA_VERSION = '2026-06-16.2';
+const TERM_REPORT_SCHEMA_VERSION = '2026-07-02.local-garu.1';
 let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
 let crc32TableCache = null;
+let garuAnalyzerPromise = null;
+let localTermGroupsPromise = null;
 const downloadTokens = new Map();
 
 const DEFAULT_SETTINGS = {
@@ -644,54 +647,247 @@ function normalizeFactCheckSources(sources) {
     .slice(0, 5);
 }
 
-function buildTermConsistencyPrompt(document, settings) {
-  const title = document.title || document.id || 'Google Docs document';
-  const docId = document.id || '';
-  const url = document.url || '';
+async function getGaruAnalyzer() {
+  if (!garuAnalyzerPromise) {
+    garuAnalyzerPromise = Garu.load();
+  }
+  return garuAnalyzerPromise;
+}
+
+async function buildLocalTermConsistencyReport(document, settings) {
+  const analyzer = await getGaruAnalyzer();
   const sourceText = String(document.text || '');
   const maxChars = Math.min(settings.maxDocumentChars, TERM_PROMPT_MAX_CHARS);
-  const truncated = sourceText.length > maxChars;
-  const text = truncated ? sourceText.slice(0, maxChars) : sourceText;
+  const text = sourceText.slice(0, maxChars);
+  const includedChars = countChars(text);
+  const groups = await loadLocalTermGroups(analyzer);
+  const lexicon = buildDocumentTermLexicon(analyzer, text);
+  const terms = [];
 
-  return [
-    'You are a fast Korean manuscript terminology consistency reviewer.',
-    '',
-    'Find clear terminology inconsistencies. Return compact JSON only.',
-    '',
-    'Hard requirements:',
-    '- This is a read-only table report. Do not create rewrite rules.',
-    '- Report only obvious terminology inconsistency: two or more different surface forms used for the same concept.',
-    '- Focus on nouns, product names, feature names, technical terms, and UI labels in prose.',
-    '- Include a row when one variant appears only once if it is clearly a mixed term for the same concept.',
-    '- Do not proofread sentences, rewrite style, or list wording preferences that are not terminology consistency issues.',
-    '- Exclude adjacent Korean-English bilingual glosses that look like superscript annotations in Google Docs plain text, such as "클로드 코드Claude Code" or "에이전트agent". Do not treat those as mixed terminology.',
-    '- Exclude first-use definitions or parenthetical bilingual definitions such as "Claude Code(클로드 코드)" when they are clearly explanatory.',
-    '- Do not report code identifiers, shell commands, URLs, file paths, JSON keys, bracketed UI labels, or quoted code strings as terms.',
-    '- Do not force translation between Korean and English. Product names and official feature names may intentionally stay in English.',
-    '- Prefer the manuscript-majority form as recommended unless context clearly defines another canonical form.',
-    '- Operating system names in Korean prose must be "macOS", "리눅스", and "윈도우". English "Linux"/"Windows" is allowed only in adjacent bilingual glosses such as "리눅스Linux" and "윈도우Windows"; parenthetical forms such as "리눅스(Linux)" and "윈도우(Windows)" should be reported.',
-    '- For the Microsoft Windows operating system in Korean prose, recommend "윈도우", not "윈도우즈".',
-    '- If unsure, omit the item.',
-    `- Return at most ${TERM_REPORT_MAX_ROWS} term rows.`,
-    '- Keep each reason under 80 Korean characters.',
-    '',
-    'Output JSON shape:',
-    JSON.stringify({
-      terms: [{
-        recommended: 'recommended term',
-        variants: [{ text: 'variant as written in the document', count: 2 }],
-        reason: 'short Korean reason'
-      }]
-    }),
-    '',
-    'Document metadata:',
-    JSON.stringify({ title, docId, url, truncated, textChars: sourceText.length, includedChars: text.length }),
-    '',
-    'Manuscript text:',
-    '<<<TOYTYPE_MANUSCRIPT',
-    text,
-    'TOYTYPE_MANUSCRIPT'
-  ].join('\n');
+  for (const group of groups) {
+    if (!localTermGroupMayAppear(group, lexicon, text)) continue;
+    const variants = [];
+    for (const variant of group.variants) {
+      const count = countTermOccurrences(text, variant);
+      if (count > 0) variants.push({ text: variant, count });
+    }
+    if (variants.length < 2) continue;
+    variants.sort((a, b) => b.count - a.count || a.text.localeCompare(b.text, 'ko'));
+    const recommended = normalizeRecommendedTerm(group.recommended, variants);
+    terms.push({
+      concept: recommended,
+      recommended,
+      variants,
+      severity: 'minor',
+      evidence: collectTermEvidence(text, variants, 2),
+      reason: '사전의 같은 권장 표기에 속한 용어가 문서 안에서 함께 쓰였습니다.',
+      totalCount: variants.reduce((sum, variant) => sum + variant.count, 0)
+    });
+  }
+
+  terms.sort((a, b) => b.totalCount - a.totalCount || a.recommended.localeCompare(b.recommended, 'ko'));
+  return {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    provider: 'local',
+    model: localTermModelName(analyzer),
+    elapsedMs: 0,
+    docId: document.id || extractDocId(document.url),
+    title: document.title || '',
+    terms: terms.slice(0, TERM_REPORT_MAX_ROWS),
+    notes: terms.length > TERM_REPORT_MAX_ROWS ? [`상위 ${TERM_REPORT_MAX_ROWS}건만 표시했습니다.`] : [],
+    includedChars
+  };
+}
+
+async function loadLocalTermGroups(analyzer) {
+  if (!localTermGroupsPromise) {
+    localTermGroupsPromise = Promise.resolve(buildLocalTermGroups(analyzer));
+  }
+  return localTermGroupsPromise;
+}
+
+function buildLocalTermGroups(analyzer) {
+  const rulesJson = readBuiltinRulesJson();
+  const byRecommended = new Map();
+  for (const cat of Array.isArray(rulesJson.categories) ? rulesJson.categories : []) {
+    for (const rule of Array.isArray(cat.rules) ? cat.rules : []) {
+      if (!Array.isArray(rule) || typeof rule[0] !== 'string' || typeof rule[1] !== 'string') continue;
+      const src = normalizeTermSurface(rule[0]);
+      const dst = normalizeTermSurface(rule[1]);
+      if (!src || !dst || src === dst) continue;
+      if (!isLocalTermSurface(analyzer, src) || !isLocalTermSurface(analyzer, dst)) continue;
+      addLocalTermGroupVariant(byRecommended, dst, src);
+      addLocalTermGroupVariant(byRecommended, dst, dst);
+    }
+  }
+
+  addExplicitLocalTermGroup(byRecommended, 'macOS', ['macOS', 'MacOS', 'Mac OS', 'Mac OS X', '맥OS', '맥 OS']);
+  addExplicitLocalTermGroup(byRecommended, '리눅스', ['리눅스', 'Linux', 'linux', 'LINUX']);
+  addExplicitLocalTermGroup(byRecommended, '윈도우', ['윈도우', 'Windows', 'windows', 'WINDOWS', '윈도우즈']);
+
+  return Array.from(byRecommended.values())
+    .map(group => ({
+      recommended: group.recommended,
+      variants: Array.from(group.variants).sort((a, b) => b.length - a.length || a.localeCompare(b, 'ko')),
+      tokens: Array.from(group.tokens)
+    }))
+    .filter(group => group.variants.length >= 2)
+    .sort((a, b) => a.recommended.localeCompare(b.recommended, 'ko'));
+}
+
+function readBuiltinRulesJson() {
+  try {
+    return JSON.parse(fs.readFileSync(BUILTIN_RULES_PATH, 'utf8'));
+  } catch (error) {
+    throw new HttpError(500, 'failed to read rules.json for local terminology analysis', { error: error.message });
+  }
+}
+
+function addExplicitLocalTermGroup(map, recommended, variants) {
+  for (const variant of variants) addLocalTermGroupVariant(map, recommended, variant);
+}
+
+function addLocalTermGroupVariant(map, recommendedText, variantText) {
+  const recommended = normalizeTermSurface(recommendedText);
+  const variant = normalizeTermSurface(variantText);
+  if (!recommended || !variant) return;
+  const key = normalizeTermKey(recommended);
+  let group = map.get(key);
+  if (!group) {
+    group = { recommended, variants: new Set(), tokens: new Set() };
+    map.set(key, group);
+  }
+  group.variants.add(variant);
+  for (const token of termSurfaceTokens(variant)) group.tokens.add(token);
+}
+
+function isLocalTermSurface(analyzer, value) {
+  const text = normalizeTermSurface(value);
+  if (text.length < 2 || text.length > 40) return false;
+  if (/[\n\r\t]/.test(text)) return false;
+  if (/[?!,;:“”"‘’`]/.test(text)) return false;
+  if (/^[\d\s.,:+#/_()~-]+$/.test(text)) return false;
+  if (/\s{2,}/.test(text)) return false;
+  const tokens = safeAnalyzeTokens(analyzer, text);
+  if (!tokens.length) return /[가-힣A-Za-z]/.test(text);
+  let significant = 0;
+  for (const token of tokens) {
+    const pos = String(token.pos || '');
+    const tokenText = String(token.text || '');
+    if (!tokenText.trim()) continue;
+    if (/^[\s()[\]{}<>.,:+#/_~-]+$/.test(tokenText)) continue;
+    if (pos === 'NNG' || pos === 'NNP' || pos === 'SL' || pos === 'SN' || pos === 'SH' || pos === 'XSN') {
+      significant++;
+      continue;
+    }
+    return false;
+  }
+  return significant > 0;
+}
+
+function safeAnalyzeTokens(analyzer, text) {
+  try {
+    const result = analyzer.analyze(text);
+    return result && Array.isArray(result.tokens) ? result.tokens : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function buildDocumentTermLexicon(analyzer, text) {
+  const lexicon = new Set();
+  try {
+    for (const noun of analyzer.nouns(text, { includeSL: true })) {
+      const term = normalizeTermSurface(noun);
+      if (term) {
+        lexicon.add(term);
+        lexicon.add(normalizeTermKey(term));
+      }
+    }
+  } catch (_) {
+    // Exact surface counting below is still deterministic if Garu tokenization fails.
+  }
+  return lexicon;
+}
+
+function localTermGroupMayAppear(group, lexicon, text) {
+  if (!lexicon.size) return true;
+  for (const token of group.tokens) {
+    if (lexicon.has(token) || lexicon.has(normalizeTermKey(token))) return true;
+  }
+  return group.variants.some(variant => text.indexOf(variant) !== -1);
+}
+
+function termSurfaceTokens(value) {
+  return normalizeTermSurface(value)
+    .split(/[\s()[\]{}<>.,:+#/_~-]+/)
+    .map(token => normalizeTermSurface(token))
+    .filter(token => token.length >= 2);
+}
+
+function normalizeTermSurface(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeTermKey(value) {
+  return normalizeTermSurface(value).replace(/\s+/g, '').toLocaleLowerCase('ko');
+}
+
+function countTermOccurrences(text, needle) {
+  const source = String(text || '');
+  const target = normalizeTermSurface(needle);
+  if (!target) return 0;
+  let count = 0;
+  let index = 0;
+  while ((index = source.indexOf(target, index)) !== -1) {
+    if (termBoundaryOk(source, index, index + target.length, target)) count++;
+    index += Math.max(1, target.length);
+  }
+  return count;
+}
+
+function termBoundaryOk(text, start, end, target) {
+  const prev = start > 0 ? text[start - 1] : '';
+  const next = end < text.length ? text[end] : '';
+  if (prev && isTermContinuation(prev)) return false;
+  if (!next) return true;
+  if (!isTermContinuation(next)) return true;
+  if (isAllowedPostpositionStart(next)) return true;
+  return false;
+}
+
+function isTermContinuation(char) {
+  return /[0-9A-Za-z가-힣_]/.test(char);
+}
+
+function isAllowedPostpositionStart(char) {
+  return '은는이가을를과와도만에의로랑이나'.includes(char);
+}
+
+function collectTermEvidence(text, variants, limit) {
+  const snippets = [];
+  for (const variant of variants) {
+    const needle = variant && variant.text;
+    if (!needle) continue;
+    const index = text.indexOf(needle);
+    if (index === -1) continue;
+    const start = Math.max(0, index - 35);
+    const end = Math.min(text.length, index + needle.length + 35);
+    const snippet = text.slice(start, end).replace(/\s+/g, ' ').trim();
+    if (snippet) snippets.push(snippet);
+    if (snippets.length >= limit) break;
+  }
+  return snippets;
+}
+
+function localTermModelName(analyzer) {
+  try {
+    const info = analyzer.modelInfo();
+    return info && info.version ? `garu-ko ${info.version}` : 'garu-ko';
+  } catch (_) {
+    return 'garu-ko';
+  }
 }
 
 function termConsistencyFileName(document) {
@@ -2318,7 +2514,6 @@ async function generateProofread(body) {
 
 async function generateTermConsistency(body) {
   const settings = mergeSettings(body.settings);
-  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (typeof document.text !== 'string' || !document.text.trim()) {
     throw new HttpError(400, 'document.text is required');
@@ -2330,7 +2525,7 @@ async function generateTermConsistency(body) {
     if (cached) {
       return {
         ok: true,
-        provider: cached.report.provider || provider,
+        provider: cached.report.provider || 'local',
         model: cached.report.model || '',
         report: cached.report,
         terms: cached.report.terms,
@@ -2346,35 +2541,15 @@ async function generateTermConsistency(body) {
     }
   }
 
-  const prompt = buildTermConsistencyPrompt(document, settings);
-  const includedChars = countChars(String(document.text || '').slice(0, Math.min(settings.maxDocumentChars, TERM_PROMPT_MAX_CHARS)));
-  const model = cheapModelForProvider(provider, settings);
-  const run = await runProvider(provider, prompt, settings, {
-    model,
-    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
-    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
-  });
-  if (!run.ok) {
-    throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, {
-      exitCode: run.exitCode,
-      signal: run.signal,
-      timedOut: run.timedOut,
-      model,
-      stdout: tail(run.stdout),
-      stderr: tail(run.stderr)
-    });
-  }
-
-  const report = normalizeTermConsistencyReport(extractJsonObject(run.response), document, {
-    provider,
-    model,
-    elapsedMs: run.elapsedMs
-  });
+  const startedAt = Date.now();
+  const report = await buildLocalTermConsistencyReport(document, settings);
+  report.elapsedMs = Date.now() - startedAt;
+  const includedChars = report.includedChars;
   const file = writeTermConsistencyReport(report, document, settings, { includedChars });
   return {
     ok: true,
-    provider,
-    model,
+    provider: report.provider,
+    model: report.model,
     report,
     terms: report.terms,
     notes: report.notes,
@@ -2384,9 +2559,7 @@ async function generateTermConsistency(body) {
     displayName: file.displayName,
     outputPath: file.outputPath,
     fromCache: false,
-    elapsedMs: run.elapsedMs,
-    stdoutTail: tail(run.stdout, 1200),
-    stderrTail: tail(run.stderr, 1200)
+    elapsedMs: report.elapsedMs
   };
 }
 
@@ -2655,8 +2828,8 @@ async function route(req, res) {
     await sendLoggedAiJson(res, 'AI proofread', body, generateProofread);
     return;
   }
-  if (url.pathname === '/ai/terms') {
-    await sendLoggedAiJson(res, 'AI terms', body, generateTermConsistency);
+  if (url.pathname === '/terms' || url.pathname === '/ai/terms') {
+    await sendLoggedAiJson(res, 'Local terms', body, generateTermConsistency);
     return;
   }
   if (url.pathname === '/ai/question') {
@@ -2734,5 +2907,6 @@ export {
   mergeSettings,
   compactToytypeJson,
   buildProofreadPrompt,
+  buildLocalTermConsistencyReport,
   health
 };

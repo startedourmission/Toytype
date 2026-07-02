@@ -916,9 +916,9 @@
     const btn = el('button', 'trd-btn trd-icon-btn trd-terms-btn' + (termsViewOpen ? ' trd-on' : ''));
     btn.type = 'button';
     btn.appendChild(termsIcon());
-    btn.setAttribute('aria-label', 'AI 용어 표');
+    btn.setAttribute('aria-label', '용어 통일 표');
     btn.setAttribute('aria-pressed', termsViewOpen ? 'true' : 'false');
-    btn.title = 'AI 용어 표';
+    btn.title = '용어 통일 표';
     btn.disabled = isAddonBusy('ai-terms');
     btn.addEventListener('click', ev => {
       ev.preventDefault();
@@ -1286,7 +1286,7 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    const ruleSource = termsViewOpen ? 'AI 용어 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
+    const ruleSource = termsViewOpen ? '용어 통일 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
     l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
     const addonStatusText = addonStatusLineText();
     if (addonStatusText) {
@@ -1333,7 +1333,7 @@
     const wrap = el('div', 'trd-terms-view');
     const head = el('div', 'trd-terms-head');
     const title = el('div', 'trd-terms-title');
-    title.textContent = 'AI 용어 표';
+    title.textContent = '용어 통일 표';
     const refreshBtn = el('button', 'trd-btn trd-terms-refresh');
     refreshBtn.type = 'button';
     refreshBtn.textContent = '재분석';
@@ -2454,7 +2454,7 @@
         error.userMessage = '용어를 분석할 본문을 읽지 못했습니다';
         throw error;
       }
-      updateAiTermsStatus('AI 용어 분석 중');
+      updateAiTermsStatus('용어 분석 중');
       const res = await sendAiBridge('terms', {
         timeoutMs: AI_TERMS_TIMEOUT,
         force: opts.force === true,
@@ -2467,12 +2467,12 @@
         }
       });
       if (!res || !res.ok || !res.report) {
-        throw aiBridgeError(res, 'AI 용어 분석 실패');
+        throw aiBridgeError(res, '용어 분석 실패');
       }
       termReport = normalizeTermReportForView(res.report, res);
       termReportDocId = doc.docId;
       const n = Array.isArray(termReport.terms) ? termReport.terms.length : 0;
-      const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : 'AI 용어 분석 완료';
+      const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : '용어 분석 완료';
       finalStatus = n ? doneLabel + ' · ' + n + '건' : doneLabel + ' · 혼용 없음';
       if (res.model) finalStatus += ' · ' + res.model;
       if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
@@ -2481,12 +2481,12 @@
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
       if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
-      console.error('[Toytype addons] AI terms failed', summary);
-      debugLog('[Toytype addons] AI terms failed detail', {
+      console.error('[Toytype addons] local terms failed', summary);
+      debugLog('[Toytype addons] local terms failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
-      finalStatus = error && error.userMessage ? error.userMessage : 'AI 용어 분석 실패';
+      finalStatus = error && error.userMessage ? error.userMessage : '용어 분석 실패';
       errorToast = finalStatus;
     } finally {
       setAddonBusy(actionId, false);
@@ -3037,7 +3037,7 @@
   function startAiTermsStatus(phase) {
     addonStatus = {
       type: 'ai-terms',
-      label: 'AI 용어',
+      label: '용어 통일',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -3062,7 +3062,7 @@
     const previous = addonStatus && addonStatus.type === 'ai-terms' ? addonStatus : null;
     addonStatus = {
       type: 'ai-terms',
-      label: 'AI 용어',
+      label: '용어 통일',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
@@ -3247,81 +3247,13 @@
     return raw || getDocId() || 'Google Docs';
   }
 
+  // 모든 AI 브리지 호출은 백그라운드 서비스워커를 거친다.
+  // 콘텐트 스크립트(docs.google.com 페이지 컨텍스트)에서 직접 127.0.0.1로 fetch하면
+  // MV3에서는 확장 host_permissions가 적용되지 않아 페이지 출처 기준 접근 제어(CORS/PNA)로
+  // 차단된다("Fetch API cannot load ... due to access control checks"). 긴 AI 요청이라도
+  // 백그라운드의 진행 중 fetch가 서비스워커를 살려 두므로 백그라운드 경유가 유일한 정상 경로다.
   function sendAiBridge(action, payload) {
-    if (shouldUseDirectAiBridge(action)) return sendAiBridgeDirect(action, payload);
     return sendAiBridgeViaBackground(action, payload);
-  }
-
-  function shouldUseDirectAiBridge(action) {
-    return action === 'proofread' || action === 'terms' || action === 'question' || action === 'adjustLength';
-  }
-
-  function directAiBridgePath(action) {
-    if (action === 'proofread') return '/ai/proofread';
-    if (action === 'terms') return '/ai/terms';
-    if (action === 'question') return '/ai/question';
-    if (action === 'adjustLength') return '/ai/adjust-length';
-    return '';
-  }
-
-  async function sendAiBridgeDirect(action, payload) {
-    const config = await getAiBridgeConfig();
-    if (!config || !config.ok) return config || { ok: false, error: 'extension_message_failed' };
-    const path = directAiBridgePath(action);
-    if (!path) return { ok: false, error: 'unknown_ai_bridge_action' };
-    const defaults = config.payloadDefaults && typeof config.payloadDefaults === 'object' ? config.payloadDefaults : {};
-    const sourcePayload = payload && typeof payload === 'object' ? payload : {};
-    const bridgePayload = Object.assign({}, sourcePayload, {
-      provider: sourcePayload.provider || defaults.provider,
-      settings: defaults.settings || {}
-    });
-    const ctrl = new AbortController();
-    const timeoutMs = Number.isFinite(Number(sourcePayload.timeoutMs))
-      ? Math.max(5000, Number(sourcePayload.timeoutMs))
-      : Math.max(5000, Number(config.requestTimeoutMs) || 600000);
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs + 5000);
-    try {
-      const res = await fetch(String(config.bridgeUrl || '').replace(/\/+$/, '') + path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(bridgePayload),
-        signal: ctrl.signal
-      });
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch (_) {
-        return { ok: false, error: 'bridge_invalid_json', status: res.status, body: text.slice(0, 2000) };
-      }
-      if (!res.ok) return Object.assign({ ok: false, status: res.status }, json);
-      return json;
-    } catch (e) {
-      return {
-        ok: false,
-        error: e && e.name === 'AbortError' ? 'bridge_timeout' : 'bridge_unavailable',
-        message: e && e.message ? e.message : String(e),
-        bridgeUrl: config.bridgeUrl || ''
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  function getAiBridgeConfig() {
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'typo:getAiBridgeConfig' }, res => {
-          if (chrome.runtime.lastError) {
-            resolve({ ok: false, error: 'extension_message_failed', message: chrome.runtime.lastError.message });
-            return;
-          }
-          resolve(res);
-        });
-      } catch (e) {
-        resolve({ ok: false, error: 'extension_message_failed', message: e && e.message ? e.message : String(e) });
-      }
-    });
   }
 
   function sendAiBridgeViaBackground(action, payload) {
