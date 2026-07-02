@@ -3,15 +3,17 @@
 const DEFAULT_TOC_MAX_LEVEL = 4;
 const DEFAULT_CLEANUP_DAYS = 30;
 const CLEANUP_DAY_OPTIONS = [1, 7, 30, 60, 180];
+const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
 
 const DEFAULT_AI = {
+  timeoutDefaultVersion: 2,
   provider: 'codex',
   bridgeUrl: 'http://127.0.0.1:17644',
   codexCommand: 'codex',
   claudeCommand: 'claude',
   workspaceDir: '~/Dev/Toytype',
   outputDir: '~/.toytype/generated',
-  requestTimeoutMs: 600000,
+  requestTimeoutMs: 1800000,
   maxDocumentChars: 180000
 };
 
@@ -37,7 +39,10 @@ const els = {
 };
 
 function aiFromSettings(settings) {
-  return Object.assign({}, DEFAULT_AI, settings && settings.ai || {});
+  const ai = Object.assign({}, DEFAULT_AI, settings && settings.ai || {});
+  ai.requestTimeoutMs = normalizeAiRequestTimeout(ai);
+  ai.timeoutDefaultVersion = DEFAULT_AI.timeoutDefaultVersion;
+  return ai;
 }
 
 function tocMaxLevelFromSettings(settings) {
@@ -75,6 +80,7 @@ function setSelectedProvider(provider) {
 
 function formToAi() {
   return {
+    timeoutDefaultVersion: DEFAULT_AI.timeoutDefaultVersion,
     provider: selectedProvider(),
     bridgeUrl: els.bridgeUrl.value.trim() || DEFAULT_AI.bridgeUrl,
     codexCommand: els.codexCommand.value.trim() || DEFAULT_AI.codexCommand,
@@ -109,6 +115,15 @@ function clampNumber(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
+function normalizeAiRequestTimeout(ai) {
+  const n = Number(ai && ai.requestTimeoutMs);
+  const version = Number(ai && ai.timeoutDefaultVersion);
+  if (Number.isFinite(n) && Math.floor(n) === LEGACY_AI_REQUEST_TIMEOUT_MS && !(version >= DEFAULT_AI.timeoutDefaultVersion)) {
+    return DEFAULT_AI.requestTimeoutMs;
+  }
+  return clampNumber(ai && ai.requestTimeoutMs, DEFAULT_AI.requestTimeoutMs, 5000, 3600000);
+}
+
 function updateBridgeCommand() {
   const url = (els.bridgeUrl.value || DEFAULT_AI.bridgeUrl).replace(/\/+$/, '');
   const match = url.match(/:(\d+)$/);
@@ -132,8 +147,16 @@ function formatStatus(res) {
       'exitCode: ' + String(res.exitCode),
       'elapsedMs: ' + String(res.elapsedMs)
     ];
-    const response = String(res.response || res.stdoutTail || res.stderrTail || '').trim();
+    const diagnostic = res.diagnostics && typeof res.diagnostics.diagnostic === 'string'
+      ? res.diagnostics.diagnostic
+      : typeof res.diagnostic === 'string'
+        ? res.diagnostic
+        : '';
+    const response = String(res.ok ? (res.response || diagnostic) : (diagnostic || res.response) || res.stdoutTail || res.stderrTail || '').trim();
     if (response) lines.push('', response);
+    if (res.diagnostics && (res.diagnostics.stdoutChars !== undefined || res.diagnostics.stderrChars !== undefined)) {
+      lines.push('', 'stdoutChars: ' + String(res.diagnostics.stdoutChars || 0) + ' · stderrChars: ' + String(res.diagnostics.stderrChars || 0));
+    }
     if (res.stderrTail && String(res.stderrTail).trim() && String(res.stderrTail).trim() !== response) {
       lines.push('', String(res.stderrTail).trim());
     }

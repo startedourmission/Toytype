@@ -7,16 +7,21 @@ chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
 // SW 재기동 시 사라지는 모듈 레벨 캐시 — 재fetch가 정상 동작이다.
 let rulesCache = null;
 
+const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
+
 const DEFAULT_AI_SETTINGS = {
+  timeoutDefaultVersion: 2,
   provider: 'codex',
   bridgeUrl: 'http://127.0.0.1:17644',
   codexCommand: 'codex',
   claudeCommand: 'claude',
   workspaceDir: '~/Dev/Toytype',
   outputDir: '~/.toytype/generated',
-  requestTimeoutMs: 600000,
+  requestTimeoutMs: 1800000,
   maxDocumentChars: 180000
 };
+
+const ISSUE_NEW_URL = 'https://github.com/startedourmission/Toytype/issues/new';
 
 async function loadRules() {
   if (rulesCache) return rulesCache;
@@ -44,16 +49,27 @@ function normalizeBridgeUrl(value) {
 function mergeAiSettings(settings) {
   const ai = settings && settings.ai && typeof settings.ai === 'object' ? settings.ai : {};
   const provider = ai.provider === 'claude' ? 'claude' : 'codex';
+  const requestTimeoutMs = normalizeAiRequestTimeout(ai);
   return {
+    timeoutDefaultVersion: DEFAULT_AI_SETTINGS.timeoutDefaultVersion,
     provider,
     bridgeUrl: normalizeBridgeUrl(ai.bridgeUrl),
     codexCommand: typeof ai.codexCommand === 'string' && ai.codexCommand.trim() ? ai.codexCommand.trim() : DEFAULT_AI_SETTINGS.codexCommand,
     claudeCommand: typeof ai.claudeCommand === 'string' && ai.claudeCommand.trim() ? ai.claudeCommand.trim() : DEFAULT_AI_SETTINGS.claudeCommand,
     workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : DEFAULT_AI_SETTINGS.workspaceDir,
     outputDir: typeof ai.outputDir === 'string' && ai.outputDir.trim() ? ai.outputDir.trim() : DEFAULT_AI_SETTINGS.outputDir,
-    requestTimeoutMs: clampNumber(ai.requestTimeoutMs, DEFAULT_AI_SETTINGS.requestTimeoutMs, 5000, 3600000),
+    requestTimeoutMs,
     maxDocumentChars: clampNumber(ai.maxDocumentChars, DEFAULT_AI_SETTINGS.maxDocumentChars, 1000, 1000000)
   };
+}
+
+function normalizeAiRequestTimeout(ai) {
+  const n = Number(ai && ai.requestTimeoutMs);
+  const version = Number(ai && ai.timeoutDefaultVersion);
+  if (Number.isFinite(n) && Math.floor(n) === LEGACY_AI_REQUEST_TIMEOUT_MS && !(version >= DEFAULT_AI_SETTINGS.timeoutDefaultVersion)) {
+    return DEFAULT_AI_SETTINGS.requestTimeoutMs;
+  }
+  return clampNumber(ai && ai.requestTimeoutMs, DEFAULT_AI_SETTINGS.requestTimeoutMs, 5000, 3600000);
 }
 
 function clampNumber(value, fallback, min, max) {
@@ -143,12 +159,86 @@ function safeDownloadFileName(fileName) {
   return String(fileName || 'toytype-images.zip').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'toytype-images.zip';
 }
 
+function oneLine(value, limit) {
+  const max = Number.isFinite(Number(limit)) ? Math.max(0, Number(limit)) : 120;
+  const text = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + '…' : text;
+}
+
+function blockValue(value, limit) {
+  const max = Number.isFinite(Number(limit)) ? Math.max(0, Number(limit)) : 800;
+  const text = String(value == null ? '' : value).replace(/\r\n?/g, '\n').trim();
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + '…' : text;
+}
+
+function issueCode(value, limit) {
+  const text = blockValue(value, limit).replace(/`/g, '\u02cb');
+  return text || '-';
+}
+
+function buildFindingIssueUrl(payload) {
+  const f = payload && typeof payload === 'object' ? payload : {};
+  const src = oneLine(f.src, 80) || '미확인';
+  const dst = oneLine(f.dst, 80) || '미확인';
+  const cat = oneLine(f.catLabel || f.cat, 80) || '-';
+  const title = '[규칙 오류 제보] ' + src + ' → ' + dst;
+  const context = [
+    blockValue(f.before, 180),
+    f.src,
+    blockValue(f.after, 180)
+  ].filter(v => v != null && String(v) !== '').join('');
+  const lines = [
+    '## 규칙 오류 제보',
+    '',
+    '- 원문: `' + issueCode(f.src, 180) + '`',
+    '- 제안: `' + issueCode(f.dst, 180) + '`',
+    '- 카테고리: ' + cat,
+    '- 위치: ' + (oneLine(f.context, 40) || '-') + (f.line != null ? ' ¶' + oneLine(f.line, 20) : ''),
+    '- 규칙 버전: ' + (oneLine(f.rulesVersion, 80) || '-'),
+    '- 규칙 소스: ' + (oneLine(f.rulesSource, 120) || '-'),
+    '- 문서/페이지: ' + (oneLine(f.pageTitle, 140) || '-'),
+    '- URL: ' + (oneLine(f.pageUrl, 240) || '-'),
+    '',
+    '## 문맥',
+    '',
+    '```text',
+    blockValue(context, 500) || '-',
+    '```',
+    '',
+    '## 기대 동작',
+    '',
+    '<!-- 이 항목이 왜 오탐인지, 또는 어떤 교정이 맞는지 적어 주세요. -->'
+  ];
+  const params = new URLSearchParams({
+    title,
+    body: lines.join('\n')
+  });
+  return ISSUE_NEW_URL + '?' + params.toString();
+}
+
+function openIssueTab(payload) {
+  return new Promise(resolve => {
+    if (!chrome.tabs || typeof chrome.tabs.create !== 'function') {
+      resolve({ ok: false, error: 'tabs_unavailable' });
+      return;
+    }
+    const url = buildFindingIssueUrl(payload);
+    chrome.tabs.create({ url }, tab => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: 'issue_open_failed', message: chrome.runtime.lastError.message, url });
+        return;
+      }
+      resolve({ ok: true, tabId: tab && tab.id, url });
+    });
+  });
+}
+
 function aiBridgePath(action) {
   const paths = {
     health: '/health',
     test: '/ai/test',
     proofread: '/ai/proofread',
-    terms: '/terms',
+    terms: '/ai/terms',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
     extractImages: '/docs/extract-images',
@@ -227,6 +317,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(error => {
         sendResponse({ ok: false, error: 'settings_load_failed', message: error && error.message ? error.message : String(error) });
       });
+    return true;
+  }
+
+  if (msg.type === 'typo:reportFindingIssue') {
+    openIssueTab(msg.finding).then(sendResponse, error => {
+      sendResponse({ ok: false, error: 'issue_open_failed', message: error && error.message ? error.message : String(error) });
+    });
     return true;
   }
 

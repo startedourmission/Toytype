@@ -1,0 +1,7 @@
+garu-ko 0.9.8
+
+Vendored from https://github.com/ongjin/garu / npm package garu-ko.
+License: MIT. See LICENSE in this directory.
+
+Toytype vendors the runtime JavaScript, WASM, and base model files so the local
+bridge can run without requiring users to install npm dependencies separately.

@@ -4,8 +4,5 @@
   "private": true,
   "scripts": {
     "test": "node --test"
-  },
-  "dependencies": {
-    "garu-ko": "^0.9.8"
   }
 }

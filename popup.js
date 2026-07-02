@@ -31,7 +31,9 @@ const CAT_COLOR_CLASS = {
 
 const $app = document.getElementById('app');
 let tabId = null;
+let activeTabInfo = null;
 let categories = FALLBACK_CATEGORIES;
+let findingContextMenu = null;
 
 // ---------- 유틸 ----------
 
@@ -146,6 +148,78 @@ async function copyText(text) {
   }
 }
 
+function closeFindingContextMenu() {
+  if (!findingContextMenu) return;
+  findingContextMenu.remove();
+  findingContextMenu = null;
+}
+
+function findingIssuePayload(f, report) {
+  return {
+    context: report && report.context || '',
+    src: f && f.src,
+    dst: f && f.dst,
+    cat: f && f.cat,
+    catLabel: f && (f.catLabel || f.cat),
+    before: f && f.before,
+    after: f && f.after,
+    line: f && f.line,
+    rulesVersion: report && report.rulesVersion,
+    rulesSource: report && report.rulesSource,
+    scannedAt: report && report.scannedAt,
+    pageTitle: activeTabInfo && activeTabInfo.title || '',
+    pageUrl: activeTabInfo && activeTabInfo.url || report && report.origin || ''
+  };
+}
+
+function openFindingIssue(f, report) {
+  return chrome.runtime.sendMessage({
+    type: 'typo:reportFindingIssue',
+    finding: findingIssuePayload(f, report)
+  });
+}
+
+function showFindingContextMenu(f, report, ev) {
+  closeFindingContextMenu();
+  ev.preventDefault();
+  ev.stopPropagation();
+
+  const menu = el('div', 'finding-context-menu');
+  menu.setAttribute('role', 'menu');
+  const reportBtn = el('button', 'finding-context-item', '오류 제보');
+  reportBtn.type = 'button';
+  reportBtn.setAttribute('role', 'menuitem');
+  reportBtn.addEventListener('click', async clickEv => {
+    clickEv.preventDefault();
+    clickEv.stopPropagation();
+    closeFindingContextMenu();
+    try {
+      const res = await openFindingIssue(f, report);
+      if (!res || res.ok !== true) throw new Error(res && (res.message || res.error) || 'issue_open_failed');
+    } catch (error) {
+      const badge = el('div', 'notice warn', '이슈 열기 실패');
+      $app.prepend(badge);
+      setTimeout(() => { badge.remove(); }, 1800);
+    }
+  });
+  menu.appendChild(reportBtn);
+  document.body.appendChild(menu);
+
+  const margin = 6;
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(Math.max(margin, ev.clientX), Math.max(margin, window.innerWidth - rect.width - margin));
+  const y = Math.min(Math.max(margin, ev.clientY), Math.max(margin, window.innerHeight - rect.height - margin));
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  findingContextMenu = menu;
+}
+
+document.addEventListener('click', closeFindingContextMenu);
+document.addEventListener('scroll', closeFindingContextMenu, true);
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') closeFindingContextMenu();
+});
+
 // ---------- 상태 화면 ----------
 
 function renderUnsupported() {
@@ -233,6 +307,7 @@ function openSettingsPage() {
 // ---------- 정상 화면 (상태 D) ----------
 
 async function renderReport(report) {
+  closeFindingContextMenu();
   $app.textContent = '';
 
   if (report.disabled) {
@@ -307,7 +382,7 @@ async function renderReport(report) {
       const labelText = group[0].catLabel || catId;
       details.append(el('summary', null, labelText + ' (' + group.length + ')'));
       for (const f of group) {
-        details.append(buildFindingItem(f, report.context));
+        details.append(buildFindingItem(f, report));
       }
       list.append(details);
     }
@@ -331,7 +406,8 @@ async function renderReport(report) {
   $app.append(footer);
 }
 
-function buildFindingItem(f, context) {
+function buildFindingItem(f, report) {
+  const context = report && report.context;
   const item = el('div', 'finding ' + (CAT_COLOR_CLASS[f.cat] || 'cat-red'));
 
   // 1행: …{before} [src] {after}…
@@ -359,6 +435,9 @@ function buildFindingItem(f, context) {
     item.append(badge);
     setTimeout(() => { badge.remove(); }, 1200);
   });
+  item.addEventListener('contextmenu', ev => {
+    showFindingContextMenu(f, report, ev);
+  });
 
   return item;
 }
@@ -376,6 +455,10 @@ async function init() {
     return;
   }
   tabId = tab.id;
+  activeTabInfo = {
+    title: typeof tab.title === 'string' ? tab.title : '',
+    url: typeof tab.url === 'string' ? tab.url : ''
+  };
 
   try {
     const res = await chrome.runtime.sendMessage({ type: 'typo:getCategories' });

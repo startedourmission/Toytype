@@ -150,6 +150,33 @@ body {
   color: #fff;
 }
 
+.finding-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 116px;
+  padding: 4px;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+}
+.finding-context-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.finding-context-item:hover {
+  background: #f1f3f4;
+}
+
 /* 카테고리 색 계열: src 강조와 칩 */
 mark.src-mark {
   padding: 0 1px;

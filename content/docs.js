@@ -58,7 +58,8 @@
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}';
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}' +
+    '.trd-context-menu{position:absolute;z-index:6;min-width:116px;padding:4px;border:1px solid #dadce0;border-radius:8px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.18)}.trd-context-item{display:block;width:100%;border:0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;text-align:left;padding:7px 10px;cursor:pointer}.trd-context-item:hover{background:#f1f3f4}';
 
   const startedAt = Date.now();
 
@@ -140,6 +141,7 @@
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
+  let findingContextMenu = null;
   let nativeControlInteractionUntil = 0;
   let deferredRenderOptions = null;
   let deferredRenderTimer = null;
@@ -772,6 +774,7 @@
   }
 
   function removePanel() {
+    closeFindingContextMenu();
     if (host) host.remove();
     host = shadowRoot = shadowView = null;
     expanded = false;
@@ -1045,6 +1048,7 @@
 
   function render(options) {
     if (!shadowView) return;
+    closeFindingContextMenu();
     const opts = options && typeof options === 'object' ? options : {};
     if (shouldDeferRenderForNativeControl(opts)) {
       deferRender(opts);
@@ -1364,7 +1368,7 @@
     const terms = Array.isArray(report.terms) ? report.terms : [];
     if (terms.length === 0) {
       const msg = el('div', 'trd-msg');
-      msg.textContent = '혼용된 용어를 찾지 못했습니다.';
+      msg.textContent = '혼용된 용어나 조사 오류를 찾지 못했습니다.';
       wrap.appendChild(msg);
     } else {
       const tableWrap = el('div', 'trd-terms-table-wrap');
@@ -1372,7 +1376,7 @@
       table.className = 'trd-terms-table';
       const thead = document.createElement('thead');
       const headRow = document.createElement('tr');
-      for (const label of ['혼용', '권장', '근거']) {
+      for (const label of ['표기', '권장', '근거']) {
         const th = document.createElement('th');
         th.textContent = label;
         headRow.appendChild(th);
@@ -1931,6 +1935,109 @@
     return true;
   }
 
+  function closeFindingContextMenu() {
+    if (!findingContextMenu) return;
+    if (findingContextMenu.node) findingContextMenu.node.remove();
+    if (findingContextMenu.closeEvents) {
+      for (const item of findingContextMenu.closeEvents) {
+        item.target.removeEventListener(item.type, item.handler, item.options);
+      }
+    }
+    findingContextMenu = null;
+  }
+
+  function findingIssuePayload(f) {
+    const report = lastReport && typeof lastReport === 'object' ? lastReport : {};
+    return {
+      context: 'docs',
+      src: f && f.src,
+      dst: f && f.dst,
+      cat: f && f.cat,
+      catLabel: f && (f.catLabel || labelOf(f.cat)),
+      before: f && f.before,
+      after: f && f.after,
+      line: f && f.line,
+      rulesVersion: report.rulesVersion || (rulesJson && rulesJson.version),
+      rulesSource: activeRulesSource === 'builtin' ? 'rules.json' : (rulesSourceLabel || 'uploaded.json'),
+      scannedAt: report.scannedAt,
+      textSource: report.textSource,
+      pageTitle: documentTitleForAddon(),
+      pageUrl: location.href,
+      docId: getDocId()
+    };
+  }
+
+  function handleReportFindingIssueClick(f) {
+    try {
+      chrome.runtime.sendMessage({ type: 'typo:reportFindingIssue', finding: findingIssuePayload(f) }, res => {
+        if (chrome.runtime.lastError || !res || res.ok !== true) {
+          showToast('이슈 열기 실패', { durationMs: 2400 });
+          return;
+        }
+        showToast('오류 제보 이슈 작성 화면 열림');
+      });
+    } catch (error) {
+      showToast('이슈 열기 실패', { durationMs: 2400 });
+    }
+  }
+
+  function showFindingContextMenu(f, ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeFindingContextMenu();
+
+    const panel = shadowView && shadowView.querySelector('.trd-panel');
+    if (!panel) return;
+    const menu = el('div', 'trd-context-menu');
+    menu.setAttribute('role', 'menu');
+    const reportBtn = el('button', 'trd-context-item');
+    reportBtn.type = 'button';
+    reportBtn.setAttribute('role', 'menuitem');
+    reportBtn.textContent = '오류 제보';
+    reportBtn.addEventListener('click', clickEv => {
+      clickEv.preventDefault();
+      clickEv.stopPropagation();
+      closeFindingContextMenu();
+      handleReportFindingIssueClick(f);
+    });
+    menu.appendChild(reportBtn);
+    panel.appendChild(menu);
+
+    const margin = 6;
+    const panelRect = panel.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const x = Math.min(
+      Math.max(margin, ev.clientX - panelRect.left),
+      Math.max(margin, panel.clientWidth - menuRect.width - margin)
+    );
+    const y = Math.min(
+      Math.max(margin, ev.clientY - panelRect.top),
+      Math.max(margin, panel.clientHeight - menuRect.height - margin)
+    );
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    const closeOnClick = clickEv => {
+      if (!menu.contains(clickEv.target)) closeFindingContextMenu();
+    };
+    const closeOnScroll = () => closeFindingContextMenu();
+    const closeOnEscape = keyEv => {
+      if (keyEv.key === 'Escape') closeFindingContextMenu();
+    };
+    findingContextMenu = {
+      node: menu,
+      closeEvents: [
+        { target: shadowRoot, type: 'click', handler: closeOnClick, options: false },
+        { target: document, type: 'click', handler: closeOnClick, options: false },
+        { target: document, type: 'scroll', handler: closeOnScroll, options: true },
+        { target: document, type: 'keydown', handler: closeOnEscape, options: true }
+      ]
+    };
+    for (const item of findingContextMenu.closeEvents) {
+      item.target.addEventListener(item.type, item.handler, item.options);
+    }
+  }
+
   function buildItem(f) {
     const isSuggestion = isSentenceSuggestionFinding(f);
     const item = el('div', 'trd-item' + (isSuggestion ? ' trd-suggestion-item trd-copy-only' : ''));
@@ -1987,6 +2094,9 @@
     item.addEventListener('click', () => {
       if (isSuggestion) handleSentenceSuggestionClick(f);
       else handleFindingClick(f);
+    });
+    item.addEventListener('contextmenu', ev => {
+      showFindingContextMenu(f, ev);
     });
     return item;
   }
@@ -3600,14 +3710,38 @@
     if (details && details.exitCode !== undefined) {
       userMessage += ' · exitCode ' + String(details.exitCode);
     }
-    if (details && typeof details.stderr === 'string' && details.stderr.trim()) {
-      const firstUsefulLine = details.stderr.split(/\r?\n/).map(line => line.trim()).find(Boolean);
-      if (firstUsefulLine) userMessage += ' · ' + firstUsefulLine.slice(0, 160);
-    }
+    const diagnostic = details && typeof details.diagnostic === 'string' && details.diagnostic.trim()
+      ? details.diagnostic.trim()
+      : firstUsefulAiBridgeDiagnostic(details);
+    if (diagnostic) userMessage += ' · ' + diagnostic.slice(0, 160);
     const error = new Error(userMessage);
     error.userMessage = userMessage;
     error.response = res;
     return error;
+  }
+
+  function firstUsefulAiBridgeDiagnostic(details) {
+    if (!details || typeof details !== 'object') return '';
+    const streams = [details.stderr, details.stdout];
+    for (const stream of streams) {
+      if (typeof stream !== 'string' || !stream.trim()) continue;
+      const lines = stream.split(/\r?\n/).map(cleanAiBridgeDiagnosticLine).filter(Boolean);
+      const line = lines.find(isUsefulAiBridgeDiagnosticLine);
+      if (line) return line;
+    }
+    return '';
+  }
+
+  function cleanAiBridgeDiagnosticLine(line) {
+    return String(line || '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
+  }
+
+  function isUsefulAiBridgeDiagnosticLine(line) {
+    const text = String(line || '').trim();
+    if (!text || text.length > 300) return false;
+    if (/^(error|fatal|failed|failure|timed out|timeout|aborted|spawn|enoent|eacces|permission denied|authentication|unauthorized|rate limit|api error|openai error|claude error|codex error|node:|npm err!)/i.test(text)) return true;
+    if (/^(오류|실패|시간 초과|인증|권한|명령을 찾을 수 없습니다|찾을 수 없습니다)/.test(text)) return true;
+    return false;
   }
 
   function summarizeAiBridgeResponse(res) {
@@ -3622,8 +3756,9 @@
       message: typeof res.message === 'string' ? res.message.slice(0, 300) : undefined,
       exitCode: details && details.exitCode !== undefined ? details.exitCode : undefined,
       model: details && typeof details.model === 'string' ? details.model : undefined,
-      stdout: details && typeof details.stdout === 'string' ? details.stdout.slice(-1200) : undefined,
-      stderr: details && typeof details.stderr === 'string' ? details.stderr.slice(-1200) : undefined
+      diagnostic: details && typeof details.diagnostic === 'string' ? details.diagnostic : firstUsefulAiBridgeDiagnostic(details) || undefined,
+      stdoutChars: details && details.stdoutChars !== undefined ? details.stdoutChars : details && typeof details.stdout === 'string' ? details.stdout.length : undefined,
+      stderrChars: details && details.stderrChars !== undefined ? details.stderrChars : details && typeof details.stderr === 'string' ? details.stderr.length : undefined
     };
   }
 
