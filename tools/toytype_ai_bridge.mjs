@@ -25,6 +25,7 @@ const TERM_REPORT_FILE_SUFFIX = '-용어표.json';
 const TERM_REPORT_SCHEMA_VERSION = '2026-07-02.local-garu.1';
 const LATIN_PARTICLE_ERROR_LIMIT = 12;
 const HANGUL_JONG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const HANGUL_POSTPOSITION_SUFFIXES = ['으로', '이나', '에서', '에게', '한테', '께서', '처럼', '보다', '마다', '만큼', '밖에', '조차', '마저', '하고', '이며', '이랑', '랑', '은', '는', '이', '가', '을', '를', '과', '와', '도', '만', '에', '의', '로'];
 let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
 let crc32TableCache = null;
@@ -756,11 +757,11 @@ async function buildLocalTermConsistencyReport(document, settings) {
   const text = sourceText.slice(0, maxChars);
   const includedChars = countChars(text);
   const groups = await loadLocalTermGroups(analyzer);
-  const lexicon = buildDocumentTermLexicon(analyzer, text);
+  const lexicon = buildDocumentTermLexicon(text);
   const terms = [];
 
   for (const group of groups) {
-    if (!localTermGroupMayAppear(group, lexicon, text)) continue;
+    if (!localTermGroupMayAppear(group, lexicon)) continue;
     const variants = [];
     for (const variant of group.variants) {
       const count = countTermOccurrences(text, variant);
@@ -891,28 +892,43 @@ function safeAnalyzeTokens(analyzer, text) {
   }
 }
 
-function buildDocumentTermLexicon(analyzer, text) {
+function buildDocumentTermLexicon(text) {
   const lexicon = new Set();
-  try {
-    for (const noun of analyzer.nouns(text, { includeSL: true })) {
-      const term = normalizeTermSurface(noun);
-      if (term) {
-        lexicon.add(term);
-        lexicon.add(normalizeTermKey(term));
-      }
-    }
-  } catch (_) {
-    // Exact surface counting below is still deterministic if Garu tokenization fails.
+  const source = normalizeTermSurface(text);
+  const tokenPattern = /[A-Za-z][A-Za-z0-9+#.-]{1,40}|[가-힣]{2,40}/g;
+  for (const match of source.matchAll(tokenPattern)) {
+    addDocumentTermLexiconToken(lexicon, match[0]);
   }
   return lexicon;
 }
 
-function localTermGroupMayAppear(group, lexicon, text) {
+function addDocumentTermLexiconToken(lexicon, value) {
+  const token = normalizeTermSurface(value);
+  if (token.length < 2) return;
+  lexicon.add(token);
+  lexicon.add(normalizeTermKey(token));
+  if (!/^[가-힣]+$/.test(token) || token.length < 3) return;
+  for (const stem of hangulPostpositionStems(token)) {
+    lexicon.add(stem);
+    lexicon.add(normalizeTermKey(stem));
+  }
+}
+
+function hangulPostpositionStems(token) {
+  const stems = [];
+  for (const suffix of HANGUL_POSTPOSITION_SUFFIXES) {
+    if (token.length <= suffix.length + 1 || !token.endsWith(suffix)) continue;
+    stems.push(token.slice(0, -suffix.length));
+  }
+  return stems;
+}
+
+function localTermGroupMayAppear(group, lexicon) {
   if (!lexicon.size) return true;
   for (const token of group.tokens) {
     if (lexicon.has(token) || lexicon.has(normalizeTermKey(token))) return true;
   }
-  return group.variants.some(variant => text.indexOf(variant) !== -1);
+  return false;
 }
 
 function termSurfaceTokens(value) {
