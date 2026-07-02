@@ -148,7 +148,7 @@ function aiBridgePath(action) {
     health: '/health',
     test: '/ai/test',
     proofread: '/ai/proofread',
-    terms: '/ai/terms',
+    terms: '/terms',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
     extractImages: '/docs/extract-images',

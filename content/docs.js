@@ -916,9 +916,9 @@
     const btn = el('button', 'trd-btn trd-icon-btn trd-terms-btn' + (termsViewOpen ? ' trd-on' : ''));
     btn.type = 'button';
     btn.appendChild(termsIcon());
-    btn.setAttribute('aria-label', 'AI 용어 표');
+    btn.setAttribute('aria-label', '용어 통일 표');
     btn.setAttribute('aria-pressed', termsViewOpen ? 'true' : 'false');
-    btn.title = 'AI 용어 표';
+    btn.title = '용어 통일 표';
     btn.disabled = isAddonBusy('ai-terms');
     btn.addEventListener('click', ev => {
       ev.preventDefault();
@@ -1286,7 +1286,7 @@
     const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
     const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
     const l2 = document.createElement('div');
-    const ruleSource = termsViewOpen ? 'AI 용어 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
+    const ruleSource = termsViewOpen ? '용어 통일 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
     l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
     const addonStatusText = addonStatusLineText();
     if (addonStatusText) {
@@ -1333,7 +1333,7 @@
     const wrap = el('div', 'trd-terms-view');
     const head = el('div', 'trd-terms-head');
     const title = el('div', 'trd-terms-title');
-    title.textContent = 'AI 용어 표';
+    title.textContent = '용어 통일 표';
     const refreshBtn = el('button', 'trd-btn trd-terms-refresh');
     refreshBtn.type = 'button';
     refreshBtn.textContent = '재분석';
@@ -2454,7 +2454,7 @@
         error.userMessage = '용어를 분석할 본문을 읽지 못했습니다';
         throw error;
       }
-      updateAiTermsStatus('AI 용어 분석 중');
+      updateAiTermsStatus('용어 분석 중');
       const res = await sendAiBridge('terms', {
         timeoutMs: AI_TERMS_TIMEOUT,
         force: opts.force === true,
@@ -2467,12 +2467,12 @@
         }
       });
       if (!res || !res.ok || !res.report) {
-        throw aiBridgeError(res, 'AI 용어 분석 실패');
+        throw aiBridgeError(res, '용어 분석 실패');
       }
       termReport = normalizeTermReportForView(res.report, res);
       termReportDocId = doc.docId;
       const n = Array.isArray(termReport.terms) ? termReport.terms.length : 0;
-      const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : 'AI 용어 분석 완료';
+      const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : '용어 분석 완료';
       finalStatus = n ? doneLabel + ' · ' + n + '건' : doneLabel + ' · 혼용 없음';
       if (res.model) finalStatus += ' · ' + res.model;
       if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
@@ -2481,12 +2481,12 @@
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
       if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
-      console.error('[Toytype addons] AI terms failed', summary);
-      debugLog('[Toytype addons] AI terms failed detail', {
+      console.error('[Toytype addons] local terms failed', summary);
+      debugLog('[Toytype addons] local terms failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
-      finalStatus = error && error.userMessage ? error.userMessage : 'AI 용어 분석 실패';
+      finalStatus = error && error.userMessage ? error.userMessage : '용어 분석 실패';
       errorToast = finalStatus;
     } finally {
       setAddonBusy(actionId, false);
@@ -3037,7 +3037,7 @@
   function startAiTermsStatus(phase) {
     addonStatus = {
       type: 'ai-terms',
-      label: 'AI 용어',
+      label: '용어 통일',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -3062,7 +3062,7 @@
     const previous = addonStatus && addonStatus.type === 'ai-terms' ? addonStatus : null;
     addonStatus = {
       type: 'ai-terms',
-      label: 'AI 용어',
+      label: '용어 통일',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
