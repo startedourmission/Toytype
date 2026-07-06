@@ -1080,7 +1080,6 @@
 
   function maybeStartAutoTermsAnalysis() {
     if (!expanded) return;
-    if (!bridgeStatus || bridgeStatus.state !== 'ok') return;
     const docId = getDocId();
     if (!docId) return;
     if (autoTermsStartedDocId === docId) return;

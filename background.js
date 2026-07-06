@@ -1,3 +1,7 @@
+import { GaruBase } from './third_party/garu-ko/dist/core.js';
+import initGaruWasm, { GaruWasm } from './third_party/garu-ko/pkg/garu_wasm.js';
+import { createLocalTermConsistencyEngine } from './term-consistency.mjs';
+
 // Toytype — background service worker
 // 역할: 탭 배지 갱신 + rules.json 로드·배포 + 로컬 AI 브리지 프록시.
 'use strict';
@@ -23,12 +27,30 @@ const DEFAULT_AI_SETTINGS = {
 
 const ISSUE_NEW_URL = 'https://github.com/startedourmission/Toytype/issues/new';
 
+const localTermConsistencyEngine = createLocalTermConsistencyEngine({
+  loadAnalyzer: () => loadExtensionGaruAnalyzer(),
+  loadRules
+});
+
 async function loadRules() {
   if (rulesCache) return rulesCache;
   const res = await fetch(chrome.runtime.getURL('rules.json'));
   if (!res.ok) throw new Error('rules.json fetch failed: ' + res.status);
   rulesCache = await res.json();
   return rulesCache;
+}
+
+async function loadExtensionGaruAnalyzer() {
+  const [wasmRes, modelRes] = await Promise.all([
+    fetch(chrome.runtime.getURL('third_party/garu-ko/pkg/garu_wasm_bg.wasm')),
+    fetch(chrome.runtime.getURL('third_party/garu-ko/models/base.gmdl'))
+  ]);
+  if (!wasmRes.ok) throw new Error('garu wasm fetch failed: ' + wasmRes.status);
+  if (!modelRes.ok) throw new Error('garu model fetch failed: ' + modelRes.status);
+  const wasmBytes = await wasmRes.arrayBuffer();
+  await initGaruWasm({ module_or_path: wasmBytes });
+  const modelBytes = new Uint8Array(await modelRes.arrayBuffer());
+  return new GaruBase(new GaruWasm(modelBytes, false), modelBytes.byteLength);
 }
 
 async function readSettings() {
@@ -131,6 +153,33 @@ async function callAiBridge(path, payload) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function generateLocalTerms(payload) {
+  const settings = await readSettings();
+  const ai = mergeAiSettings(settings);
+  const body = buildAiBridgePayload(ai, payload);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (typeof document.text !== 'string' || !document.text.trim()) {
+    return { ok: false, status: 400, error: 'document.text is required' };
+  }
+
+  const startedAt = Date.now();
+  const report = await localTermConsistencyEngine.buildReport(document, body.settings || ai);
+  report.elapsedMs = Date.now() - startedAt;
+  return {
+    ok: true,
+    provider: report.provider,
+    model: report.model,
+    report,
+    terms: report.terms,
+    notes: report.notes,
+    termCount: report.terms.length,
+    includedChars: report.includedChars,
+    fromCache: false,
+    localOnly: true,
+    elapsedMs: report.elapsedMs
+  };
 }
 
 function downloadBridgeFile(bridgeUrl, urlPath, fileName) {
@@ -334,6 +383,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!path) {
       sendResponse({ ok: false, error: 'unknown_ai_bridge_action' });
       return;
+    }
+    if (action === 'terms') {
+      generateLocalTerms(payload).then(sendResponse, error => {
+        sendResponse({
+          ok: false,
+          error: 'local_terms_failed',
+          message: error && error.message ? error.message : String(error)
+        });
+      });
+      return true;
     }
     callAiBridge(path, payload).then(sendResponse, error => {
       sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
