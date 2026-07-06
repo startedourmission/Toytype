@@ -113,6 +113,7 @@
           tailAlnum: isAsciiAlnum(src.charCodeAt(src.length - 1)),
           rejectBefore: stringList(rule[2] && rule[2].rejectBefore),
           rejectAfter: stringList(rule[2] && rule[2].rejectAfter),
+          allowsUrlPrefixCleanup: dst === '' && (src === 'http://' || src === 'www.'),
           // 가드 D용: 후미 공백만 추가하는 규칙 ("➊"→"➊ ")
           addsTailSpace: dst === src + ' '
         };
@@ -185,9 +186,20 @@
         }
       }
     }
+    if (entry.allowsUrlPrefixCleanup) {
+      const atTokenStart = start === ts;
+      const afterScheme = start >= ts + 3 && text.slice(start - 3, start) === '://';
+      if ((atTokenStart || (entry.src === 'www.' && afterScheme)) && end < te && isUrlPrefixPayloadCode(text.charCodeAt(end))) {
+        return false;
+      }
+    }
     if (urlish) return true;
     if (hasNonAscii) return false; // URL이 아닌 비ASCII 포함 토큰(한글 단어 등)은 탈락 대상 아님
     return hasSpecial || tokenLen >= 20;
+  }
+
+  function isUrlPrefixPayloadCode(code) {
+    return isAsciiAlnum(code) || code > 160;
   }
 
   function rejectedByRuleOptions(text, start, end, entry) {

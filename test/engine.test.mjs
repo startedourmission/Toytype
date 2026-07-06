@@ -239,6 +239,17 @@ test('실데이터: 동글뱅이 숫자는 앞뒤 띄어쓰기를 잡지 않는�
   assert.equal(E.scan('➊ 클릭하고 ➋ 에서 확인한다').findings.length, 0);
 });
 
+test('실데이터: URL 접두어 http://와 www.는 삭제 대상으로 잡는다', () => {
+  initAll();
+  const text = 'http://www.example.com www.example.com https://www.example.com xhttp://example.com';
+  const findings = E.scan(text).findings;
+  assert.deepEqual(
+    findings.filter((x) => x.src === 'http://' || x.src === 'www.').map((x) => [x.src, x.dst]),
+    [['http://', ''], ['www.', ''], ['www.', ''], ['www.', '']]
+  );
+  assert.ok(!findings.some((x) => x.src === 'http://' && x.start === text.indexOf('http://example.com')));
+});
+
 test('T4 가드 A: ASCII 단어 경계 (합성)', () => {
   E.init(synth([cat('convert', [['Git', '깃']])]), ['convert']);
   assert.equal(E.scan('GitHub').findings.length, 0);
