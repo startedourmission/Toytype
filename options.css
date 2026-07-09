@@ -58,6 +58,18 @@ h2 {
   background: #fff;
 }
 
+.section-disabled {
+  color: #777;
+  background: #fafafa;
+}
+
+.section-disabled input,
+.section-disabled select,
+.section-disabled button,
+.section-disabled .segmented {
+  opacity: .55;
+}
+
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

@@ -9,7 +9,8 @@
     genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
     disabledOrigins:   [],
     tocMaxLevel: 4, // 목차 추출에 포함할 최대 헤딩 레벨 (1~5)
-    copyOnSelect: true // 오탈자 선택 시 교정어 클립보드 자동 복사
+    copyOnSelect: true, // 오탈자 선택 시 교정어 클립보드 자동 복사
+    externalFeaturesEnabled: false // 로컬 브리지/외부 CLI가 필요한 기능은 기본 비활성화
   };
   const CATEGORY_ORDER = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
   const FALLBACK_LABELS = {
@@ -165,7 +166,29 @@
       genericCategories: Object.assign({}, DEFAULT_SETTINGS.genericCategories, s.genericCategories || {}),
       disabledOrigins: Array.isArray(s.disabledOrigins) ? s.disabledOrigins : [],
       tocMaxLevel: normalizeTocMaxLevel(s.tocMaxLevel),
-      copyOnSelect: s.copyOnSelect !== false
+      copyOnSelect: s.copyOnSelect !== false,
+      externalFeaturesEnabled: s.externalFeaturesEnabled === true
+    };
+  }
+
+  function externalFeaturesEnabled() {
+    return settings && settings.externalFeaturesEnabled === true;
+  }
+
+  function syncExternalFeatureState() {
+    if (externalFeaturesEnabled()) return;
+    suggestionsViewOpen = false;
+    if (isSentenceSuggestionSource(activeRulesSource) && builtinRulesJson) {
+      useRulesSource('builtin');
+    }
+    stopBridgeStatusWatcher();
+    bridgeStatusBusy = false;
+    bridgeStatus = {
+      state: 'unknown',
+      checkedAt: 0,
+      port: DEFAULT_BRIDGE_PORT,
+      version: '',
+      error: ''
     };
   }
 
@@ -851,12 +874,16 @@
   }
 
   function addonActions() {
+    const actions = [
+      { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
+    ];
+    if (!externalFeaturesEnabled()) return actions;
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
       { id: 'ai-question', label: 'AI 문장 삽입', run: handleAiQuestionAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
       { id: 'extract-images', label: '이미지 추출', run: handleExtractImagesAddon },
-      { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
+      ...actions
     ];
   }
 
@@ -961,7 +988,9 @@
 
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildTermsButton(), buildSuggestionsButton(), buildAddonsButton());
+    wrap.append(buildSettingsButton(), buildTermsButton());
+    if (externalFeaturesEnabled()) wrap.appendChild(buildSuggestionsButton());
+    wrap.appendChild(buildAddonsButton());
     return wrap;
   }
 
@@ -1299,7 +1328,8 @@
       footText.appendChild(statusLine);
     }
     footText.appendChild(l2);
-    foot.append(buildBridgeStatusBadge(), footText, buildFooterActions());
+    if (externalFeaturesEnabled()) foot.appendChild(buildBridgeStatusBadge());
+    foot.append(footText, buildFooterActions());
     panel.appendChild(foot);
 
     const toast = el('div', 'trd-toast');
@@ -3425,6 +3455,10 @@
   }
 
   function syncBridgeStatusWatcher() {
+    if (!externalFeaturesEnabled()) {
+      stopBridgeStatusWatcher();
+      return;
+    }
     if (!expanded) {
       stopBridgeStatusWatcher();
       return;
@@ -3445,6 +3479,7 @@
   }
 
   function pollBridgeStatus(force) {
+    if (!externalFeaturesEnabled()) return;
     if (bridgeStatusBusy) return;
     if (!force && bridgeStatus.checkedAt && Date.now() - bridgeStatus.checkedAt <= BRIDGE_STATUS_STALE_MS) return;
     bridgeStatusBusy = true;
@@ -3613,12 +3648,14 @@
   }
 
   function refreshGeneratedRulesListQuiet() {
+    if (!externalFeaturesEnabled()) return;
     refreshGeneratedRulesList().catch(error => {
       console.error('[Toytype addons] generated JSON list failed', error);
     });
   }
 
   async function refreshGeneratedRulesList() {
+    if (!externalFeaturesEnabled()) return false;
     const docId = getDocId();
     if (!docId) {
       generatedRulesFiles = [];
@@ -3692,6 +3729,8 @@
     let userMessage = fallbackMessage;
     if (code === 'bridge_unavailable') {
       userMessage = '로컬 브리지가 꺼져 있습니다 · 터미널에서 브리지를 실행하세요';
+    } else if (code === 'external_features_disabled') {
+      userMessage = '브릿지/외부 기능이 꺼져 있습니다 · 설정에서 켜세요';
     } else if (code === 'extension_message_failed') {
       userMessage = '확장 background 응답이 끊겼습니다 · Google Docs 또는 확장 프로그램을 새로고침하세요';
     } else if (code === 'bridge_timeout') {
@@ -5144,6 +5183,7 @@
 
   async function handleRescan() {
     settings = await readSettings(); // 재스캔 전 설정 fresh 재독
+    syncExternalFeatureState();
     if (isOriginDisabled()) {
       applyDisabled();
       return disabledReport();
@@ -5170,6 +5210,7 @@
 
   async function onSettingsChanged() {
     settings = await readSettings();
+    syncExternalFeatureState();
     if (isOriginDisabled()) {
       if (status !== 'disabled') applyDisabled();
       return;
@@ -5209,6 +5250,7 @@
 
   async function init() {
     settings = await readSettings();
+    syncExternalFeatureState();
     if (isOriginDisabled()) {
       status = 'disabled';
       sendCount(0);

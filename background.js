@@ -63,6 +63,10 @@ async function readSettings() {
   return stored && typeof stored === 'object' ? stored : {};
 }
 
+function externalFeaturesEnabled(settings) {
+  return settings && settings.externalFeaturesEnabled === true;
+}
+
 function normalizeBridgeUrl(value) {
   const raw = typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_AI_SETTINGS.bridgeUrl;
   return raw.replace(/\/+$/, '');
@@ -394,8 +398,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       return true;
     }
-    callAiBridge(path, payload).then(sendResponse, error => {
-      sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
+    readSettings().then(settings => {
+      if (!externalFeaturesEnabled(settings)) {
+        sendResponse({
+          ok: false,
+          error: 'external_features_disabled',
+          message: '브리지/외부 기능이 옵션에서 비활성화되어 있습니다.'
+        });
+        return null;
+      }
+      return callAiBridge(path, payload).then(sendResponse, error => {
+        sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
+      });
+    }).catch(error => {
+      sendResponse({ ok: false, error: 'settings_load_failed', message: error && error.message ? error.message : String(error) });
     });
     return true;
   }

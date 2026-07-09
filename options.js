@@ -4,6 +4,7 @@ const DEFAULT_TOC_MAX_LEVEL = 4;
 const DEFAULT_CLEANUP_DAYS = 30;
 const CLEANUP_DAY_OPTIONS = [1, 7, 30, 60, 180];
 const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
+const DEFAULT_EXTERNAL_FEATURES_ENABLED = false;
 
 const DEFAULT_AI = {
   timeoutDefaultVersion: 2,
@@ -19,6 +20,7 @@ const DEFAULT_AI = {
 
 const els = {
   save: document.getElementById('save'),
+  externalFeaturesEnabled: document.getElementById('externalFeaturesEnabled'),
   bridgeUrl: document.getElementById('bridgeUrl'),
   bridgeCommand: document.getElementById('bridgeCommand'),
   health: document.getElementById('health'),
@@ -51,6 +53,10 @@ function tocMaxLevelFromSettings(settings) {
 
 function cleanupDaysFromSettings(settings) {
   return cleanupDaysValue(settings && settings.generatedJsonCleanupDays);
+}
+
+function externalFeaturesEnabledFromSettings(settings) {
+  return settings && settings.externalFeaturesEnabled === true;
 }
 
 async function readSettings() {
@@ -168,6 +174,9 @@ function formatStatus(res) {
   if (res.error === 'bridge_timeout') {
     return '브리지 요청 시간 초과';
   }
+  if (res.error === 'external_features_disabled') {
+    return '브릿지/외부 기능이 비활성화되어 있습니다.\n\n동작 모드에서 "브릿지/외부 기능 사용"을 켠 뒤 저장하세요.';
+  }
   if (res.status === 404 && res.error === 'not found') {
     return '브리지 기능을 찾지 못했습니다.\n\n현재 실행 중인 브리지가 이전 코드입니다. 터미널에서 브리지를 종료한 뒤 아래 명령으로 다시 실행하세요.\n\n' + els.bridgeCommand.textContent;
   }
@@ -197,12 +206,14 @@ function formatStatus(res) {
 async function save() {
   const ai = formToAi();
   const settings = await readSettings();
+  settings.externalFeaturesEnabled = els.externalFeaturesEnabled.checked === true;
   settings.ai = ai;
   settings.tocMaxLevel = clampNumber(els.tocMaxLevel.value, DEFAULT_TOC_MAX_LEVEL, 1, 5);
   settings.copyOnSelect = els.copyOnSelect.checked;
   settings.generatedJsonCleanupDays = cleanupDaysValue(els.cleanupDays.value);
   await chrome.storage.local.set({ settings });
   fillForm(ai);
+  updateExternalControls();
   setStatus('저장됨');
 }
 
@@ -249,6 +260,21 @@ async function cleanupGenerated() {
   setStatus(res);
 }
 
+function externalFeaturesEnabled() {
+  return els.externalFeaturesEnabled && els.externalFeaturesEnabled.checked === true;
+}
+
+function updateExternalControls() {
+  const enabled = externalFeaturesEnabled();
+  document.querySelectorAll('[data-external-feature]').forEach(section => {
+    section.classList.toggle('section-disabled', !enabled);
+    section.querySelectorAll('input, select, button').forEach(control => {
+      control.disabled = !enabled;
+    });
+  });
+  updateBridgeCommand();
+}
+
 function handleUiError(context, error) {
   console.error('[Toytype options] ' + context, error);
   setStatus(error && error.message ? error.message : String(error));
@@ -256,11 +282,14 @@ function handleUiError(context, error) {
 
 async function init() {
   const settings = await readSettings();
+  els.externalFeaturesEnabled.checked = externalFeaturesEnabledFromSettings(settings) || DEFAULT_EXTERNAL_FEATURES_ENABLED;
   fillForm(aiFromSettings(settings));
   els.tocMaxLevel.value = String(tocMaxLevelFromSettings(settings));
   els.cleanupDays.value = String(cleanupDaysFromSettings(settings));
   els.copyOnSelect.checked = settings.copyOnSelect !== false;
+  updateExternalControls();
   setStatus('설정을 불러왔습니다.');
+  if (!externalFeaturesEnabled()) return;
   try {
     const res = await chrome.runtime.sendMessage({
       type: 'typo:aiBridge',
@@ -310,5 +339,6 @@ els.testClaude.addEventListener('click', () => { test('claude').catch(error => h
 els.openOutputDir.addEventListener('click', () => { openOutputDir().catch(error => handleUiError('open output directory failed', error)); });
 els.cleanupGenerated.addEventListener('click', () => { cleanupGenerated().catch(error => handleUiError('cleanup generated JSON failed', error)); });
 els.bridgeUrl.addEventListener('input', updateBridgeCommand);
+els.externalFeaturesEnabled.addEventListener('change', updateExternalControls);
 
 init().catch(error => handleUiError('init failed', error));
