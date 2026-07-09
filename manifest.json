@@ -43,7 +43,7 @@
     },
     {
       "matches": ["https://docs.google.com/document/*"],
-      "js": ["engine.js", "content/docs.js"],
+      "js": ["engine.js", "content/hwpx-export.js", "content/docs.js"],
       "run_at": "document_idle"
     }
   ],

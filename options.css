@@ -92,6 +92,13 @@ h2 {
   margin-top: 14px;
 }
 
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -237,7 +244,8 @@ select:focus {
 }
 
 .command,
-.status {
+.status,
+.codebox {
   overflow: auto;
   margin: 10px 0 0;
   padding: 12px;
@@ -247,4 +255,14 @@ select:focus {
   color: #1f1f1f;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+}
+
+.codebox {
+  max-height: 360px;
+  white-space: pre;
+}
+
+.codebox code {
+  display: block;
+  color: inherit;
 }

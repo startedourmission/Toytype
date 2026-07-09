@@ -5,6 +5,22 @@ const DEFAULT_CLEANUP_DAYS = 30;
 const CLEANUP_DAY_OPTIONS = [1, 7, 30, 60, 180];
 const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_EXTERNAL_FEATURES_ENABLED = false;
+const UPLOAD_JSON_EXAMPLE = JSON.stringify({
+  version: 'custom',
+  source: 'manual-upload',
+  categories: [
+    {
+      id: 'custom',
+      label: '사용자 규칙',
+      defaultOn: true,
+      rules: [
+        ['원문', '교정'],
+        ['의 수', ' 수', { rejectAfter: ['많'] }],
+        ['끔하', '끔 하', { rejectBefore: ['깔'] }]
+      ]
+    }
+  ]
+}, null, 2);
 
 const DEFAULT_AI = {
   timeoutDefaultVersion: 2,
@@ -37,6 +53,8 @@ const els = {
   maxDocumentChars: document.getElementById('maxDocumentChars'),
   tocMaxLevel: document.getElementById('tocMaxLevel'),
   copyOnSelect: document.getElementById('copyOnSelect'),
+  uploadJsonExample: document.getElementById('uploadJsonExample'),
+  copyUploadJson: document.getElementById('copyUploadJson'),
   status: document.getElementById('status')
 };
 
@@ -135,6 +153,42 @@ function updateBridgeCommand() {
   const match = url.match(/:(\d+)$/);
   const port = match ? match[1] : '17644';
   els.bridgeCommand.textContent = 'node tools/toytype_ai_bridge.mjs --port ' + port;
+}
+
+function fillUploadJsonExample() {
+  els.uploadJsonExample.textContent = UPLOAD_JSON_EXAMPLE;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
+async function copyUploadJsonExample() {
+  const ok = await copyText(UPLOAD_JSON_EXAMPLE);
+  const original = els.copyUploadJson.textContent;
+  els.copyUploadJson.textContent = ok ? '복사됨' : '복사 실패';
+  setStatus(ok ? 'JSON 업로드 형식을 복사했습니다.' : 'JSON 업로드 형식을 복사하지 못했습니다.');
+  setTimeout(() => {
+    els.copyUploadJson.textContent = original;
+  }, 1200);
 }
 
 function setStatus(value) {
@@ -281,6 +335,7 @@ function handleUiError(context, error) {
 }
 
 async function init() {
+  fillUploadJsonExample();
   const settings = await readSettings();
   els.externalFeaturesEnabled.checked = externalFeaturesEnabledFromSettings(settings) || DEFAULT_EXTERNAL_FEATURES_ENABLED;
   fillForm(aiFromSettings(settings));
@@ -338,6 +393,7 @@ els.testCodex.addEventListener('click', () => { test('codex').catch(error => han
 els.testClaude.addEventListener('click', () => { test('claude').catch(error => handleUiError('claude test failed', error)); });
 els.openOutputDir.addEventListener('click', () => { openOutputDir().catch(error => handleUiError('open output directory failed', error)); });
 els.cleanupGenerated.addEventListener('click', () => { cleanupGenerated().catch(error => handleUiError('cleanup generated JSON failed', error)); });
+els.copyUploadJson.addEventListener('click', () => { copyUploadJsonExample().catch(error => handleUiError('copy upload JSON failed', error)); });
 els.bridgeUrl.addEventListener('input', updateBridgeCommand);
 els.externalFeaturesEnabled.addEventListener('change', updateExternalControls);
 

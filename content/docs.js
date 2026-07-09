@@ -875,6 +875,7 @@
 
   function addonActions() {
     const actions = [
+      { id: 'export-hwpx', label: 'HWPX 내보내기', run: handleExportHwpxAddon },
       { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
     ];
     if (!externalFeaturesEnabled()) return actions;
@@ -3055,6 +3056,64 @@
     }
   }
 
+  async function handleExportHwpxAddon() {
+    const actionId = 'export-hwpx';
+    if (isAddonBusy(actionId)) return;
+    const docId = getDocId();
+    if (!docId) {
+      showToast('문서 ID를 찾지 못했습니다', { durationMs: 3200 });
+      return;
+    }
+    if (!globalThis.ToytypeHwpxExport || typeof globalThis.ToytypeHwpxExport.exportGoogleDoc !== 'function') {
+      showToast('HWPX 내보내기 모듈을 찾지 못했습니다', { durationMs: 4200 });
+      return;
+    }
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startHwpxExportStatus('HTML 다운로드 중');
+    try {
+      const result = await globalThis.ToytypeHwpxExport.exportGoogleDoc({
+        docId,
+        title: documentTitleForAddon(),
+        url: location.href,
+        onProgress: phase => updateHwpxExportStatus(hwpxPhaseLabel(phase))
+      });
+      updateHwpxExportStatus('다운로드 시작 중');
+      globalThis.ToytypeHwpxExport.downloadBytes(result.fileName, result.bytes, 'application/hwp+zip');
+      const stats = result.stats || {};
+      finalStatus = 'HWPX 내보내기 완료';
+      if (stats.blockCount) finalStatus += ' · 블록 ' + stats.blockCount + '개';
+      if (stats.equationCount) finalStatus += ' · 수식 ' + stats.equationCount + '개';
+      if (stats.imageCount) finalStatus += ' · 이미지 ' + stats.imageCount + '개';
+      if (stats.skippedImageCount) finalStatus += ' · 이미지 제외 ' + stats.skippedImageCount + '개';
+      if (result.fileName) finalStatus += ' · ' + result.fileName;
+      successToast = 'HWPX 다운로드 시작: ' + (result.fileName || 'document.hwpx');
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      console.error('[Toytype addons] HWPX export failed', summary);
+      finalStatus = 'HWPX 내보내기 실패';
+      if (error && error.message) finalStatus += ' · ' + error.message;
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishHwpxExportStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 5200 });
+      else if (successToast) showToast(successToast, { durationMs: 2800 });
+    }
+  }
+
+  function hwpxPhaseLabel(phase) {
+    const key = String(phase || '');
+    if (key === 'HTML export downloading') return 'HTML 다운로드 중';
+    if (key === 'HTML parsing') return 'HTML 분석 중';
+    if (key === 'equations scanning') return '수식 스캔 중';
+    if (key === 'images loading') return '이미지 수집 중';
+    if (key === 'HWPX structure building') return 'HWPX 생성 중';
+    return key || '진행 중';
+  }
+
   function handleExtractTocAddon() {
     const actionId = 'extract-toc';
     if (isAddonBusy(actionId)) return;
@@ -3241,6 +3300,45 @@
     addonStatus = {
       type: 'ai-length',
       label: 'AI 문장',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startHwpxExportStatus(phase) {
+    addonStatus = {
+      type: 'export-hwpx',
+      label: 'HWPX 내보내기',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateHwpxExportStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'export-hwpx' || addonStatus.state !== 'running') {
+      startHwpxExportStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishHwpxExportStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'export-hwpx' ? addonStatus : null;
+    addonStatus = {
+      type: 'export-hwpx',
+      label: 'HWPX 내보내기',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
