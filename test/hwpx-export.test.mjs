@@ -485,3 +485,77 @@ test('HWPX export emits reference-style fonts, code blocks, and callout boxes', 
   assert.match(sectionXml, /styleIDRef="36"[\s\S]*?borderFillIDRef="8"/);
   assert.equal(exporter._internal.validateSectionXml(sectionXml).count, 0);
 });
+
+function fakePng(width, height) {
+  const bytes = new Uint8Array(24);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return bytes;
+}
+
+function fakeDocx(exporter, documentXml, relsXml, media) {
+  return exporter._internal.createStoredZip([
+    { name: 'word/document.xml', data: documentXml },
+    { name: 'word/_rels/document.xml.rels', data: relsXml },
+    ...media
+  ]);
+}
+
+test('image extraction keeps document order and skips placeholders', async () => {
+  const exporter = globalThis.ToytypeHwpxExport;
+  const imageB = fakePng(5, 5);
+  const imageC = fakePng(6, 7);
+  const imageA = fakePng(3, 4);
+  const docx = fakeDocx(
+    exporter,
+    '<w:document><w:body>' +
+      '<w:p><w:drawing><a:blip r:embed="rId20"/></w:drawing></w:p>' +
+      '<w:p><w:pict><v:imagedata r:id="rId30"/></w:pict></w:p>' +
+      '<w:p><w:drawing><a:blip r:embed="rId10"/></w:drawing></w:p>' +
+      '<w:p><w:drawing><a:blip r:embed="rId40"/></w:drawing></w:p>' +
+      '<w:p><w:drawing><a:blip r:embed="rId50"/></w:drawing></w:p>' +
+      '</w:body></w:document>',
+    '<Relationships>' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '<Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/imageA.png"/>' +
+      '<Relationship Id="rId20" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/imageB.png"/>' +
+      '<Relationship Id="rId30" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/imageC.png"/>' +
+      '<Relationship Id="rId40" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/tiny.png"/>' +
+      '<Relationship Id="rId50" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.com/x.png" TargetMode="External"/>' +
+      '</Relationships>',
+    [
+      { name: 'word/media/imageA.png', data: imageA },
+      { name: 'word/media/imageB.png', data: imageB },
+      { name: 'word/media/imageC.png', data: imageC },
+      { name: 'word/media/tiny.png', data: fakePng(1, 1) }
+    ]
+  );
+
+  const result = await exporter._internal.extractImagesFromDocx(docx);
+  assert.equal(result.imageCount, 3);
+  assert.equal(result.skippedImageCount, 1);
+
+  const entries = listStoredZipEntries(result.bytes);
+  assert.deepEqual(entries.map(entry => entry.name), ['001.png', '002.png', '003.png']);
+  const bytes = result.bytes;
+  const dataOf = entry => bytes.slice(entry.dataStart, entry.dataStart + entry.compressedSize);
+  assert.deepEqual(dataOf(entries[0]), imageB);
+  assert.deepEqual(dataOf(entries[1]), imageC);
+  assert.deepEqual(dataOf(entries[2]), imageA);
+});
+
+test('image extraction reports zero images without creating a zip', async () => {
+  const exporter = globalThis.ToytypeHwpxExport;
+  const docx = fakeDocx(
+    exporter,
+    '<w:document><w:body><w:p>텍스트만</w:p></w:body></w:document>',
+    '<Relationships></Relationships>',
+    []
+  );
+  const result = await exporter._internal.extractImagesFromDocx(docx);
+  assert.equal(result.imageCount, 0);
+  assert.equal(result.skippedImageCount, 0);
+  assert.equal(result.bytes, null);
+});

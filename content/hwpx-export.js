@@ -182,12 +182,15 @@
   }
 
   // Downloads the DOCX export and returns its equations as Hangul equation scripts,
-  // in document order. Google Docs redirects the export to a googleusercontent host
-  // that only allows credential-less CORS, so the request must omit credentials; the
-  // one-time token in the redirect URL authorizes it. Only word/document.xml is
-  // inflated — the bundled images and fonts (the bulk of the archive) are skipped.
+  // in document order. The export needs the user's docs.google.com session cookies
+  // (private docs redirect to a login page without them), so keep the default
+  // same-origin credentials; the cross-origin redirect to the googleusercontent
+  // download host then drops cookies and is authorized by its one-time URL token,
+  // which is compatible with that host's credential-less CORS. Only
+  // word/document.xml is inflated — the bundled images and fonts (the bulk of the
+  // archive) are skipped.
   async function fetchGoogleDocsOmmlScripts(docId) {
-    const buffer = await fetchArrayBuffer(googleDocsExportUrl(docId, 'docx'), { credentials: 'omit' });
+    const buffer = await fetchArrayBuffer(googleDocsExportUrl(docId, 'docx'));
     if (!looksLikeZip(buffer)) throw new Error('docx export is not a zip');
     const data = new Uint8Array(buffer);
     const entries = readZipEntries(data);
@@ -224,6 +227,95 @@
       try { a.remove(); } catch (_) {}
       try { URL.revokeObjectURL(url); } catch (_) {}
     }, 1000);
+  }
+
+  // Extracts the document's embedded images from the DOCX export, in document
+  // order, packaged as a stored ZIP of 001.png/002.jpg/... files. The DOCX
+  // export keeps original image bytes (the HTML export may re-encode them),
+  // and its credential rules are the same as fetchGoogleDocsOmmlScripts.
+  async function extractGoogleDocImages(options) {
+    const opts = options || {};
+    const progress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+    progress('DOCX export downloading');
+    const buffer = await fetchArrayBuffer(googleDocsExportUrl(opts.docId, 'docx'));
+    progress('DOCX reading');
+    const result = await extractImagesFromDocx(buffer);
+    if (result.imageCount > 0) {
+      result.fileName = safeFileName((opts.title || opts.docId || 'document') + '-이미지.zip');
+    }
+    return result;
+  }
+
+  async function extractImagesFromDocx(arrayBuffer) {
+    if (!looksLikeZip(arrayBuffer)) throw new Error('docx export is not a zip');
+    const pkg = await readZipPackage(arrayBuffer);
+    const targets = docxImageTargetsInOrder(pkg.files);
+    const images = [];
+    let skippedImageCount = 0;
+    for (const target of targets) {
+      const item = pkg.files.get(target) || pkg.files.get(normalizeZipPath(decodeURIComponentSafe(target)));
+      if (!item) continue;
+      if (!item.data || !item.data.length) {
+        skippedImageCount++;
+        continue;
+      }
+      const size = imageDimensions(item.data);
+      if (size && size.width <= 2 && size.height <= 2) {
+        skippedImageCount++;
+        continue;
+      }
+      images.push({ sourcePath: target, data: item.data });
+    }
+    if (!images.length) {
+      return { fileName: '', bytes: null, imageCount: 0, skippedImageCount };
+    }
+    const width = Math.max(3, String(images.length).length);
+    const files = images.map((image, index) => ({
+      name: String(index + 1).padStart(width, '0') + '.' + imageExt('', image.sourcePath, image.data),
+      data: image.data
+    }));
+    return { fileName: '', bytes: createStoredZip(files), imageCount: images.length, skippedImageCount };
+  }
+
+  function docxImageTargetsInOrder(files) {
+    const docItem = files.get('word/document.xml');
+    if (!docItem) throw new Error('word/document.xml missing from docx export');
+    const relationships = docxImageRelationships(files);
+    const documentXml = decoder.decode(docItem.data);
+    const targets = [];
+    const tagRe = /<(?:a:blip|asvg:svgBlip|v:imagedata)\b[^>]*>/g;
+    let match;
+    while ((match = tagRe.exec(documentXml))) {
+      const relId = xmlAttrValue(match[0], 'r:embed') || xmlAttrValue(match[0], 'r:id') || xmlAttrValue(match[0], 'r:link');
+      const target = relId && relationships.get(relId);
+      if (target) targets.push(target);
+    }
+    return targets;
+  }
+
+  function docxImageRelationships(files) {
+    const out = new Map();
+    const relItem = files.get('word/_rels/document.xml.rels');
+    if (!relItem) return out;
+    const relXml = decoder.decode(relItem.data);
+    const relRe = /<Relationship\b[^>]*>/g;
+    let match;
+    while ((match = relRe.exec(relXml))) {
+      const id = xmlAttrValue(match[0], 'Id');
+      const type = xmlAttrValue(match[0], 'Type');
+      const target = xmlAttrValue(match[0], 'Target');
+      if (!id || !target || !/\/image$/i.test(type)) continue;
+      if (/^external$/i.test(xmlAttrValue(match[0], 'TargetMode'))) continue;
+      const raw = target.replace(/\\/g, '/');
+      out.set(id, normalizeZipPath(raw.startsWith('/') ? raw : 'word/' + raw));
+    }
+    return out;
+  }
+
+  function xmlAttrValue(tag, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = String(tag || '').match(new RegExp('(?:^|\\s)' + escaped + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\')'));
+    return match ? (match[1] !== undefined ? match[1] : match[2]) : '';
   }
 
   async function fetchGoogleDocsHtmlSource(docId) {
@@ -2777,8 +2869,10 @@ ${styleXml(STYLE_FOOTNOTE, '각주', 'Footnote', PARA_FOOTNOTE, CHAR_FOOTNOTE, S
 
   globalThis.ToytypeHwpxExport = {
     exportGoogleDoc,
+    extractGoogleDocImages,
     downloadBytes,
     _internal: {
+      extractImagesFromDocx,
       buildHwpx,
       createStoredZip,
       htmlToBlocks,
