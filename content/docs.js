@@ -57,7 +57,7 @@
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
     '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}' +
+    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}.trd-addons-subitem{padding-left:22px;font-size:12px}' +
     '.trd-context-menu{position:absolute;z-index:6;min-width:116px;padding:4px;border:1px solid #dadce0;border-radius:8px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.18)}.trd-context-item{display:block;width:100%;border:0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;text-align:left;padding:7px 10px;cursor:pointer}.trd-context-item:hover{background:#f1f3f4}';
 
   const startedAt = Date.now();
@@ -139,6 +139,7 @@
   let panelCss = null;
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
+  let stylePresetMenuOpen = false; // 추가기능 안 단락 스타일 셋팅 하위 목록 펼침 상태
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
   let findingContextMenu = null;
   let nativeControlInteractionUntil = 0;
@@ -849,7 +850,8 @@
     const actions = [
       { id: 'export-hwpx', label: 'HWPX 내보내기', run: handleExportHwpxAddon },
       { id: 'extract-images', label: '이미지 추출', run: handleExtractImagesAddon },
-      { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon }
+      { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon },
+      { id: 'style-preset', label: '단락 스타일 셋팅', expandable: true }
     ];
     if (!externalFeaturesEnabled()) return actions;
     return [
@@ -1005,6 +1007,21 @@
       item.setAttribute('role', 'menuitem');
       item.textContent = action.label;
       item.disabled = applyingFindingKey !== null || isAddonBusy(action.id);
+      if (action.expandable) {
+        item.textContent = action.label + (stylePresetMenuOpen ? ' ▾' : ' ▸');
+        item.setAttribute('aria-expanded', stylePresetMenuOpen ? 'true' : 'false');
+        item.addEventListener('click', ev => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          stylePresetMenuOpen = !stylePresetMenuOpen;
+          render();
+        });
+        menu.appendChild(item);
+        if (stylePresetMenuOpen) {
+          for (const sub of buildStylePresetSubItems()) menu.appendChild(sub);
+        }
+        continue;
+      }
       item.addEventListener('click', ev => {
         ev.preventDefault();
         ev.stopPropagation();
@@ -1015,6 +1032,27 @@
       menu.appendChild(item);
     }
     return menu;
+  }
+
+  function buildStylePresetSubItems() {
+    const options = [{ keys: STYLE_PRESET_DEFS.map(d => d.key), label: '전체 셋팅' }]
+      .concat(STYLE_PRESET_DEFS.map(d => ({ keys: [d.key], label: d.label })));
+    return options.map(option => {
+      const btn = el('button', 'trd-addons-item trd-addons-subitem');
+      btn.type = 'button';
+      btn.setAttribute('role', 'menuitem');
+      btn.textContent = option.label;
+      btn.disabled = applyingFindingKey !== null || isAddonBusy('style-preset');
+      btn.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        addonsMenuOpen = false;
+        stylePresetMenuOpen = false;
+        render();
+        handleStylePresetAddon(option.keys);
+      });
+      return btn;
+    });
   }
 
   function strokedSvg(paths, className) {
@@ -3114,6 +3152,157 @@
     })).catch(error => {
       console.error('[Toytype addons] TOC extract failed', error);
       finalToast = '목차 추출 실패 · 콘솔 확인';
+      finalToastDuration = 3600;
+    }).finally(() => {
+      setAddonBusy(actionId, false);
+      if (expanded) render();
+      if (finalToast) showToast(finalToast, { durationMs: finalToastDuration });
+    });
+  }
+
+  // ---------------- 단락 스타일 셋팅 (골든래빗 프리셋, 로컬 브리지 불필요) ----------------
+  // 문서 끝 임시 문단에 목표 서식을 만든 뒤 각 단락 스타일 정의를 Docs의 '스타일 업데이트'
+  // 메뉴로 반영한다. 폰트 패밀리는 건드리지 않는다(기준 Arimo는 한글에 효과가 없음).
+  // 메뉴·툴바·키 입력 자동화는 페이지 브리지의 stylePresetOp이 페이지 월드에서 실행한다 —
+  // 콘텐트 스크립트에서 만든 KeyboardEvent는 keyCode 재정의가 페이지에 보이지 않는다.
+
+  const STYLE_PRESET_TEMP_TEXT = 'toytype-style-preset-temp';
+  const STYLE_PRESET_DEFS = [
+    { key: 'normal', label: '일반 텍스트', sizePt: 10, bold: false, underline: false, colorRgb: 'rgb(0, 0, 0)' },
+    { key: 'h1', label: '제목 1', sizePt: 25, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
+    { key: 'h2', label: '제목 2', sizePt: 16, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
+    { key: 'h3', label: '제목 3', sizePt: 14, bold: true, underline: false, colorRgb: 'rgb(74, 134, 232)' },
+    { key: 'h4', label: '제목 4', sizePt: 12, bold: true, underline: true, colorRgb: 'rgb(17, 85, 204)' },
+    { key: 'h5', label: '제목 5', sizePt: 10, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' }
+  ];
+
+  function styleDelay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // 페이지 브리지의 stylePresetOp으로 DOM 자동화 한 단계를 실행한다.
+  function styleBridgeOp(op, payload) {
+    return requestDocsModel('stylePresetOp', Object.assign({
+      op,
+      docId: getDocId(),
+      timeoutMs: 15000
+    }, payload || {})).then(res => {
+      if (!res || !res.ok) throw docsModelError('stylePresetOp ' + op + ' failed', res);
+      return res.result;
+    });
+  }
+
+  function styleGetModelText() {
+    return requestDocsModel('getText', { docId: getDocId() }).then(res => {
+      if (!res || !res.ok || typeof res.text !== 'string') throw docsModelError('getText failed', res);
+      return res.text;
+    });
+  }
+
+  // 문서 끝(마지막 문단 뒤)에 임시 문단을 만든다: 커서 이동 → Enter → 임시 텍스트 타이핑.
+  async function styleInsertTempParagraph() {
+    const before = await styleGetModelText();
+    if (before.lastIndexOf(STYLE_PRESET_TEMP_TEXT) !== -1) {
+      throw new Error('임시 문단이 이미 문서에 남아 있습니다 — 문서 끝을 확인하세요');
+    }
+    const cursor = Math.max(0, before.length - 1);
+    await selectDocsModelRange(cursor, cursor);
+    await styleDelay(200);
+    const inserted = await styleBridgeOp('insertTemp', { text: STYLE_PRESET_TEMP_TEXT });
+    let idx = -1;
+    for (let i = 0; i < 20 && idx === -1; i++) {
+      await styleDelay(150);
+      const text = await styleGetModelText();
+      idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
+    }
+    if (idx === -1) throw new Error('임시 문단 삽입을 확인하지 못했습니다');
+    return {
+      range: { start: idx, end: idx + STYLE_PRESET_TEMP_TEXT.length },
+      enterCreated: !!(inserted && inserted.enterCreated)
+    };
+  }
+
+  // 임시 문단 삭제 — 앞 개행까지 선택해 Backspace로 지우면 앞 문단이 자기 스타일을 유지한 채 합쳐진다.
+  async function styleRemoveTempParagraph(tempInfo) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const text = await styleGetModelText();
+      const idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
+      if (idx === -1) return true;
+      const includeNewline = tempInfo && tempInfo.enterCreated && idx > 0 && text[idx - 1] === '\n';
+      const start = includeNewline ? idx - 1 : idx;
+      await selectDocsModelRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
+      await styleDelay(200);
+      await styleBridgeOp('backspace');
+    }
+    const after = await styleGetModelText();
+    return after.lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
+  }
+
+  async function styleApplyPresetDef(def, range) {
+    // 문서가 도중에 바뀌었을 수 있으니 임시 텍스트 위치를 재확인한다.
+    const text = await styleGetModelText();
+    if (text.slice(range.start, range.end) !== STYLE_PRESET_TEMP_TEXT) {
+      const idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
+      if (idx === -1) throw new Error('임시 문단을 찾지 못했습니다');
+      range.start = idx;
+      range.end = idx + STYLE_PRESET_TEMP_TEXT.length;
+    }
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(250);
+    await styleBridgeOp('menu', { label: def.label, update: false });
+    // 스타일 적용·메뉴 닫기 후 선택이 유지된다는 보장이 없어 단계마다 재선택한다.
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('toggle', { buttonId: 'boldButton', want: def.bold });
+    await styleBridgeOp('toggle', { buttonId: 'italicButton', want: false });
+    await styleBridgeOp('toggle', { buttonId: 'underlineButton', want: def.underline });
+    await styleBridgeOp('fontSize', { sizePt: def.sizePt });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('color', { colorRgb: def.colorRgb });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('menu', { label: def.label, update: true });
+  }
+
+  function handleStylePresetAddon(styleKeys) {
+    const actionId = 'style-preset';
+    if (isAddonBusy(actionId)) return;
+    const defs = STYLE_PRESET_DEFS.filter(def => styleKeys.includes(def.key));
+    if (!defs.length) return;
+    setAddonBusy(actionId, true);
+    render();
+    let finalToast = '';
+    let finalToastDuration = 2600;
+    (async () => {
+      showToast('단락 스타일 셋팅 준비 중…', { persist: true });
+      const tempInfo = await styleInsertTempParagraph();
+      const done = [];
+      try {
+        for (let i = 0; i < defs.length; i++) {
+          const def = defs[i];
+          showToast('단락 스타일 셋팅: ' + def.label + ' (' + (i + 1) + '/' + defs.length + ')', { persist: true });
+          await styleApplyPresetDef(def, tempInfo.range);
+          done.push(def.label);
+        }
+      } finally {
+        showToast('임시 문단 정리 중…', { persist: true });
+        tempInfo.removed = await styleRemoveTempParagraph(tempInfo).catch(error => {
+          console.error('[Toytype style preset] temp cleanup failed', error);
+          return false;
+        });
+      }
+      return { done, removed: tempInfo.removed, total: defs.length };
+    })().then(result => {
+      if (!result.removed) {
+        finalToast = '스타일 셋팅 ' + result.done.length + '/' + result.total + ' 완료 · 임시 문단 삭제 실패 — 문서 끝을 확인하세요';
+        finalToastDuration = 5000;
+        return;
+      }
+      finalToast = '단락 스타일 셋팅 완료: ' + result.done.join(', ');
+    }).catch(error => {
+      console.error('[Toytype style preset] failed', error);
+      finalToast = '단락 스타일 셋팅 실패 · 콘솔 확인';
       finalToastDuration = 3600;
     }).finally(() => {
       setAddonBusy(actionId, false);

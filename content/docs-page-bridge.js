@@ -218,6 +218,14 @@
       });
     }
 
+    if (data && data.action === 'stylePresetOp') {
+      return Promise.resolve().then(() => stylePresetOp(data)).then(result => {
+        postResponse(data, { ok: true, action: data.action, result });
+      }).catch(error => {
+        postResponse(data, errorResponse(data, error));
+      });
+    }
+
     getAnnotatedTextObject(data).then(obj => {
       if (data.action === 'getText') {
         return getText(obj).then(text => {
@@ -3803,6 +3811,207 @@
       }))
     };
   };
+
+  // ---------------- 단락 스타일 셋팅 DOM 자동화 ----------------
+  // 콘텐트 스크립트(isolated world)에서 만든 KeyboardEvent는 keyCode/charCode 재정의가
+  // 페이지 월드에 보이지 않아 Docs가 무시한다. 스타일 셋팅의 메뉴·툴바·키 입력 자동화는
+  // 전부 이 파일(페이지 월드)에서 실행하고, 콘텐트 스크립트는 stylePresetOp으로 요청만 한다.
+  // 메뉴·팔레트 열기는 mousedown까지만 보낸다 — click까지 보내면 토글로 즉시 닫힌다.
+
+  function styleSynthInit(target, extra) {
+    const rect = target.getBoundingClientRect();
+    return Object.assign({
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      detail: 1,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      button: 0
+    }, extra || {});
+  }
+
+  function styleSynthOpen(target) {
+    target.dispatchEvent(new PointerEvent('pointerdown', styleSynthInit(target, { pointerId: 1, pointerType: 'mouse', buttons: 1 })));
+    target.dispatchEvent(new MouseEvent('mousedown', styleSynthInit(target, { buttons: 1 })));
+  }
+
+  function styleSynthHover(target) {
+    target.dispatchEvent(new PointerEvent('pointerover', styleSynthInit(target, { pointerId: 1, pointerType: 'mouse' })));
+    target.dispatchEvent(new MouseEvent('mouseover', styleSynthInit(target)));
+    target.dispatchEvent(new MouseEvent('mousemove', styleSynthInit(target)));
+  }
+
+  function styleSynthAct(target) {
+    target.dispatchEvent(new PointerEvent('pointerdown', styleSynthInit(target, { pointerId: 1, pointerType: 'mouse', buttons: 1 })));
+    target.dispatchEvent(new MouseEvent('mousedown', styleSynthInit(target, { buttons: 1 })));
+    target.dispatchEvent(new PointerEvent('pointerup', styleSynthInit(target, { pointerId: 1, pointerType: 'mouse' })));
+    target.dispatchEvent(new MouseEvent('mouseup', styleSynthInit(target)));
+  }
+
+  // 열린 goog 메뉴는 메뉴 밖 mousedown으로 닫는다. Docs 편집 캔버스가 아닌 body가
+  // 타깃이라 문서 선택 영역에는 영향이 없다.
+  function styleDismissMenus() {
+    const body = document.body;
+    if (!body) return;
+    body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, clientX: 2, clientY: 2, button: 0, buttons: 1 }));
+    body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: 2, clientY: 2, button: 0 }));
+  }
+
+  function styleKeyboardTarget() {
+    const iframe = document.querySelector('iframe.docs-texteventtarget-iframe');
+    let doc = null;
+    try {
+      doc = iframe && iframe.contentDocument || null;
+    } catch (e) {
+      doc = null;
+    }
+    if (!doc) return null;
+    return doc.getElementById('docs-texteventtarget-descendant') || doc.activeElement || doc.body;
+  }
+
+  function styleSynthKey(target, type, key, keyCode, charCode) {
+    const view = target.ownerDocument && target.ownerDocument.defaultView || window;
+    const Ctor = view.KeyboardEvent || KeyboardEvent;
+    const ev = new Ctor(type, { bubbles: true, cancelable: true, composed: true, key });
+    Object.defineProperty(ev, 'keyCode', { get: () => keyCode });
+    Object.defineProperty(ev, 'charCode', { get: () => charCode || 0 });
+    Object.defineProperty(ev, 'which', { get: () => charCode || keyCode });
+    target.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }
+
+  // Docs는 합성 keypress를 그대로 문자 입력으로 처리한다 (한글 포함).
+  function styleTypeText(target, text) {
+    for (const ch of text) {
+      styleSynthKey(target, 'keypress', ch, ch.charCodeAt(0), ch.charCodeAt(0));
+    }
+  }
+
+  function styleVisibleMenus() {
+    return Array.prototype.slice.call(document.querySelectorAll('.goog-menu')).filter(menu => menu.offsetParent !== null);
+  }
+
+  function styleFindDropdownMenu() {
+    return styleVisibleMenus().find(menu => {
+      const items = Array.prototype.slice.call(menu.querySelectorAll('.goog-menuitem')).map(item => item.textContent.trim());
+      return items.some(t => t.indexOf('제목 5') === 0) && items.some(t => t.indexOf('일반 텍스트') === 0);
+    }) || null;
+  }
+
+  // 스타일 드롭다운 → label 항목 hover로 서브메뉴 → '적용' 또는 '스타일 업데이트' 실행.
+  async function styleRunHeadingMenuCommand(label, updateStyle) {
+    const select = document.querySelector('#headingStyleSelect');
+    if (!select) throw new Error('스타일 드롭다운(#headingStyleSelect)을 찾지 못했습니다');
+    styleSynthOpen(select);
+    let dropdown = null;
+    for (let i = 0; i < 10 && !dropdown; i++) {
+      await delay(120);
+      dropdown = styleFindDropdownMenu();
+    }
+    if (!dropdown) throw new Error('스타일 메뉴가 열리지 않았습니다');
+    try {
+      const entry = Array.prototype.slice.call(dropdown.querySelectorAll('.goog-menuitem'))
+        .find(item => item.textContent.trim().indexOf(label) === 0);
+      if (!entry) throw new Error('스타일 메뉴 항목 없음: ' + label);
+      // 서브메뉴는 lazy 렌더 — 항목 위 hover를 반복해야 열린다.
+      let submenu = null;
+      for (let round = 0; round < 12 && !submenu; round++) {
+        styleSynthHover(entry);
+        await delay(95);
+        submenu = styleVisibleMenus().find(menu => menu !== dropdown && (menu.textContent || '').indexOf("'" + label + "'") !== -1);
+      }
+      if (!submenu) throw new Error('스타일 서브메뉴가 열리지 않았습니다: ' + label);
+      const wanted = updateStyle ? '스타일 업데이트' : '적용';
+      const item = Array.prototype.slice.call(submenu.querySelectorAll('.goog-menuitem'))
+        .find(node => node.textContent.indexOf(wanted) !== -1);
+      if (!item) throw new Error('스타일 서브메뉴 항목 없음: ' + label + ' ' + wanted);
+      styleSynthHover(item);
+      styleSynthAct(item);
+      await delay(500);
+      return { label, command: wanted };
+    } finally {
+      styleDismissMenus();
+    }
+  }
+
+  async function styleSetToolbarToggle(buttonId, want) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) throw new Error('툴바 버튼 없음: ' + buttonId);
+    const isOn = () => /-checked(\s|$)/.test(btn.className);
+    if (isOn() === want) return { buttonId, want, changed: false };
+    styleSynthAct(btn);
+    await delay(250);
+    if (isOn() !== want) throw new Error('툴바 토글 실패: ' + buttonId);
+    return { buttonId, want, changed: true };
+  }
+
+  async function styleSetFontSize(sizePt) {
+    const input = document.querySelector('input.goog-toolbar-combo-button-input[aria-label="글꼴 크기"]');
+    if (!input) throw new Error('글꼴 크기 입력을 찾지 못했습니다');
+    input.focus();
+    input.value = String(sizePt);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    styleSynthKey(input, 'keydown', 'Enter', 13, 0);
+    styleSynthKey(input, 'keypress', 'Enter', 13, 13);
+    styleSynthKey(input, 'keyup', 'Enter', 13, 0);
+    await delay(400);
+    styleDismissMenus();
+    return { sizePt };
+  }
+
+  async function styleSetTextColor(colorRgb) {
+    const btn = document.getElementById('textColorButton');
+    if (!btn) throw new Error('텍스트 색 버튼을 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let swatch = null;
+    for (let i = 0; i < 10 && !swatch; i++) {
+      await delay(120);
+      swatch = Array.prototype.slice.call(document.querySelectorAll('.docs-material-colorpalette-colorswatch'))
+        .filter(node => node.offsetParent !== null)
+        .find(node => (node.style.backgroundColor || '') === colorRgb);
+    }
+    if (!swatch) {
+      styleDismissMenus();
+      throw new Error('색 팔레트에서 색을 찾지 못했습니다: ' + colorRgb);
+    }
+    styleSynthAct(swatch);
+    await delay(300);
+    styleDismissMenus();
+    return { colorRgb };
+  }
+
+  // 현재 커서 위치에 Enter로 새 문단을 만들고 임시 텍스트를 타이핑한다.
+  async function styleInsertTempText(text) {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    const enterCreated = styleSynthKey(target, 'keydown', 'Enter', 13, 0);
+    await delay(250);
+    styleTypeText(target, text);
+    return { enterCreated, length: text.length };
+  }
+
+  // 현재 선택 영역을 Backspace로 지운다.
+  async function styleSendBackspace() {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    const handled = styleSynthKey(target, 'keydown', 'Backspace', 8, 0);
+    await delay(400);
+    return { handled };
+  }
+
+  function stylePresetOp(data) {
+    const op = data && data.op;
+    if (op === 'menu') return styleRunHeadingMenuCommand(String(data.label || ''), data.update === true);
+    if (op === 'toggle') return styleSetToolbarToggle(String(data.buttonId || ''), data.want === true);
+    if (op === 'fontSize') return styleSetFontSize(Number(data.sizePt));
+    if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
+    if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
+    if (op === 'backspace') return styleSendBackspace();
+    return Promise.reject(new Error('unknown style preset op: ' + op));
+  }
 
   debugLog('[Toytype probe] ready: run ToytypeProbeFindReplace() in this Google Docs console.');
   debugLog('[Toytype probe] mutation candidates: run ToytypeProbeMutationActions().');

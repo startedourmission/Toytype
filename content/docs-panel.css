@@ -429,6 +429,7 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 }
 .trd-addons-item:hover:not(:disabled) { background: #f1f3f4; }
 .trd-addons-item:disabled { opacity: .5; cursor: default; }
+.trd-addons-subitem { padding-left: 22px; font-size: 12px; }
 
 .trd-toast {
   position: absolute;
