@@ -3870,10 +3870,20 @@
     return doc.getElementById('docs-texteventtarget-descendant') || doc.activeElement || doc.body;
   }
 
-  function styleSynthKey(target, type, key, keyCode, charCode) {
+  function styleSynthKey(target, type, key, keyCode, charCode, modifiers) {
     const view = target.ownerDocument && target.ownerDocument.defaultView || window;
     const Ctor = view.KeyboardEvent || KeyboardEvent;
-    const ev = new Ctor(type, { bubbles: true, cancelable: true, composed: true, key });
+    const mods = modifiers || {};
+    const ev = new Ctor(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      key,
+      ctrlKey: !!mods.ctrlKey,
+      metaKey: !!mods.metaKey,
+      shiftKey: !!mods.shiftKey,
+      altKey: !!mods.altKey
+    });
     Object.defineProperty(ev, 'keyCode', { get: () => keyCode });
     Object.defineProperty(ev, 'charCode', { get: () => charCode || 0 });
     Object.defineProperty(ev, 'which', { get: () => charCode || keyCode });
@@ -4002,6 +4012,21 @@
     return { handled };
   }
 
+  // 실행취소 1회. 임시 문단 정리가 실패했을 때만 쓰는 최후 수단이며,
+  // 호출자가 매회 임시 텍스트 잔존 여부를 확인해 필요한 만큼만 보낸다
+  // (횟수를 미리 세어 몰아 보내면 사용자의 이전 편집까지 되돌릴 수 있다).
+  async function styleSendUndo() {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    // charCode 0으로 보내 문자 입력으로 해석될 여지를 남기지 않는다.
+    const mac = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+    const handled = styleSynthKey(target, 'keydown', 'z', 90, 0,
+      mac ? { metaKey: true } : { ctrlKey: true });
+    await delay(400);
+    return { handled };
+  }
+
   function stylePresetOp(data) {
     const op = data && data.op;
     if (op === 'menu') return styleRunHeadingMenuCommand(String(data.label || ''), data.update === true);
@@ -4010,6 +4035,7 @@
     if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
     if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();
+    if (op === 'undo') return styleSendUndo();
     return Promise.reject(new Error('unknown style preset op: ' + op));
   }
 

@@ -3167,6 +3167,8 @@
   // 콘텐트 스크립트에서 만든 KeyboardEvent는 keyCode 재정의가 페이지에 보이지 않는다.
 
   const STYLE_PRESET_TEMP_TEXT = 'toytype-style-preset-temp';
+  const STYLE_PRESET_CLEANUP_ATTEMPTS = 8;   // 선택+Backspace 재시도 횟수
+  const STYLE_PRESET_UNDO_ATTEMPTS = 12;     // 실행취소 최후 수단 상한
   const STYLE_PRESET_DEFS = [
     { key: 'normal', label: '일반 텍스트', sizePt: 10, bold: false, underline: false, colorRgb: 'rgb(0, 0, 0)' },
     { key: 'h1', label: '제목 1', sizePt: 25, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
@@ -3178,6 +3180,16 @@
 
   function styleDelay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // 실패 원인을 토스트에 담을 수 있게 짧은 한국어 문구로 줄인다.
+  // 페이지 브리지가 던지는 메시지는 이미 한국어이므로 그대로 쓰고, 길면 자른다.
+  function styleShortErrorText(error) {
+    const raw = error && error.message ? String(error.message) : '';
+    if (!raw) return '알 수 없는 오류 · 콘솔 확인';
+    const cleaned = raw.replace(/^stylePresetOp \w+ failed:?\s*/, '').trim();
+    if (!cleaned) return '알 수 없는 오류 · 콘솔 확인';
+    return cleaned.length > 70 ? cleaned.slice(0, 70) + '…' : cleaned;
   }
 
   // 페이지 브리지의 stylePresetOp으로 DOM 자동화 한 단계를 실행한다.
@@ -3201,9 +3213,14 @@
 
   // 문서 끝(마지막 문단 뒤)에 임시 문단을 만든다: 커서 이동 → Enter → 임시 텍스트 타이핑.
   async function styleInsertTempParagraph() {
-    const before = await styleGetModelText();
+    let before = await styleGetModelText();
+    // 이전 실행이 남긴 잔여물은 기능을 잠그지 않고 먼저 정리한다.
     if (before.lastIndexOf(STYLE_PRESET_TEMP_TEXT) !== -1) {
-      throw new Error('임시 문단이 이미 문서에 남아 있습니다 — 문서 끝을 확인하세요');
+      const cleaned = await styleRemoveTempParagraph({ enterCreated: true });
+      if (!cleaned) {
+        throw new Error('이전 임시 문단을 정리하지 못했습니다 — 문서 끝의 ' + STYLE_PRESET_TEMP_TEXT + ' 줄을 직접 지워주세요');
+      }
+      before = await styleGetModelText();
     }
     const cursor = Math.max(0, before.length - 1);
     await selectDocsModelRange(cursor, cursor);
@@ -3223,19 +3240,37 @@
   }
 
   // 임시 문단 삭제 — 앞 개행까지 선택해 Backspace로 지우면 앞 문단이 자기 스타일을 유지한 채 합쳐진다.
+  // 선택+Backspace를 우선 시도하고, 그래도 남으면 실행취소로 확실히 되돌린다.
   async function styleRemoveTempParagraph(tempInfo) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < STYLE_PRESET_CLEANUP_ATTEMPTS; attempt++) {
       const text = await styleGetModelText();
       const idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
       if (idx === -1) return true;
       const includeNewline = tempInfo && tempInfo.enterCreated && idx > 0 && text[idx - 1] === '\n';
       const start = includeNewline ? idx - 1 : idx;
       await selectDocsModelRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
-      await styleDelay(200);
+      await styleDelay(250);
       await styleBridgeOp('backspace');
     }
-    const after = await styleGetModelText();
-    return after.lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
+    if (await styleTempTextGone()) return true;
+    return styleUndoUntilTempGone();
+  }
+
+  // 임시 텍스트가 사라졌는지 확인한다.
+  async function styleTempTextGone() {
+    const text = await styleGetModelText();
+    return text.lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
+  }
+
+  // 최후 수단: 실행취소를 한 번씩 보내며 매회 임시 텍스트 잔존을 확인한다.
+  // 사라지는 즉시 멈추므로 사용자의 이전 편집까지 되돌리지 않는다.
+  async function styleUndoUntilTempGone() {
+    for (let attempt = 0; attempt < STYLE_PRESET_UNDO_ATTEMPTS; attempt++) {
+      await styleBridgeOp('undo');
+      await styleDelay(250);
+      if (await styleTempTextGone()) return true;
+    }
+    return false;
   }
 
   async function styleApplyPresetDef(def, range) {
@@ -3295,15 +3330,15 @@
       return { done, removed: tempInfo.removed, total: defs.length };
     })().then(result => {
       if (!result.removed) {
-        finalToast = '스타일 셋팅 ' + result.done.length + '/' + result.total + ' 완료 · 임시 문단 삭제 실패 — 문서 끝을 확인하세요';
-        finalToastDuration = 5000;
+        finalToast = '스타일 셋팅 ' + result.done.length + '/' + result.total + ' 완료 · 임시 문단 삭제 실패 — 문서 끝의 ' + STYLE_PRESET_TEMP_TEXT + ' 줄을 직접 지워주세요';
+        finalToastDuration = 6000;
         return;
       }
       finalToast = '단락 스타일 셋팅 완료: ' + result.done.join(', ');
     }).catch(error => {
       console.error('[Toytype style preset] failed', error);
-      finalToast = '단락 스타일 셋팅 실패 · 콘솔 확인';
-      finalToastDuration = 3600;
+      finalToast = '단락 스타일 셋팅 실패 — ' + styleShortErrorText(error);
+      finalToastDuration = 6000;
     }).finally(() => {
       setAddonBusy(actionId, false);
       if (expanded) render();
