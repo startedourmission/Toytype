@@ -3241,36 +3241,39 @@
 
   // 임시 문단 삭제 — 앞 개행까지 선택해 Backspace로 지우면 앞 문단이 자기 스타일을 유지한 채 합쳐진다.
   // 선택+Backspace를 우선 시도하고, 그래도 남으면 실행취소로 확실히 되돌린다.
-  async function styleRemoveTempParagraph(tempInfo) {
+  // 실제 Docs 호출은 주입받아 제어 흐름만 테스트할 수 있게 한다.
+  async function removeStylePresetTempText(tempInfo, deps) {
+    const getText = deps.getText;
+    const tempGone = async () => (await getText()).lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
     for (let attempt = 0; attempt < STYLE_PRESET_CLEANUP_ATTEMPTS; attempt++) {
-      const text = await styleGetModelText();
+      const text = await getText();
       const idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
       if (idx === -1) return true;
       const includeNewline = tempInfo && tempInfo.enterCreated && idx > 0 && text[idx - 1] === '\n';
       const start = includeNewline ? idx - 1 : idx;
-      await selectDocsModelRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
-      await styleDelay(250);
-      await styleBridgeOp('backspace');
+      await deps.selectRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
+      await deps.delay(250);
+      await deps.backspace();
     }
-    if (await styleTempTextGone()) return true;
-    return styleUndoUntilTempGone();
-  }
-
-  // 임시 텍스트가 사라졌는지 확인한다.
-  async function styleTempTextGone() {
-    const text = await styleGetModelText();
-    return text.lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
-  }
-
-  // 최후 수단: 실행취소를 한 번씩 보내며 매회 임시 텍스트 잔존을 확인한다.
-  // 사라지는 즉시 멈추므로 사용자의 이전 편집까지 되돌리지 않는다.
-  async function styleUndoUntilTempGone() {
+    if (await tempGone()) return true;
+    // 최후 수단: 실행취소를 한 번씩 보내며 매회 잔존을 확인한다.
+    // 사라지는 즉시 멈추므로 사용자의 이전 편집까지 되돌리지 않는다.
     for (let attempt = 0; attempt < STYLE_PRESET_UNDO_ATTEMPTS; attempt++) {
-      await styleBridgeOp('undo');
-      await styleDelay(250);
-      if (await styleTempTextGone()) return true;
+      await deps.undo();
+      await deps.delay(250);
+      if (await tempGone()) return true;
     }
     return false;
+  }
+
+  function styleRemoveTempParagraph(tempInfo) {
+    return removeStylePresetTempText(tempInfo, {
+      getText: styleGetModelText,
+      selectRange: selectDocsModelRange,
+      backspace: () => styleBridgeOp('backspace'),
+      undo: () => styleBridgeOp('undo'),
+      delay: styleDelay
+    });
   }
 
   async function styleApplyPresetDef(def, range) {
@@ -5629,6 +5632,15 @@
   window.ToytypeApplyStateFromContent = applyStateFromContent;
   window.ToytypeListFindingsFromContent = listFindingsFromContent;
   window.ToytypeBridgeStatusFromContent = pageBridgeStatus;
+
+  // 순수 로직 테스트용 훅 — Docs 없이 검증할 수 있는 함수만 노출한다.
+  globalThis.ToytypeDocsInternal = {
+    STYLE_PRESET_TEMP_TEXT,
+    STYLE_PRESET_CLEANUP_ATTEMPTS,
+    STYLE_PRESET_UNDO_ATTEMPTS,
+    removeStylePresetTempText,
+    styleShortErrorText
+  };
 
   init();
 })();
