@@ -3162,13 +3162,14 @@
 
   // ---------------- 단락 스타일 셋팅 (골든래빗 프리셋, 로컬 브리지 불필요) ----------------
   // 문서 끝 임시 문단에 목표 서식을 만든 뒤 각 단락 스타일 정의를 Docs의 '스타일 업데이트'
-  // 메뉴로 반영한다. 폰트 패밀리는 건드리지 않는다(기준 Arimo는 한글에 효과가 없음).
+  // 메뉴로 반영한다. 서체는 집필 가이드 기준인 Arimo로 맞춘다.
   // 메뉴·툴바·키 입력 자동화는 페이지 브리지의 stylePresetOp이 페이지 월드에서 실행한다 —
   // 콘텐트 스크립트에서 만든 KeyboardEvent는 keyCode 재정의가 페이지에 보이지 않는다.
 
   const STYLE_PRESET_TEMP_TEXT = 'toytype-style-preset-temp';
   const STYLE_PRESET_CLEANUP_ATTEMPTS = 8;   // 선택+Backspace 재시도 횟수
   const STYLE_PRESET_UNDO_ATTEMPTS = 12;     // 실행취소 최후 수단 상한
+  const STYLE_PRESET_FONT = 'Arimo';         // 집필 가이드 기준 서체
   const STYLE_PRESET_DEFS = [
     { key: 'normal', label: '일반 텍스트', sizePt: 10, bold: false, underline: false, colorRgb: 'rgb(0, 0, 0)' },
     { key: 'h1', label: '제목 1', sizePt: 25, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
@@ -3295,6 +3296,9 @@
     await styleBridgeOp('toggle', { buttonId: 'italicButton', want: false });
     await styleBridgeOp('toggle', { buttonId: 'underlineButton', want: def.underline });
     await styleBridgeOp('fontSize', { sizePt: def.sizePt });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('fontFamily', { fontName: STYLE_PRESET_FONT });
     await selectDocsModelRange(range.start, range.end);
     await styleDelay(200);
     await styleBridgeOp('color', { colorRgb: def.colorRgb });

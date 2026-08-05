@@ -3970,6 +3970,35 @@
     return { sizePt };
   }
 
+  // 글꼴 콤보(#docs-font-family)는 텍스트 입력이 아니라 메뉴 버튼이라
+  // 크기 콤보와 달리 열고 항목을 눌러야 한다. 목록에 같은 이름이 여러 번
+  // 나오면(최근 사용 항목) 본목록 쪽인 마지막 항목을 쓴다.
+  async function styleSetFontFamily(fontName) {
+    const btn = document.querySelector('#docs-font-family');
+    if (!btn) throw new Error('글꼴 목록을 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let menu = null;
+    for (let i = 0; i < 12 && !menu; i++) {
+      await delay(120);
+      menu = styleVisibleMenus().find(m => (m.textContent || '').indexOf(fontName) !== -1);
+    }
+    if (!menu) throw new Error('글꼴 메뉴가 열리지 않았습니다');
+    try {
+      // 항목 이름 뒤에 붙는 목록 표시(►)와 공백은 떼고 비교한다.
+      const items = Array.prototype.slice.call(menu.querySelectorAll('.goog-menuitem'))
+        .filter(item => item.textContent.trim().replace(/[►▸\s]/g, '') === fontName);
+      const target = items[items.length - 1];
+      if (!target) throw new Error('글꼴 항목 없음: ' + fontName);
+      styleSynthHover(target);
+      await delay(80);
+      styleSynthAct(target);
+      await delay(600);
+      return { fontName };
+    } finally {
+      styleDismissMenus();
+    }
+  }
+
   async function styleSetTextColor(colorRgb) {
     const btn = document.getElementById('textColorButton');
     if (!btn) throw new Error('텍스트 색 버튼을 찾지 못했습니다');
@@ -4032,6 +4061,7 @@
     if (op === 'menu') return styleRunHeadingMenuCommand(String(data.label || ''), data.update === true);
     if (op === 'toggle') return styleSetToolbarToggle(String(data.buttonId || ''), data.want === true);
     if (op === 'fontSize') return styleSetFontSize(Number(data.sizePt));
+    if (op === 'fontFamily') return styleSetFontFamily(String(data.fontName || ''));
     if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
     if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();
