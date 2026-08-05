@@ -10,6 +10,7 @@
     disabledOrigins:   [],
     tocMaxLevel: 4, // 목차 추출에 포함할 최대 헤딩 레벨 (1~5)
     copyOnSelect: true, // 오탈자 선택 시 교정어 클립보드 자동 복사
+    charPresetDirectInsert: false, // 특수문자 프리셋을 클립보드 복사 대신 문서에 바로 입력
     externalFeaturesEnabled: false // 로컬 브리지/외부 CLI가 필요한 기능은 기본 비활성화
   };
   const CATEGORY_ORDER = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
@@ -139,6 +140,7 @@
   let panelCss = null;
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
+  let charMenuOpen = false; // 푸터 특수문자 프리셋 팔레트 펼침 상태 (메모리만)
   let stylePresetMenuOpen = false; // 추가기능 안 단락 스타일 셋팅 하위 목록 펼침 상태
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
   let findingContextMenu = null;
@@ -166,6 +168,7 @@
       disabledOrigins: Array.isArray(s.disabledOrigins) ? s.disabledOrigins : [],
       tocMaxLevel: normalizeTocMaxLevel(s.tocMaxLevel),
       copyOnSelect: s.copyOnSelect !== false,
+      charPresetDirectInsert: s.charPresetDirectInsert === true,
       externalFeaturesEnabled: s.externalFeaturesEnabled === true
     };
   }
@@ -885,6 +888,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = !addonsMenuOpen;
+      charMenuOpen = false;
       suggestionsViewOpen = false;
       termsViewOpen = false;
       render();
@@ -905,6 +909,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       termsViewOpen = false;
       suggestionsViewOpen = !suggestionsViewOpen;
       if (suggestionsViewOpen) {
@@ -929,6 +934,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       suggestionsViewOpen = false;
       const docId = getDocId();
       if (termsViewOpen && termReport && termReportDocId === docId) {
@@ -945,6 +951,66 @@
     return btn;
   }
 
+  // 특수문자 프리셋 — 원고에서 자주 쓰는 동글뱅이 번호와 화살표를 커서 위치에 삽입한다.
+  const CHAR_PRESET_ITEMS = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾', '▶', '➝'];
+
+  // 기본은 클립보드 복사, 설정(charPresetDirectInsert)을 켜면 커서 위치에 바로 입력한다.
+  function insertPresetChar(ch) {
+    if (settings.charPresetDirectInsert) {
+      styleBridgeOp('typeText', { text: ch }).then(() => {
+        showToast(ch + ' 삽입됨', { durationMs: 1400 });
+      }).catch(error => {
+        console.error('[Toytype char preset] insert failed', error);
+        showToast('문자 삽입 실패 — ' + styleShortErrorText(error), { durationMs: 4200 });
+      });
+      return;
+    }
+    copyText(ch).then(
+      () => showToast(ch + ' 복사됨', { durationMs: 1400 }),
+      () => showToast('클립보드 복사 실패', { durationMs: 2600 })
+    );
+  }
+
+  function buildCharMenu() {
+    const menu = el('div', 'trd-chars-menu');
+    menu.setAttribute('role', 'menu');
+    for (const ch of CHAR_PRESET_ITEMS) {
+      const item = el('button', 'trd-chars-item');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = ch;
+      item.title = ch + ' 삽입';
+      item.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        insertPresetChar(ch);
+      });
+      menu.appendChild(item);
+    }
+    return menu;
+  }
+
+  function buildCharPresetButton() {
+    const wrap = el('div', 'trd-addons-wrap');
+    const btn = el('button', 'trd-btn trd-icon-btn trd-chars-btn' + (charMenuOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.textContent = '❶';
+    btn.setAttribute('aria-label', '특수문자 프리셋');
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', charMenuOpen ? 'true' : 'false');
+    btn.title = '특수문자 프리셋';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      charMenuOpen = !charMenuOpen;
+      addonsMenuOpen = false;
+      render();
+    });
+    wrap.appendChild(btn);
+    if (charMenuOpen) wrap.appendChild(buildCharMenu());
+    return wrap;
+  }
+
   function buildSettingsButton() {
     const btn = el('button', 'trd-btn trd-icon-btn trd-settings-btn');
     btn.type = 'button';
@@ -955,6 +1021,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       termsViewOpen = false;
       openSettingsPageFromDocs();
     });
@@ -963,7 +1030,7 @@
 
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildTermsButton());
+    wrap.append(buildSettingsButton(), buildTermsButton(), buildCharPresetButton());
     if (externalFeaturesEnabled()) wrap.appendChild(buildSuggestionsButton());
     wrap.appendChild(buildAddonsButton());
     return wrap;
@@ -3162,7 +3229,7 @@
 
   // ---------------- 단락 스타일 셋팅 (골든래빗 프리셋, 로컬 브리지 불필요) ----------------
   // 문서 끝 임시 문단에 목표 서식을 만든 뒤 각 단락 스타일 정의를 Docs의 '스타일 업데이트'
-  // 메뉴로 반영한다. 서체는 집필 가이드 기준인 Arimo로 맞춘다.
+  // 메뉴로 반영한다. 서체는 집필 가이드 기준인 Arimo, 줄간격은 1.5로 맞춘다.
   // 메뉴·툴바·키 입력 자동화는 페이지 브리지의 stylePresetOp이 페이지 월드에서 실행한다 —
   // 콘텐트 스크립트에서 만든 KeyboardEvent는 keyCode 재정의가 페이지에 보이지 않는다.
 
@@ -3170,6 +3237,7 @@
   const STYLE_PRESET_CLEANUP_ATTEMPTS = 8;   // 선택+Backspace 재시도 횟수
   const STYLE_PRESET_UNDO_ATTEMPTS = 12;     // 실행취소 최후 수단 상한
   const STYLE_PRESET_FONT = 'Arimo';         // 집필 가이드 기준 서체
+  const STYLE_PRESET_LINE_SPACING = '1.5';   // 줄간격 메뉴의 배수 항목 캡션
   const STYLE_PRESET_DEFS = [
     { key: 'normal', label: '일반 텍스트', sizePt: 10, bold: false, underline: false, colorRgb: 'rgb(0, 0, 0)' },
     { key: 'h1', label: '제목 1', sizePt: 25, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
@@ -3299,6 +3367,9 @@
     await selectDocsModelRange(range.start, range.end);
     await styleDelay(200);
     await styleBridgeOp('fontFamily', { fontName: STYLE_PRESET_FONT });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('lineSpacing', { spacing: STYLE_PRESET_LINE_SPACING });
     await selectDocsModelRange(range.start, range.end);
     await styleDelay(200);
     await styleBridgeOp('color', { colorRgb: def.colorRgb });

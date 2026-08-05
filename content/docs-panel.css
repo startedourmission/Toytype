@@ -343,16 +343,47 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 .trd-settings-btn,
 .trd-terms-btn,
 .trd-suggestions-btn,
+.trd-chars-btn,
 .trd-addons-btn {
   width: 28px;
   height: 28px;
   color: #5f6368;
 }
 .trd-terms-btn.trd-on,
-.trd-suggestions-btn.trd-on {
+.trd-suggestions-btn.trd-on,
+.trd-chars-btn.trd-on {
   background: #e8f0fe;
   color: #174ea6;
 }
+/* 특수문자 프리셋 팔레트 (푸터 버튼 위로 뜸) */
+.trd-chars-btn { font-size: 14px; }
+.trd-chars-menu {
+  position: absolute;
+  right: 0;
+  bottom: 34px;
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  gap: 2px;
+  background: #fff;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+  padding: 4px;
+  z-index: 5;
+}
+.trd-chars-item {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: #202124;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.trd-chars-item:hover { background: #f1f3f4; }
 
 .trd-terms-view {
   padding: 10px 10px 12px;

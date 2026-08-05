@@ -53,6 +53,7 @@ const els = {
   maxDocumentChars: document.getElementById('maxDocumentChars'),
   tocMaxLevel: document.getElementById('tocMaxLevel'),
   copyOnSelect: document.getElementById('copyOnSelect'),
+  charPresetDirectInsert: document.getElementById('charPresetDirectInsert'),
   uploadJsonExample: document.getElementById('uploadJsonExample'),
   copyUploadJson: document.getElementById('copyUploadJson'),
   status: document.getElementById('status')
@@ -264,6 +265,7 @@ async function save() {
   settings.ai = ai;
   settings.tocMaxLevel = clampNumber(els.tocMaxLevel.value, DEFAULT_TOC_MAX_LEVEL, 1, 5);
   settings.copyOnSelect = els.copyOnSelect.checked;
+  settings.charPresetDirectInsert = els.charPresetDirectInsert.checked === true;
   settings.generatedJsonCleanupDays = cleanupDaysValue(els.cleanupDays.value);
   await chrome.storage.local.set({ settings });
   fillForm(ai);
@@ -342,6 +344,7 @@ async function init() {
   els.tocMaxLevel.value = String(tocMaxLevelFromSettings(settings));
   els.cleanupDays.value = String(cleanupDaysFromSettings(settings));
   els.copyOnSelect.checked = settings.copyOnSelect !== false;
+  els.charPresetDirectInsert.checked = settings.charPresetDirectInsert === true;
   updateExternalControls();
   setStatus('설정을 불러왔습니다.');
   if (!externalFeaturesEnabled()) return;

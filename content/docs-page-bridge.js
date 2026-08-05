@@ -3999,6 +3999,32 @@
     }
   }
 
+  // 줄간격 메뉴(#lineSpacingMenuButton)에서 배수 항목을 고른다.
+  // 항목 캡션이 곧 배수값이라("1.5") 그대로 비교한다.
+  async function styleSetLineSpacing(spacing) {
+    const btn = document.querySelector('#lineSpacingMenuButton');
+    if (!btn) throw new Error('줄간격 메뉴를 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let menu = null;
+    for (let i = 0; i < 12 && !menu; i++) {
+      await delay(120);
+      menu = styleVisibleMenus().find(m => (m.textContent || '').indexOf(spacing) !== -1);
+    }
+    if (!menu) throw new Error('줄간격 메뉴가 열리지 않았습니다');
+    try {
+      const item = Array.prototype.slice.call(menu.querySelectorAll('.goog-menuitem'))
+        .find(node => node.textContent.trim() === spacing);
+      if (!item) throw new Error('줄간격 항목 없음: ' + spacing);
+      styleSynthHover(item);
+      await delay(80);
+      styleSynthAct(item);
+      await delay(600);
+      return { spacing };
+    } finally {
+      styleDismissMenus();
+    }
+  }
+
   async function styleSetTextColor(colorRgb) {
     const btn = document.getElementById('textColorButton');
     if (!btn) throw new Error('텍스트 색 버튼을 찾지 못했습니다');
@@ -4029,6 +4055,15 @@
     await delay(250);
     styleTypeText(target, text);
     return { enterCreated, length: text.length };
+  }
+
+  // 현재 커서 위치에 텍스트를 그대로 타이핑한다 (Enter 없음) — 특수문자 프리셋용.
+  async function styleTypePlainText(text) {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    styleTypeText(target, text);
+    return { length: text.length };
   }
 
   // 현재 선택 영역을 Backspace로 지운다.
@@ -4062,8 +4097,10 @@
     if (op === 'toggle') return styleSetToolbarToggle(String(data.buttonId || ''), data.want === true);
     if (op === 'fontSize') return styleSetFontSize(Number(data.sizePt));
     if (op === 'fontFamily') return styleSetFontFamily(String(data.fontName || ''));
+    if (op === 'lineSpacing') return styleSetLineSpacing(String(data.spacing || ''));
     if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
     if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
+    if (op === 'typeText') return styleTypePlainText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();
     if (op === 'undo') return styleSendUndo();
     return Promise.reject(new Error('unknown style preset op: ' + op));
