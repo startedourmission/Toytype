@@ -296,6 +296,24 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   border-top: 1px solid #e0e0e0;
 }
 .trd-foot-text { flex: 1; min-width: 0; }
+.trd-selection-count {
+  color: #1a73e8;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.trd-addon-status { line-height: 1.45; }
+.trd-addon-status-head {
+  color: #5f6368;
+  overflow-wrap: anywhere;
+}
+.trd-addon-status-detail {
+  color: #9aa0a6;
+  overflow-wrap: anywhere;
+}
+.trd-addon-status-running .trd-addon-status-head { color: #1a73e8; }
+.trd-addon-status-error .trd-addon-status-head { color: #d93025; }
+.trd-addon-status-error .trd-addon-status-detail { color: #c5605a; }
 .trd-bridge-badge {
   flex: none;
   height: 20px;

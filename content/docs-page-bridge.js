@@ -239,6 +239,21 @@
           postResponse(data, { ok: true, action: data.action, selection });
         });
       }
+      // 드래그 영역 글자수용. 오프셋과 본문을 페이지 쪽에서 한 번에 잘라
+      // 캐시가 낡아 엉뚱한 구간을 세는 일을 막는다.
+      if (data.action === 'getSelectionText') {
+        return getSelection(obj).then(selection => {
+          const range = selectionSpan(selection);
+          if (!range) {
+            postResponse(data, { ok: true, action: data.action, selection, selectedText: '' });
+            return;
+          }
+          return getText(obj).then(text => {
+            const selectedText = typeof text === 'string' ? text.slice(range.start, range.end) : '';
+            postResponse(data, { ok: true, action: data.action, selection, selectedText });
+          });
+        });
+      }
       if (data.action === 'setSelection') {
         const range = readRange(data);
         return setSelection(obj, range.start, range.end).then(result => {
@@ -320,6 +335,16 @@
 
   function setSelection(obj, start, end) {
     return callAnnotatedMethod(obj, 'setSelection', [start, end]);
+  }
+
+  // 접힌 커서(start === end)는 선택이 아니므로 null.
+  function selectionSpan(selection) {
+    if (!Array.isArray(selection) || selection.length === 0) return null;
+    const first = selection[0];
+    if (!first || typeof first.start !== 'number' || typeof first.end !== 'number') return null;
+    const start = Math.min(first.start, first.end);
+    const end = Math.max(first.start, first.end);
+    return end > start ? { start, end } : null;
   }
 
   function probeFindReplace(annotatedObj, data) {

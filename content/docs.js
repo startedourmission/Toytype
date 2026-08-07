@@ -111,6 +111,10 @@
   let currentCursorOffset = null;
   let cursorPollTimer = null;
   let cursorPollBusy = false;
+  // 드래그한 영역의 글자수 집계 ({ chars, charsNoSpace, words } 또는 null)
+  let selectionCount = null;
+  // 마지막으로 글자수를 센 선택 범위('start:end'). 같으면 본문을 다시 읽지 않는다.
+  let lastSelectionSpanKey = '';
   let ignoredFindingKeys = new Set();
   let ignoredFindingDocId = null;
   let applyingFindingKey = null;
@@ -585,6 +589,8 @@
       lastModelAt = 0;
       selectedFindingKey = null;
       currentCursorOffset = null;
+      selectionCount = null;
+      lastSelectionSpanKey = '';
       generatedRulesFiles = [];
       generatedRulesLoadedDocId = null;
       await loadIgnoredFindingsForCurrentDoc();
@@ -629,6 +635,8 @@
         cachedTextSource = textSource;
         lastModelAt = Date.now();
         updateCursorOffset(model.selection);
+        // text·selection이 같은 getText 응답이라 오프셋이 이 본문과 정확히 맞는다.
+        syncSelectionCountFromModel(text, model.selection);
       } catch (e) {
         // 내부 모델 API가 막히면 기존 export 경로로 내려간다.
       }
@@ -643,6 +651,8 @@
           cachedText = text;
           cachedTextSource = textSource;
           currentCursorOffset = null;
+          selectionCount = null;
+          lastSelectionSpanKey = '';
           lastFetchAt = Date.now();
         } catch (e) {
           status = 'error';
@@ -1147,12 +1157,6 @@
     return s.replace(/^ +| +$/g, m => '␣'.repeat(m.length));
   }
 
-  function timeStr(ts) {
-    const d = new Date(ts);
-    const p = n => String(n).padStart(2, '0');
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
-  }
-
   function render(options) {
     if (!shadowView) return;
     closeFindingContextMenu();
@@ -1393,19 +1397,25 @@
     // 푸터 (우측에 설정/추가기능 버튼)
     const foot = el('div', 'trd-foot');
     const footText = el('div', 'trd-foot-text');
-    const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
-    const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
-    const l2 = document.createElement('div');
-    const ruleSource = termsViewOpen ? '용어 통일 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
-    l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
-    const addonStatusText = addonStatusLineText();
-    if (addonStatusText) {
-      const statusLine = document.createElement('div');
-      statusLine.className = 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : '');
-      statusLine.textContent = addonStatusText;
+    const countText = selectionCountText();
+    if (countText) {
+      const countLine = el('div', 'trd-selection-count');
+      countLine.textContent = countText;
+      footText.appendChild(countLine);
+    }
+    const addonLines = addonStatusLines();
+    if (addonLines && addonLines.head) {
+      const statusLine = el('div', 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : ''));
+      const headLine = el('div', 'trd-addon-status-head');
+      headLine.textContent = addonLines.head;
+      statusLine.appendChild(headLine);
+      if (addonLines.detail) {
+        const detailLine = el('div', 'trd-addon-status-detail');
+        detailLine.textContent = addonLines.detail;
+        statusLine.appendChild(detailLine);
+      }
       footText.appendChild(statusLine);
     }
-    footText.appendChild(l2);
     if (externalFeaturesEnabled()) foot.appendChild(buildBridgeStatusBadge());
     foot.append(footText, buildFooterActions());
     panel.appendChild(foot);
@@ -1801,7 +1811,7 @@
     select.value = activeRulesSource;
     const builtinOption = document.createElement('option');
     builtinOption.value = 'builtin';
-    builtinOption.textContent = 'rules' + rulesVersionSuffix(builtinRulesJson);
+    builtinOption.textContent = '기본 규칙';
     select.appendChild(builtinOption);
     for (const file of generatedRulesFilesForSelect()) {
       const generatedOption = document.createElement('option');
@@ -1813,7 +1823,7 @@
     if (uploadedRulesJson) {
       const uploadedOption = document.createElement('option');
       uploadedOption.value = 'uploaded';
-      uploadedOption.textContent = 'JSON' + rulesVersionSuffix(uploadedRulesJson);
+      uploadedOption.textContent = uploadedRulesLabel || '업로드한 JSON';
       uploadedOption.title = uploadedRulesLabel || 'uploaded.json';
       select.appendChild(uploadedOption);
     }
@@ -1841,10 +1851,6 @@
     return select;
   }
 
-  function rulesVersionSuffix(json) {
-    return json && json.version ? ' ' + json.version : '';
-  }
-
   function handleRulesSourceChange(source) {
     if (source === activeRulesSource) return;
     try {
@@ -1861,8 +1867,9 @@
   }
 
   function syncCursorWatcher() {
+    // 커서 마커는 order 모드에서만 쓰지만, 선택 글자수는 어느 화면에서나 보여준다.
     const shouldPoll = expanded && status === 'ready' && lastReport &&
-      lastReport.textSource === 'model' && listMode === 'order';
+      lastReport.textSource === 'model';
     if (shouldPoll && !cursorPollTimer) {
       cursorPollTimer = setInterval(() => { pollCursorSelection(); }, CURSOR_POLL_INTERVAL);
       pollCursorSelection();
@@ -1876,19 +1883,44 @@
     clearInterval(cursorPollTimer);
     cursorPollTimer = null;
     cursorPollBusy = false;
+    lastSelectionSpanKey = '';
+    if (selectionCount !== null) {
+      selectionCount = null;
+      if (expanded) render();
+    }
   }
 
   function pollCursorSelection() {
     // 적용 진행 중에는 모델 호출 경합을 피하려고 커서 폴링을 쉰다.
     if (cursorPollBusy || applyingFindingKey !== null || addonBusyActions.size > 0 || isNativeControlInteractionActive()) return;
     cursorPollBusy = true;
+    // 가벼운 getSelection으로 먼저 범위를 보고, 범위가 실제로 바뀌었을 때만
+    // 본문까지 가져오는 getSelectionText를 부른다(매 틱 전체 본문 조회 방지).
     fetchDocsSelection().then(selection => {
-      if (updateCursorOffset(selection) && expanded && listMode === 'order') render();
-    }).catch(() => {
-      if (currentCursorOffset !== null) {
-        currentCursorOffset = null;
-        if (expanded && listMode === 'order') render();
+      const cursorChanged = updateCursorOffset(selection) && listMode === 'order';
+      const range = selectionRange(selection);
+      const spanKey = range && range.end > range.start ? range.start + ':' + range.end : '';
+      if (spanKey === lastSelectionSpanKey) {
+        if (cursorChanged && expanded) render();
+        return null;
       }
+      lastSelectionSpanKey = spanKey;
+      if (!spanKey) {
+        const cleared = updateSelectionCount('');
+        if ((cursorChanged || cleared) && expanded) render();
+        return null;
+      }
+      return fetchDocsSelectionText().then(res => {
+        const countChanged = updateSelectionCount(res.selectedText);
+        if ((cursorChanged || countChanged) && expanded) render();
+      });
+    }).catch(() => {
+      const cursorChanged = currentCursorOffset !== null;
+      const countChanged = selectionCount !== null;
+      currentCursorOffset = null;
+      selectionCount = null;
+      lastSelectionSpanKey = '';
+      if ((cursorChanged || countChanged) && expanded) render();
     }).finally(() => {
       cursorPollBusy = false;
     });
@@ -1916,6 +1948,53 @@
       start: Math.min(first.start, first.end),
       end: Math.max(first.start, first.end)
     };
+  }
+
+  // 서로게이트 쌍(이모지 등)을 한 글자로 세려고 Array.from을 쓴다.
+  function countTextStats(text) {
+    const chars = Array.from(text);
+    let charsNoSpace = 0;
+    for (const ch of chars) {
+      if (!/\s/.test(ch)) charsNoSpace++;
+    }
+    const words = text.split(/\s+/).filter(Boolean).length;
+    return { chars: chars.length, charsNoSpace, words };
+  }
+
+  // getText 응답(본문+오프셋)으로 글자수와 범위 키를 함께 갱신한다.
+  // 폴러가 이 결과를 중복 조회하지 않도록 키까지 맞춰 둔다.
+  function syncSelectionCountFromModel(text, selection) {
+    const range = selectionRange(selection);
+    lastSelectionSpanKey = range && range.end > range.start ? range.start + ':' + range.end : '';
+    return updateSelectionCount(sliceSelectedText(text, selection));
+  }
+
+  // 같은 응답에서 온 본문·오프셋 쌍을 잘라낸다. 짝이 안 맞으면 세지 않는다.
+  function sliceSelectedText(text, selection) {
+    if (typeof text !== 'string') return '';
+    const range = selectionRange(selection);
+    if (!range || range.end <= range.start || range.end > text.length) return '';
+    return text.slice(range.start, range.end);
+  }
+
+  function updateSelectionCount(selectedText) {
+    const next = selectedText ? countTextStats(selectedText) : null;
+    if (selectionCountsEqual(next, selectionCount)) return false;
+    selectionCount = next;
+    return true;
+  }
+
+  function selectionCountsEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return a.chars === b.chars && a.charsNoSpace === b.charsNoSpace && a.words === b.words;
+  }
+
+  function selectionCountText() {
+    if (!selectionCount) return '';
+    return '선택 ' + selectionCount.chars.toLocaleString() + '자' +
+      ' · 공백 제외 ' + selectionCount.charsNoSpace.toLocaleString() + '자' +
+      ' · ' + selectionCount.words.toLocaleString() + '단어';
   }
 
   function filterIgnoredFindings(findings) {
@@ -2591,11 +2670,8 @@
         finalStatus += ' · 축약 ' + (res.compactedRules || 0) + '건';
         if (res.droppedRules) finalStatus += ' · 제외 ' + res.droppedRules + '건';
       }
-      if (res.displayName || res.fileName) {
-        finalStatus += ' · ' + (res.displayName || res.fileName);
-      }
       if (res.factCheck && res.factCheck.model) {
-        finalStatus += ' · 사실확인 ' + res.factCheck.model;
+        finalStatus += ' · 사실확인 완료';
       }
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2691,8 +2767,6 @@
       const n = Array.isArray(termReport.terms) ? termReport.terms.length : 0;
       const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : '용어 분석 완료';
       finalStatus = n ? doneLabel + ' · ' + n + '건' : doneLabel + ' · 혼용 없음';
-      if (res.model) finalStatus += ' · ' + res.model;
-      if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
       successToast = finalStatus;
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2811,7 +2885,6 @@
       });
       finalStatus = 'AI 문장 제안 저장 완료';
       if (n) finalStatus += ' · 누적 ' + n + '건';
-      if (res.model) finalStatus += ' · ' + res.model;
       successToast = 'AI 문장 제안을 저장했습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -3030,7 +3103,6 @@
       const n = activateGeneratedRulesResponse(res, '문장제안.json');
       finalStatus = 'AI 문장 제안 저장 완료 · 목표 ' + targetChars + '자';
       if (n) finalStatus += ' · 누적 ' + n + '건';
-      if (res.model) finalStatus += ' · ' + res.model;
       successToast = 'AI 문장 제안을 저장했습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -3675,18 +3747,29 @@
     addonStatusTimer = null;
   }
 
-  function addonStatusLineText() {
-    if (!addonStatus) return '';
+  // 푸터 상태: 1줄 요약(제목 · 경과) + 2줄 상세. 상세가 요약을 되풀이하면 생략한다.
+  function addonStatusLines() {
+    if (!addonStatus) return null;
     const label = addonStatus.label || (addonStatus.type === 'ai-proofread' ? 'AI 교정' : 'AI 작업');
     const now = addonStatus.state === 'running' ? Date.now() : (addonStatus.finishedAt || Date.now());
     const elapsed = formatElapsed(now - (addonStatus.startedAt || now));
-    if (addonStatus.state === 'running') {
-      return [label + ' 중', elapsed + ' 경과', addonStatus.phase || '대기 중'].join(' · ');
-    }
-    if (addonStatus.state === 'error') {
-      return [label + ' 실패', elapsed + ' 경과', addonStatus.message || '오류 발생'].join(' · ');
-    }
-    return [label + ' 완료', elapsed + ' 경과', addonStatus.message || '완료'].join(' · ');
+    const state = addonStatus.state;
+    const suffix = state === 'running' ? ' 중' : (state === 'error' ? ' 실패' : ' 완료');
+    const head = label + suffix + ' · ' + elapsed;
+    const raw = state === 'running'
+      ? (addonStatus.phase || '')
+      : (addonStatus.message || (state === 'error' ? '오류 발생' : ''));
+    const detail = stripStatusHeadEcho(raw, label + suffix);
+    return { head, detail };
+  }
+
+  // '<라벨> 완료 · JSON 업로드됨' 처럼 상세 앞머리가 요약과 겹치면 잘라낸다.
+  function stripStatusHeadEcho(detail, head) {
+    const text = String(detail || '').trim();
+    if (!text) return '';
+    if (text === head) return '';
+    if (text.startsWith(head + ' · ')) return text.slice(head.length + 3);
+    return text;
   }
 
   function formatElapsed(ms) {
@@ -3729,6 +3812,7 @@
       cachedTextSource = 'model';
       lastModelAt = Date.now();
       updateCursorOffset(res.selection || null);
+      syncSelectionCountFromModel(res.text, res.selection || null);
       return {
         docId,
         title: documentTitleForAddon(),
@@ -4723,6 +4807,17 @@
     });
   }
 
+  // 선택 오프셋과 그 구간의 실제 본문을 한 번에 받는다(글자수 집계용).
+  function fetchDocsSelectionText() {
+    return requestDocsModel('getSelectionText', { docId: getDocId() }).then(res => {
+      if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'getSelectionText failed');
+      return {
+        selection: res.selection || null,
+        selectedText: typeof res.selectedText === 'string' ? res.selectedText : ''
+      };
+    });
+  }
+
   // 연구용: annotated 모델 호출(getText/getSelection 등)의 실제 지연을 측정한다.
   // 콘솔에서 ToytypeProfileModelOpsFromContent() 로 호출.
   function profileModelOpsFromContent(options) {
@@ -5714,7 +5809,10 @@
     STYLE_PRESET_CLEANUP_ATTEMPTS,
     STYLE_PRESET_UNDO_ATTEMPTS,
     removeStylePresetTempText,
-    styleShortErrorText
+    styleShortErrorText,
+    countTextStats,
+    sliceSelectedText,
+    stripStatusHeadEcho
   };
 
   init();
