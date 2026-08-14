@@ -15,7 +15,7 @@ const DEFAULT_AI = {
   codexCommand: 'codex',
   claudeCommand: 'claude',
   grokCommand: 'grok',
-  workspaceDir: '~/Dev/Toytype',
+  workspaceDir: '',
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 1800000,
   maxDocumentChars: 180000

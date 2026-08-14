@@ -90,7 +90,9 @@ function mergeSettings(input) {
     codexCommand: typeof s.codexCommand === 'string' && s.codexCommand.trim() ? s.codexCommand.trim() : DEFAULT_SETTINGS.codexCommand,
     claudeCommand: typeof s.claudeCommand === 'string' && s.claudeCommand.trim() ? s.claudeCommand.trim() : DEFAULT_SETTINGS.claudeCommand,
     grokCommand: typeof s.grokCommand === 'string' && s.grokCommand.trim() ? s.grokCommand.trim() : DEFAULT_SETTINGS.grokCommand,
-    workspaceDir: expandHome(typeof s.workspaceDir === 'string' && s.workspaceDir.trim() ? s.workspaceDir.trim() : DEFAULT_SETTINGS.workspaceDir),
+    // 기본값은 브리지가 놓인 저장소 폴더다. 남의 머신에 ~/Dev/Toytype이 있을 리 없으므로
+    // 고정 경로를 쓰면 CLI가 없는 디렉터리에서 spawn된다.
+    workspaceDir: expandHome(typeof s.workspaceDir === 'string' && s.workspaceDir.trim() ? s.workspaceDir.trim() : PROJECT_ROOT),
     outputDir: expandHome(typeof s.outputDir === 'string' && s.outputDir.trim() ? s.outputDir.trim() : DEFAULT_SETTINGS.outputDir),
     requestTimeoutMs: clampNumber(s.requestTimeoutMs, DEFAULT_SETTINGS.requestTimeoutMs, 5000, 60 * 60 * 1000),
     maxDocumentChars: clampNumber(s.maxDocumentChars, DEFAULT_SETTINGS.maxDocumentChars, 1000, 1000000),

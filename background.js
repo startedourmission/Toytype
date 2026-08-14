@@ -90,7 +90,9 @@ function mergeAiSettings(settings) {
     codexCommand: typeof ai.codexCommand === 'string' && ai.codexCommand.trim() ? ai.codexCommand.trim() : DEFAULT_AI_SETTINGS.codexCommand,
     claudeCommand: typeof ai.claudeCommand === 'string' && ai.claudeCommand.trim() ? ai.claudeCommand.trim() : DEFAULT_AI_SETTINGS.claudeCommand,
     grokCommand: typeof ai.grokCommand === 'string' && ai.grokCommand.trim() ? ai.grokCommand.trim() : DEFAULT_AI_SETTINGS.grokCommand,
-    workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : DEFAULT_AI_SETTINGS.workspaceDir,
+    // 비워 두면 브리지가 자기 저장소 폴더를 쓴다. 여기서 기본값을 채워 보내면
+    // 그 경로가 없는 머신에서도 덮어써 버리므로 빈 값을 그대로 넘긴다.
+    workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : '',
     outputDir: typeof ai.outputDir === 'string' && ai.outputDir.trim() ? ai.outputDir.trim() : DEFAULT_AI_SETTINGS.outputDir,
     requestTimeoutMs,
     maxDocumentChars: clampNumber(ai.maxDocumentChars, DEFAULT_AI_SETTINGS.maxDocumentChars, 1000, 1000000)

@@ -30,7 +30,7 @@ const DEFAULT_AI = {
   codexCommand: 'codex',
   claudeCommand: 'claude',
   grokCommand: 'grok',
-  workspaceDir: '~/Dev/Toytype',
+  workspaceDir: '', // 비우면 브리지가 자기 저장소 폴더를 쓴다
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 1800000,
   maxDocumentChars: 180000
@@ -120,7 +120,7 @@ function formToAi() {
     codexCommand: els.codexCommand.value.trim() || DEFAULT_AI.codexCommand,
     claudeCommand: els.claudeCommand.value.trim() || DEFAULT_AI.claudeCommand,
     grokCommand: els.grokCommand.value.trim() || DEFAULT_AI.grokCommand,
-    workspaceDir: els.workspaceDir.value.trim() || DEFAULT_AI.workspaceDir,
+    workspaceDir: els.workspaceDir.value.trim(),
     outputDir: els.outputDir.value.trim() || DEFAULT_AI.outputDir,
     requestTimeoutMs: clampNumber(els.requestTimeoutMs.value, DEFAULT_AI.requestTimeoutMs, 5000, 3600000),
     maxDocumentChars: clampNumber(els.maxDocumentChars.value, DEFAULT_AI.maxDocumentChars, 1000, 1000000)
