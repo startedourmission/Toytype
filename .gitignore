@@ -1,3 +1,5 @@
 __pycache__/
 .DS_Store
 node_modules/
+# 설치 시 생성 — node 절대 경로가 박히므로 커밋하지 않는다
+tools/toytype_native_host.sh

@@ -30,10 +30,13 @@ let garuAnalyzerPromise = null;
 let codexProviderQueue = Promise.resolve();
 const downloadTokens = new Map();
 
+const PROVIDERS = ['codex', 'claude', 'grok'];
+
 const DEFAULT_SETTINGS = {
   provider: 'codex',
   codexCommand: 'codex',
   claudeCommand: 'claude',
+  grokCommand: 'grok',
   workspaceDir: '~/Dev/Toytype',
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 30 * 60 * 1000,
@@ -42,10 +45,13 @@ const DEFAULT_SETTINGS = {
   proofreadFactCheckCodexModel: 'gpt-5.5',
   proofreadFactCheckCodexReasoningEffort: 'medium',
   proofreadFactCheckClaudeModel: 'sonnet',
+  proofreadFactCheckGrokModel: '',
   proofreadFactCheckTimeoutMs: 10 * 60 * 1000,
   questionCodexModel: '',
   questionCodexReasoningEffort: 'low',
-  questionClaudeModel: 'fable',
+  questionClaudeModel: 'sonnet',
+  questionGrokModel: '',
+  questionGrokReasoningEffort: 'low',
   questionContextBeforeChars: 3500,
   questionContextAfterChars: 2500
 };
@@ -70,13 +76,20 @@ function expandHome(value) {
   return value;
 }
 
+// 알 수 없는 값은 codex로 떨어뜨린다 — 프로바이더 분기의 유일한 정본.
+function normalizeProvider(value, fallback = DEFAULT_SETTINGS.provider) {
+  if (typeof value === 'string' && PROVIDERS.includes(value)) return value;
+  return PROVIDERS.includes(fallback) ? fallback : DEFAULT_SETTINGS.provider;
+}
+
 function mergeSettings(input) {
   const s = input && typeof input === 'object' ? input : {};
-  const provider = s.provider === 'claude' ? 'claude' : 'codex';
+  const provider = normalizeProvider(s.provider);
   return {
     provider,
     codexCommand: typeof s.codexCommand === 'string' && s.codexCommand.trim() ? s.codexCommand.trim() : DEFAULT_SETTINGS.codexCommand,
     claudeCommand: typeof s.claudeCommand === 'string' && s.claudeCommand.trim() ? s.claudeCommand.trim() : DEFAULT_SETTINGS.claudeCommand,
+    grokCommand: typeof s.grokCommand === 'string' && s.grokCommand.trim() ? s.grokCommand.trim() : DEFAULT_SETTINGS.grokCommand,
     workspaceDir: expandHome(typeof s.workspaceDir === 'string' && s.workspaceDir.trim() ? s.workspaceDir.trim() : DEFAULT_SETTINGS.workspaceDir),
     outputDir: expandHome(typeof s.outputDir === 'string' && s.outputDir.trim() ? s.outputDir.trim() : DEFAULT_SETTINGS.outputDir),
     requestTimeoutMs: clampNumber(s.requestTimeoutMs, DEFAULT_SETTINGS.requestTimeoutMs, 5000, 60 * 60 * 1000),
@@ -85,10 +98,13 @@ function mergeSettings(input) {
     proofreadFactCheckCodexModel: typeof s.proofreadFactCheckCodexModel === 'string' && s.proofreadFactCheckCodexModel.trim() ? s.proofreadFactCheckCodexModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexModel,
     proofreadFactCheckCodexReasoningEffort: typeof s.proofreadFactCheckCodexReasoningEffort === 'string' && s.proofreadFactCheckCodexReasoningEffort.trim() ? s.proofreadFactCheckCodexReasoningEffort.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexReasoningEffort,
     proofreadFactCheckClaudeModel: typeof s.proofreadFactCheckClaudeModel === 'string' && s.proofreadFactCheckClaudeModel.trim() ? s.proofreadFactCheckClaudeModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckClaudeModel,
+    proofreadFactCheckGrokModel: typeof s.proofreadFactCheckGrokModel === 'string' ? s.proofreadFactCheckGrokModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckGrokModel,
     proofreadFactCheckTimeoutMs: clampNumber(s.proofreadFactCheckTimeoutMs, DEFAULT_SETTINGS.proofreadFactCheckTimeoutMs, 30000, 10 * 60 * 1000),
     questionCodexModel: typeof s.questionCodexModel === 'string' ? s.questionCodexModel.trim() : DEFAULT_SETTINGS.questionCodexModel,
     questionCodexReasoningEffort: typeof s.questionCodexReasoningEffort === 'string' && s.questionCodexReasoningEffort.trim() ? s.questionCodexReasoningEffort.trim() : DEFAULT_SETTINGS.questionCodexReasoningEffort,
     questionClaudeModel: typeof s.questionClaudeModel === 'string' && s.questionClaudeModel.trim() ? s.questionClaudeModel.trim() : DEFAULT_SETTINGS.questionClaudeModel,
+    questionGrokModel: typeof s.questionGrokModel === 'string' ? s.questionGrokModel.trim() : DEFAULT_SETTINGS.questionGrokModel,
+    questionGrokReasoningEffort: typeof s.questionGrokReasoningEffort === 'string' && s.questionGrokReasoningEffort.trim() ? s.questionGrokReasoningEffort.trim() : DEFAULT_SETTINGS.questionGrokReasoningEffort,
     questionContextBeforeChars: clampNumber(s.questionContextBeforeChars, DEFAULT_SETTINGS.questionContextBeforeChars, 500, 20000),
     questionContextAfterChars: clampNumber(s.questionContextAfterChars, DEFAULT_SETTINGS.questionContextAfterChars, 500, 20000)
   };
@@ -152,7 +168,7 @@ function requestDocumentSummary(body) {
 
 function aiRequestLogFields(body) {
   const settings = mergeSettings(body && body.settings);
-  const provider = body && body.provider === 'claude' ? 'claude' : settings.provider;
+  const provider = normalizeProvider(body && body.provider, settings.provider);
   return Object.assign({
     provider,
     timeoutMs: body && body.timeoutMs
@@ -384,6 +400,7 @@ function runCommand(commandSpec, args, options) {
 
 async function runProvider(provider, prompt, settings, options = {}) {
   if (provider === 'claude') return runClaude(prompt, settings, options);
+  if (provider === 'grok') return runGrok(prompt, settings, options);
   return enqueueCodexRun(() => runProviderWithTransientRetries('codex', () => runCodex(prompt, settings, options), options));
 }
 
@@ -457,7 +474,10 @@ async function runClaude(prompt, settings, options = {}) {
     '--no-session-persistence'
   ];
   if (options.allowWebTools === true) {
+    // --tools는 어떤 도구를 "띄울지"만 정한다. 실제 사용 허가는 --allowedTools가 따로 준다.
+    // 이게 빠지면 모델이 "I don't have permission to use WebSearch"라며 근거 없이 답한다.
     args.push('--tools', 'WebFetch,WebSearch');
+    args.push('--allowedTools', 'WebFetch', 'WebSearch');
   } else {
     args.push('--tools', '');
   }
@@ -470,6 +490,40 @@ async function runClaude(prompt, settings, options = {}) {
     timeoutMs: options.timeoutMs || settings.requestTimeoutMs
   });
   return Object.assign({ provider: 'claude', response: result.stdout }, result);
+}
+
+// grok은 -p가 argv로 프롬프트를 받는다. 원고 프롬프트는 argv 한도를 넘길 수 있어 --prompt-file로 넘긴다.
+async function runGrok(prompt, settings, options = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toytype-grok-'));
+  const promptPath = path.join(tmpDir, 'prompt.txt');
+  fs.writeFileSync(promptPath, prompt, 'utf8');
+  const args = [
+    '--prompt-file', promptPath,
+    '--output-format', 'plain',
+    '--permission-mode', 'dontAsk',
+    '--no-memory',
+    '--no-subagents'
+  ];
+  if (options.allowWebTools === true) {
+    args.push('--tools', 'web_search,web_fetch');
+  } else {
+    args.push('--tools', '', '--disable-web-search');
+  }
+  if (typeof options.model === 'string' && options.model.trim()) {
+    args.push('--model', options.model.trim());
+  }
+  if (typeof options.reasoningEffort === 'string' && options.reasoningEffort.trim()) {
+    args.push('--reasoning-effort', options.reasoningEffort.trim());
+  }
+  try {
+    const result = await runCommand(settings.grokCommand, args, {
+      cwd: settings.workspaceDir,
+      timeoutMs: options.timeoutMs || settings.requestTimeoutMs
+    });
+    return Object.assign({ provider: 'grok', response: result.stdout }, result);
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  }
 }
 
 function readBuiltinRulesReference() {
@@ -640,7 +694,7 @@ async function runProofreadFactCheck(document, settings, provider, totalTimeoutM
   const run = await runProvider(provider, prompt, settings, {
     model,
     reasoningEffort: provider === 'codex' ? settings.proofreadFactCheckCodexReasoningEffort : undefined,
-    allowWebTools: provider === 'claude',
+    allowWebTools: provider === 'claude' || provider === 'grok',
     timeoutMs
   });
   if (!run.ok) {
@@ -676,7 +730,9 @@ async function runProofreadFactCheck(document, settings, provider, totalTimeoutM
 }
 
 function proofreadFactCheckModel(provider, settings) {
-  return provider === 'claude' ? settings.proofreadFactCheckClaudeModel : settings.proofreadFactCheckCodexModel;
+  if (provider === 'claude') return settings.proofreadFactCheckClaudeModel;
+  if (provider === 'grok') return settings.proofreadFactCheckGrokModel;
+  return settings.proofreadFactCheckCodexModel;
 }
 
 function normalizeFactCheckReport(report, document, meta) {
@@ -1089,7 +1145,16 @@ function normalizeTargetChars(document, currentChars) {
 }
 
 function cheapModelForProvider(provider, settings) {
-  return provider === 'claude' ? settings.questionClaudeModel : settings.questionCodexModel;
+  if (provider === 'claude') return settings.questionClaudeModel;
+  if (provider === 'grok') return settings.questionGrokModel;
+  return settings.questionCodexModel;
+}
+
+// codex와 grok만 reasoning effort 플래그를 받는다.
+function questionReasoningEffortForProvider(provider, settings) {
+  if (provider === 'codex') return settings.questionCodexReasoningEffort;
+  if (provider === 'grok') return settings.questionGrokReasoningEffort;
+  return undefined;
 }
 
 function projectSpecificRuleInstructions() {
@@ -2337,7 +2402,7 @@ function extractDocId(urlOrId) {
 
 async function generateProofread(body) {
   const settings = mergeSettings(body.settings);
-  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const provider = normalizeProvider(body.provider, settings.provider);
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (typeof document.text !== 'string' || !document.text.trim()) {
     throw new HttpError(400, 'document.text is required');
@@ -2446,7 +2511,7 @@ async function generateTermConsistency(body) {
 
 async function generateQuestion(body) {
   const settings = mergeSettings(body.settings);
-  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const provider = normalizeProvider(body.provider, settings.provider);
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (!document.id) document.id = extractDocId(document.url);
   const hasBefore = typeof document.contextBefore === 'string' || typeof document.textBefore === 'string';
@@ -2465,7 +2530,7 @@ async function generateQuestion(body) {
   const model = cheapModelForProvider(provider, settings);
   const run = await runProvider(provider, prompt, settings, {
     model,
-    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
+    reasoningEffort: questionReasoningEffortForProvider(provider, settings),
     timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
   });
   if (!run.ok) {
@@ -2502,9 +2567,53 @@ async function generateQuestion(body) {
   };
 }
 
+// 선택 영역만 사실 검증한다. 문서 전체를 던지는 AI 교정의 fact-check 패스와 같은
+// 엔진을 쓰되, 검사 대상은 드래그한 문장으로 좁히고 앞뒤 문맥은 참고용으로만 준다.
+async function verifySelectionFacts(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const selectedText = String(document.selectedText || '');
+  if (!selectedText.trim()) throw new HttpError(400, 'document.selectedText is required');
+
+  const factCheck = await runProofreadFactCheck(
+    Object.assign({}, document, {
+      // fact-check 프롬프트는 document.text를 검사 대상으로 읽는다.
+      text: selectedText,
+      contextBefore: String(document.contextBefore || ''),
+      contextAfter: String(document.contextAfter || '')
+    }),
+    settings,
+    provider,
+    clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+  );
+
+  const report = factCheck.report && typeof factCheck.report === 'object' ? factCheck.report : { claims: [] };
+  const claims = Array.isArray(report.claims) ? report.claims : [];
+  // 근거 URL이 하나도 없으면 모델 지식만으로 답한 것이다. 모델이 webAccess를 낙관적으로
+  // 적어 보내는 경우가 있어 실제 sources 유무로 한 번 더 확인한다.
+  const sourced = claims.filter(c => Array.isArray(c && c.sources) && c.sources.length > 0).length;
+  const declared = String(report.webAccess || '');
+  const webAccess = sourced > 0 ? (declared || 'used') : (declared === 'used' ? 'partial' : (declared || 'unavailable'));
+  return {
+    ok: true,
+    provider: factCheck.provider,
+    model: factCheck.model,
+    report,
+    claims,
+    claimCount: claims.length,
+    sourcedCount: sourced,
+    webAccess,
+    selectedChars: Array.from(selectedText).length,
+    elapsedMs: factCheck.elapsedMs,
+    diagnostics: factCheck.diagnostics
+  };
+}
+
 async function generateLengthAdjustment(body) {
   const settings = mergeSettings(body.settings);
-  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
+  const provider = normalizeProvider(body.provider, settings.provider);
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (!document.id) document.id = extractDocId(document.url);
   const selectedText = String(document.selectedText || '');
@@ -2517,7 +2626,7 @@ async function generateLengthAdjustment(body) {
   const model = cheapModelForProvider(provider, settings);
   const run = await runProvider(provider, prompt, settings, {
     model,
-    reasoningEffort: provider === 'codex' ? settings.questionCodexReasoningEffort : undefined,
+    reasoningEffort: questionReasoningEffortForProvider(provider, settings),
     timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
   });
   if (!run.ok) {
@@ -2562,8 +2671,8 @@ async function generateLengthAdjustment(body) {
 
 async function testProvider(body) {
   const settings = mergeSettings(body.settings);
-  const provider = body.provider === 'claude' ? 'claude' : settings.provider;
-  const expected = provider === 'claude' ? 'TOYTYPE_CLAUDE_OK' : 'TOYTYPE_CODEX_OK';
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const expected = 'TOYTYPE_' + provider.toUpperCase() + '_OK';
   const run = await runProvider(provider, `Reply exactly ${expected}`, settings, {
     timeoutMs: clampNumber(body.timeoutMs, 120000, 5000, settings.requestTimeoutMs)
   });
@@ -2590,7 +2699,8 @@ function health(settingsInput) {
     port: activePort,
     tools: {
       codex: locateCommand(settings.codexCommand),
-      claude: locateCommand(settings.claudeCommand)
+      claude: locateCommand(settings.claudeCommand),
+      grok: locateCommand(settings.grokCommand)
     },
     settings: {
       provider: settings.provider,
@@ -2703,6 +2813,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/ai/adjust-length') {
     await sendLoggedAiJson(res, 'AI adjust-length', body, generateLengthAdjustment);
+    return;
+  }
+  if (url.pathname === '/ai/verify-facts') {
+    await sendLoggedAiJson(res, 'AI verify-facts', body, verifySelectionFacts);
     return;
   }
   if (url.pathname === '/docs/extract-images') {

@@ -450,6 +450,68 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 }
 .trd-terms-table tr:last-child td { border-bottom: 0; }
 .trd-terms-variant + .trd-terms-variant { margin-top: 2px; }
+
+/* ---- AI 사실 검증 표 ---- */
+.trd-fact-warn {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fef7e0;
+  color: #b06000;
+}
+.trd-fact-source {
+  cursor: pointer;
+  word-break: break-word;
+}
+.trd-fact-source:hover {
+  text-decoration: underline;
+}
+.trd-fact-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.trd-fact-contradicted  { background: rgba(217,48,37,.14);  color: #d93025; }
+.trd-fact-supported     { background: rgba(24,128,56,.12);  color: #188038; }
+.trd-fact-needs_context { background: rgba(232,113,10,.18); color: #b25500; }
+.trd-fact-unverifiable  { background: #f1f3f4;              color: #80868b; }
+.trd-fact-confidence {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #9aa0a6;
+}
+.trd-fact-finding {
+  color: #3c4043;
+}
+.trd-fact-fix {
+  margin-top: 3px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(24,128,56,.08);
+  color: #188038;
+  font-weight: 600;
+  cursor: pointer;
+  word-break: break-word;
+}
+.trd-fact-fix:hover {
+  background: rgba(24,128,56,.16);
+}
+.trd-fact-source-link {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #1a56b8;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trd-fact-source-link:hover {
+  text-decoration: underline;
+}
 .trd-addons-menu {
   position: absolute;
   right: 0;

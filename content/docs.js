@@ -28,9 +28,8 @@
   const FETCH_TIMEOUT = 15000;
   const SNIPPET = 20;
   const MATCH_CONTEXT = 80;
-  const AI_QUESTION_CONTEXT_BEFORE = 3500;
-  const AI_QUESTION_CONTEXT_AFTER = 2500;
-  const AI_QUESTION_TIMEOUT = 180000;
+  const AI_VERIFY_CONTEXT = 1200; // 선택 영역 앞뒤로 참고용 문맥만 전달한다
+  const AI_VERIFY_TIMEOUT = 300000; // 웹 검색을 돌리므로 길이 조절보다 넉넉히 잡는다
   const AI_LENGTH_CONTEXT = 1200;
   const AI_LENGTH_TIMEOUT = 180000;
   const AI_TERMS_TIMEOUT = 180000;
@@ -135,6 +134,9 @@
   let termsViewOpen = false;
   let termReport = null;
   let termReportDocId = null;
+  let factsViewOpen = false;
+  let factReport = null;
+  let factReportDocId = null;
   let autoTermsStartedDocId = null;
   let autoTermsTimer = null;
 
@@ -869,7 +871,7 @@
     if (!externalFeaturesEnabled()) return actions;
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
-      { id: 'ai-question', label: 'AI 문장 삽입', run: handleAiQuestionAddon },
+      { id: 'ai-verify', label: 'AI 사실 검증', run: handleAiVerifyAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
       ...actions
     ];
@@ -901,6 +903,7 @@
       charMenuOpen = false;
       suggestionsViewOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       render();
     });
     wrap.appendChild(btn);
@@ -921,6 +924,7 @@
       addonsMenuOpen = false;
       charMenuOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       suggestionsViewOpen = !suggestionsViewOpen;
       if (suggestionsViewOpen) {
         loadCachedGeneratedRulesListQuiet();
@@ -946,6 +950,7 @@
       addonsMenuOpen = false;
       charMenuOpen = false;
       suggestionsViewOpen = false;
+      factsViewOpen = false;
       const docId = getDocId();
       if (termsViewOpen && termReport && termReportDocId === docId) {
         termsViewOpen = false;
@@ -1033,6 +1038,7 @@
       addonsMenuOpen = false;
       charMenuOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       openSettingsPageFromDocs();
     });
     return btn;
@@ -1350,6 +1356,8 @@
     const body = el('div', 'trd-body');
     if (termsViewOpen) {
       appendTermsView(body);
+    } else if (factsViewOpen) {
+      appendFactsView(body);
     } else if (suggestionsViewOpen) {
       appendSentenceSuggestionsView(body);
     } else if (status === 'error') {
@@ -1508,6 +1516,173 @@
     }
 
     body.appendChild(wrap);
+  }
+
+  const FACT_STATUS_LABEL = {
+    supported: '근거 있음',
+    contradicted: '사실과 다름',
+    unverifiable: '확인 불가',
+    needs_context: '맥락 필요'
+  };
+
+  function appendFactsView(body) {
+    const docId = getDocId();
+    const report = factReportDocId === docId ? factReport : null;
+    const wrap = el('div', 'trd-terms-view');
+    const head = el('div', 'trd-terms-head');
+    const title = el('div', 'trd-terms-title');
+    title.textContent = 'AI 사실 검증';
+    const closeBtn = el('button', 'trd-btn trd-terms-refresh');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '닫기';
+    closeBtn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      factsViewOpen = false;
+      render();
+    });
+    head.append(title, closeBtn);
+    wrap.appendChild(head);
+
+    if (isAddonBusy('ai-verify') && !report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '사실 검증 중…';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+    if (!report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '문장을 선택하고 [추가기능] ▸ [AI 사실 검증]을 실행하세요.';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+
+    // 웹 접근 여부는 판정 신뢰도에 직접 영향을 주므로 표 위에 명시한다.
+    // 웹 없이 나온 판정은 검증이 아니라 모델의 기억이므로 눈에 띄게 경고한다.
+    if (report.webAccess !== 'used') {
+      const note = el('div', 'trd-msg trd-fact-warn');
+      note.textContent = report.webAccess === 'partial'
+        ? '일부 항목만 웹 근거를 확인했습니다. 근거 링크가 없는 항목은 모델 지식입니다.'
+        : '웹 검색이 되지 않아 모델 지식만으로 판단했습니다. 검증 결과로 신뢰하지 마세요.';
+      wrap.appendChild(note);
+      if (report.provider !== 'codex') {
+        const hint = el('div', 'trd-msg trd-fact-warn');
+        hint.textContent = '팝업의 [AI 엔진]에서 Codex로 바꾸면 웹 검증이 동작합니다.';
+        wrap.appendChild(hint);
+      }
+    }
+
+    if (report.claims.length === 0) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '검증할 사실 주장을 찾지 못했습니다.';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+
+    const tableWrap = el('div', 'trd-terms-table-wrap');
+    const table = document.createElement('table');
+    table.className = 'trd-terms-table';
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const label of ['주장', '판정', '근거']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    // 사실과 다른 항목을 위로 올린다 — 눈으로 훑을 때 놓치지 않도록.
+    const order = { contradicted: 0, needs_context: 1, unverifiable: 2, supported: 3 };
+    const claims = report.claims.slice().sort((a, b) => {
+      const av = order[a.status] === undefined ? 9 : order[a.status];
+      const bv = order[b.status] === undefined ? 9 : order[b.status];
+      return av - bv;
+    });
+    for (const claim of claims) tbody.appendChild(buildFactRow(claim));
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    wrap.appendChild(tableWrap);
+    body.appendChild(wrap);
+  }
+
+  function buildFactRow(claim) {
+    const tr = document.createElement('tr');
+
+    const source = document.createElement('td');
+    const sourceText = el('div', 'trd-fact-source');
+    sourceText.textContent = displayText(claim.sourceText);
+    sourceText.title = '클릭하면 문서에서 이 부분을 선택합니다';
+    sourceText.addEventListener('click', () => { selectFactClaimInDoc(claim); });
+    source.appendChild(sourceText);
+
+    const status = document.createElement('td');
+    const badge = el('div', 'trd-fact-status trd-fact-' + claim.status);
+    badge.textContent = FACT_STATUS_LABEL[claim.status] || claim.status;
+    status.appendChild(badge);
+    if (claim.confidence) {
+      const conf = el('div', 'trd-fact-confidence');
+      conf.textContent = claim.confidence;
+      status.appendChild(conf);
+    }
+
+    const evidence = document.createElement('td');
+    if (claim.finding) {
+      const finding = el('div', 'trd-fact-finding');
+      finding.textContent = displayText(claim.finding);
+      evidence.appendChild(finding);
+    }
+    if (claim.suggestedReplacement) {
+      const fix = el('div', 'trd-fact-fix');
+      fix.textContent = '→ ' + displayText(claim.suggestedReplacement);
+      fix.title = '클릭하면 교정문을 복사합니다';
+      fix.addEventListener('click', () => {
+        copyText(claim.suggestedReplacement).then(
+          () => showToast('교정문 복사됨', { durationMs: 1400 }),
+          () => showToast('클립보드 복사 실패', { durationMs: 2600 })
+        );
+      });
+      evidence.appendChild(fix);
+    }
+    for (const src of claim.sources) {
+      const url = String(src && src.url || '').trim();
+      if (!url || !/^https?:\/\//i.test(url)) continue;
+      const link = document.createElement('a');
+      link.className = 'trd-fact-source-link';
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = String(src.publisher || src.title || url).slice(0, 40);
+      link.title = url;
+      evidence.appendChild(link);
+    }
+
+    tr.append(source, status, evidence);
+    return tr;
+  }
+
+  // 표에서 주장을 누르면 문서의 해당 위치를 잡아 준다 (문장 제안 클릭과 같은 경로).
+  async function selectFactClaimInDoc(claim) {
+    const text = String(claim && claim.sourceText || '').trim();
+    if (!text) return;
+    let start = cachedText === null ? -1 : String(cachedText).indexOf(text);
+    if (start === -1 || cachedTextSource !== 'model') {
+      await refreshCachedModelTextForSuggestion();
+      start = cachedText === null ? -1 : String(cachedText).indexOf(text);
+    }
+    if (start === -1 || cachedTextSource !== 'model') {
+      showToast('문서에서 해당 문장을 찾지 못했습니다', { durationMs: 3000 });
+      return;
+    }
+    selectDocsModelRange(start, start + text.length).then(res => {
+      updateCursorOffset(res && res.selection ? res.selection : [{ start, end: start + text.length }]);
+      showToast('문서 위치 선택됨', { durationMs: 1400 });
+    }, () => {
+      showToast('위치 선택 실패', { durationMs: 2600 });
+    });
   }
 
   function buildTermRow(term) {
@@ -1862,6 +2037,7 @@
     }
     suggestionsViewOpen = false;
     termsViewOpen = false;
+    factsViewOpen = false;
     showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
     enqueueScan(cachedText === null);
   }
@@ -2817,19 +2993,20 @@
     };
   }
 
-  async function handleAiQuestionAddon() {
-    const actionId = 'ai-question';
+  // 드래그한 문장만 사실 검증한다. 문서는 건드리지 않고 결과를 패널 표로만 보여준다.
+  async function handleAiVerifyAddon() {
+    const actionId = 'ai-verify';
     if (isAddonBusy(actionId)) return;
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
     let successToast = '';
-    startAiQuestionStatus('본문/커서 읽는 중');
+    startAiVerifyStatus('선택 영역 읽는 중');
     try {
       const doc = await readCurrentDocumentTextForAddon();
       if (doc.source !== 'model') {
-        const error = new Error('Google Docs model text is required for cursor insertion');
-        error.userMessage = '문서 모델을 읽지 못해 삽입할 수 없습니다';
+        const error = new Error('Google Docs model text is required for fact verification');
+        error.userMessage = '문서 선택 영역을 읽지 못했습니다';
         throw error;
       }
       let selection = doc.selection || null;
@@ -2841,199 +3018,88 @@
           selection = null;
         }
       }
-      const offset = selectionOffset(selection);
-      if (!Number.isFinite(offset) || offset < 0 || offset > doc.text.length) {
-        const error = new Error('current Google Docs cursor is unavailable');
-        error.userMessage = '커서 위치를 읽지 못했습니다';
+      const range = selectionRange(selection);
+      if (!range || range.end <= range.start) {
+        const error = new Error('selected text is required');
+        error.userMessage = '검증할 문장을 드래그해 선택하세요';
+        throw error;
+      }
+      const selectedText = doc.text.slice(range.start, range.end);
+      if (!selectedText.trim()) {
+        const error = new Error('selected text is blank');
+        error.userMessage = '공백이 아닌 문장을 선택하세요';
         throw error;
       }
 
-      const context = buildAiQuestionContext(doc.text, offset);
-      const anchor = buildInsertionSuggestionAnchor(doc.text, offset);
-      const insertionProfile = classifyAiSentenceInsertion(doc.text, offset);
-      updateAiQuestionStatus(insertionProfile.mode === 'question' ? 'AI 발문 생성 중' : 'AI 설명 문장 생성 중');
-      const res = await sendAiBridge('question', {
-        timeoutMs: AI_QUESTION_TIMEOUT,
+      updateAiVerifyStatus('AI 사실 검증 중');
+      const res = await sendAiBridge('verifyFacts', {
+        timeoutMs: AI_VERIFY_TIMEOUT,
         document: {
           id: doc.docId,
           title: doc.title,
           url: location.href,
           textSource: doc.source,
-          cursorOffset: offset,
-          totalChars: doc.text.length,
-          contextBefore: context.before,
-          contextAfter: context.after,
-          insertionMode: insertionProfile.mode,
-          insertionModeReason: insertionProfile.reason,
-          insertionPreviousLine: insertionProfile.previousLine,
-          insertionCurrentLinePrefix: insertionProfile.currentLinePrefix,
-          insertionCurrentLineSuffix: insertionProfile.currentLineSuffix,
-          insertionSource: anchor.source,
-          insertionPrefixLength: anchor.prefixLength
+          selectedText,
+          contextBefore: doc.text.slice(Math.max(0, range.start - AI_VERIFY_CONTEXT), range.start),
+          contextAfter: doc.text.slice(range.end, range.end + AI_VERIFY_CONTEXT)
         }
       });
-      if (!res || !res.ok || !res.json) {
-        throw aiBridgeError(res, 'AI 문장 생성 실패');
+      if (!res || !res.ok) {
+        throw aiBridgeError(res, 'AI 사실 검증 실패');
       }
 
-      updateAiQuestionStatus('문장 제안 JSON 저장 중');
-      const n = activateGeneratedRulesResponse(res, '문장제안.json');
-      debugLog('[Toytype addons] AI sentence insertion suggestion result', {
-        chars: typeof res.text === 'string' ? Array.from(res.text).length : null,
-        provider: res.provider || '',
-        model: res.model || ''
-      });
-      finalStatus = 'AI 문장 제안 저장 완료';
-      if (n) finalStatus += ' · 누적 ' + n + '건';
-      successToast = 'AI 문장 제안을 저장했습니다';
+      factReport = normalizeFactReportForView(res, selectedText);
+      factReportDocId = getDocId();
+      factsViewOpen = true;
+      termsViewOpen = false;
+      suggestionsViewOpen = false;
+      addonsMenuOpen = false;
+
+      const flagged = factReport.claims.filter(c => c.status === 'contradicted').length;
+      finalStatus = 'AI 사실 검증 완료 · 주장 ' + factReport.claims.length + '건';
+      if (flagged) finalStatus += ' · 모순 ' + flagged + '건';
+      successToast = flagged
+        ? '사실과 다른 내용 ' + flagged + '건을 찾았습니다'
+        : '검증을 마쳤습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
       if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
-      console.error('[Toytype addons] AI sentence insertion suggestion failed', summary);
-      debugLog('[Toytype addons] AI sentence insertion suggestion failed detail', {
+      console.error('[Toytype addons] AI fact verification failed', summary);
+      debugLog('[Toytype addons] AI fact verification failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
-      finalStatus = error && error.userMessage ? error.userMessage : 'AI 문장 제안 저장 실패';
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 사실 검증 실패';
       errorToast = finalStatus;
     } finally {
       setAddonBusy(actionId, false);
-      finishAiQuestionStatus(errorToast ? 'error' : 'success', finalStatus);
+      finishAiVerifyStatus(errorToast ? 'error' : 'success', finalStatus);
       if (errorToast) showToast(errorToast, { durationMs: 4200 });
       else if (successToast) showToast(successToast);
+      render();
     }
   }
 
-  function buildAiQuestionContext(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
+  // 브리지 응답을 표에 그리기 좋은 형태로 좁힌다.
+  function normalizeFactReportForView(res, selectedText) {
+    const raw = Array.isArray(res && res.claims) ? res.claims : [];
+    const claims = raw.map(item => ({
+      sourceText: String(item && item.sourceText || ''),
+      status: String(item && item.status || 'unverifiable'),
+      confidence: String(item && item.confidence || ''),
+      finding: String(item && item.finding || ''),
+      suggestedReplacement: String(item && item.suggestedReplacement || ''),
+      sources: Array.isArray(item && item.sources) ? item.sources.filter(Boolean).slice(0, 4) : []
+    })).filter(c => c.sourceText || c.finding);
     return {
-      before: source.slice(Math.max(0, pos - AI_QUESTION_CONTEXT_BEFORE), pos),
-      after: source.slice(pos, pos + AI_QUESTION_CONTEXT_AFTER)
+      claims,
+      selectedText: String(selectedText || ''),
+      provider: String(res && res.provider || ''),
+      model: String(res && res.model || ''),
+      webAccess: String(res && res.webAccess || ''),
+      checkedAt: Date.now()
     };
-  }
-
-  function classifyAiSentenceInsertion(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
-    const lineStart = pos > 0 ? source.lastIndexOf('\n', pos - 1) + 1 : 0;
-    const lineEndIndex = source.indexOf('\n', pos);
-    const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex;
-    const currentLinePrefix = source.slice(lineStart, pos);
-    const currentLineSuffix = source.slice(pos, lineEnd);
-    const previous = previousNonEmptyLine(source, lineStart);
-    const onlyWhitespaceSincePrevious = previous
-      ? source.slice(previous.end, pos).trim() === ''
-      : false;
-    const atParagraphStart = currentLinePrefix.trim() === '';
-    const titleLike = previous ? looksLikeTitleLine(previous.text) : false;
-    if (previous && atParagraphStart && onlyWhitespaceSincePrevious && titleLike) {
-      return {
-        mode: 'question',
-        reason: 'title-below',
-        previousLine: previous.text,
-        currentLinePrefix: currentLinePrefix,
-        currentLineSuffix: currentLineSuffix
-      };
-    }
-    return {
-      mode: 'explanation',
-      reason: previous ? 'body-context' : 'document-start',
-      previousLine: previous ? previous.text : '',
-      currentLinePrefix: currentLinePrefix,
-      currentLineSuffix: currentLineSuffix
-    };
-  }
-
-  function previousNonEmptyLine(text, lineStart) {
-    let end = Math.max(0, Number(lineStart) || 0);
-    while (end > 0) {
-      const prevBreak = text.lastIndexOf('\n', end - 2);
-      const start = prevBreak === -1 ? 0 : prevBreak + 1;
-      const lineEnd = end > 0 && text.charCodeAt(end - 1) === 10 ? end - 1 : end;
-      const raw = text.slice(start, lineEnd);
-      const trimmed = raw.trim();
-      if (trimmed) return { text: trimmed, start, end: lineEnd };
-      if (prevBreak === -1) break;
-      end = prevBreak + 1;
-    }
-    return null;
-  }
-
-  function looksLikeTitleLine(line) {
-    const text = String(line || '').trim();
-    if (!text) return false;
-    const chars = Array.from(text).length;
-    if (chars < 2 || chars > 80) return false;
-    if (/^[\-*+•]\s+/.test(text)) return false;
-    if (/[.?!。！？]$/.test(text) && !/^\d+(?:[.)]|장)\s+\S/.test(text)) return false;
-    if (/[.!?。！？].+[.!?。！？]/.test(text)) return false;
-    return true;
-  }
-
-  function buildInsertionSuggestionAnchor(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
-    const right = buildOneSidedInsertionAnchor(source, pos, 'right');
-    if (right) return right;
-    const left = buildOneSidedInsertionAnchor(source, pos, 'left');
-    if (left) return left;
-
-    let best = null;
-    for (const radius of [16, 24, 40, 72, 120]) {
-      const beforeLen = Math.min(pos, Math.ceil(radius / 2));
-      const afterLen = Math.min(source.length - pos, Math.floor(radius / 2));
-      const start = pos - beforeLen;
-      const end = pos + afterLen;
-      const candidate = source.slice(start, end);
-      if (!candidate.trim()) continue;
-      const anchor = {
-        source: candidate,
-        prefixLength: beforeLen,
-        start,
-        end,
-        occurrences: countTextOccurrences(source, candidate, 2)
-      };
-      best = anchor;
-      if (anchor.occurrences === 1) return anchor;
-    }
-    if (best) return best;
-    const error = new Error('insertion anchor unavailable');
-    error.userMessage = '문장을 넣을 기준 문맥을 찾지 못했습니다';
-    throw error;
-  }
-
-  function buildOneSidedInsertionAnchor(text, pos, side) {
-    const lengths = [4, 6, 8, 12, 18, 28, 44, 72];
-    for (const len of lengths) {
-      const start = side === 'right' ? pos : Math.max(0, pos - len);
-      const end = side === 'right' ? Math.min(text.length, pos + len) : pos;
-      const candidate = text.slice(start, end);
-      if (!candidate.trim()) continue;
-      const anchor = {
-        source: candidate,
-        prefixLength: side === 'right' ? 0 : candidate.length,
-        start,
-        end,
-        occurrences: countTextOccurrences(text, candidate, 2)
-      };
-      if (anchor.occurrences === 1) return anchor;
-    }
-    return null;
-  }
-
-  function countTextOccurrences(text, needle, stopAfter) {
-    if (!needle) return 0;
-    let count = 0;
-    let index = 0;
-    const limit = Number.isFinite(Number(stopAfter)) ? Number(stopAfter) : Infinity;
-    while ((index = text.indexOf(needle, index)) !== -1) {
-      count++;
-      if (count >= limit) return count;
-      index += Math.max(1, needle.length);
-    }
-    return count;
   }
 
   async function handleAiLengthAddon() {
@@ -3535,10 +3601,10 @@
     if (expanded) render();
   }
 
-  function startAiQuestionStatus(phase) {
+  function startAiVerifyStatus(phase) {
     addonStatus = {
-      type: 'ai-question',
-      label: 'AI 문장 삽입',
+      type: 'ai-verify',
+      label: 'AI 사실 검증',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -3549,21 +3615,21 @@
     if (expanded) render();
   }
 
-  function updateAiQuestionStatus(phase) {
-    if (!addonStatus || addonStatus.type !== 'ai-question' || addonStatus.state !== 'running') {
-      startAiQuestionStatus(phase);
+  function updateAiVerifyStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-verify' || addonStatus.state !== 'running') {
+      startAiVerifyStatus(phase);
       return;
     }
     addonStatus.phase = phase || addonStatus.phase;
     if (expanded) render();
   }
 
-  function finishAiQuestionStatus(state, message) {
+  function finishAiVerifyStatus(state, message) {
     const now = Date.now();
-    const previous = addonStatus && addonStatus.type === 'ai-question' ? addonStatus : null;
+    const previous = addonStatus && addonStatus.type === 'ai-verify' ? addonStatus : null;
     addonStatus = {
-      type: 'ai-question',
-      label: 'AI 문장 삽입',
+      type: 'ai-verify',
+      label: 'AI 사실 검증',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,

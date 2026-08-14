@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "setup": "node tools/install_native_host.mjs",
+    "setup:remove": "node tools/install_native_host.mjs --uninstall"
   },
   "devDependencies": {
     "@xmldom/xmldom": "^0.9.10"

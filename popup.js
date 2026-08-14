@@ -1,28 +1,33 @@
-// Toytype — 팝업
-// 카테고리/사이트 설정을 저장한다. AI 연결 설정은 options 페이지가 저장한다.
+// Toytype — 툴바 팝업
+// 브리지 연결·연결 테스트·엔진 선택을 맡는다. AI 기능 실행은 독스 패널의
+// [추가기능] 메뉴가 담당하므로 여기서 중복으로 두지 않는다.
+// 오탈자 목록은 기본으로 접어 두고, 일반 페이지에서는 본문 빨간 밑줄 표시를
+// 여기서 켜고 끈다.
 'use strict';
 
-const DEFAULT_SETTINGS = {
-  schemaVersion: 1,
-  docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
-  genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
-  disabledOrigins:   []
+const DEFAULT_BRIDGE_PORT = 17644;
+const NATIVE_HOST = 'com.toytype.bridge_host';
+
+const DEFAULT_AI = {
+  timeoutDefaultVersion: 2,
+  provider: 'codex',
+  bridgeUrl: 'http://127.0.0.1:' + DEFAULT_BRIDGE_PORT,
+  codexCommand: 'codex',
+  claudeCommand: 'claude',
+  grokCommand: 'grok',
+  workspaceDir: '~/Dev/Toytype',
+  outputDir: '~/.toytype/generated',
+  requestTimeoutMs: 1800000,
+  maxDocumentChars: 180000
 };
 
-// rules.json 로드 실패 시 폴백 (정본은 typo:getCategories 응답)
-const FALLBACK_CATEGORIES = [
-  { id: 'convert',   label: '표기 변환',     ruleCount: 689  },
-  { id: 'spelling',  label: '맞춤법',       ruleCount: 255  },
-  { id: 'plural',    label: '존대와 복수',   ruleCount: 73   },
-  { id: 'honorific', label: '높임말 서술어', ruleCount: 148  },
-  { id: 'space1',    label: '조사 앞 공백',  ruleCount: 2317 },
-  { id: 'space2',    label: '붙여쓰기',     ruleCount: 1980 },
-  { id: 'space3',    label: '값 붙이기',    ruleCount: 1077 },
-  { id: 'final',     label: '맨마지막',     ruleCount: 315  }
+const PROVIDERS = [
+  { id: 'codex', label: 'Codex', commandKey: 'codexCommand' },
+  { id: 'claude', label: 'Claude Code', commandKey: 'claudeCommand' },
+  { id: 'grok', label: 'Grok', commandKey: 'grokCommand' }
 ];
 
-const CATEGORY_IDS = FALLBACK_CATEGORIES.map((c) => c.id);
-
+// 카테고리 색 계열 — content/highlight.css의 밑줄 색과 맞춘다.
 const CAT_COLOR_CLASS = {
   convert: 'cat-red', spelling: 'cat-red', final: 'cat-red',
   plural: 'cat-purple', honorific: 'cat-purple',
@@ -30,10 +35,19 @@ const CAT_COLOR_CLASS = {
 };
 
 const $app = document.getElementById('app');
+
 let tabId = null;
-let activeTabInfo = null;
-let categories = FALLBACK_CATEGORIES;
-let findingContextMenu = null;
+let isDocsTab = false;
+let report = null;          // 활성 탭의 검사 결과 (없으면 지원 안 하는 페이지)
+let findingsOpen = false;   // 오탈자 목록은 접힌 상태로 시작한다
+let providersOpen = false;  // AI 엔진 선택도 평소엔 접어 둔다
+let settings = {};
+let ai = Object.assign({}, DEFAULT_AI);
+let bridgeState = { state: 'unknown', version: '', port: null, tools: null, error: '' };
+let busyAction = '';
+let statusText = '';
+let statusKind = 'info';
+let nativeHostReady = true; // 호출해 보기 전까지는 있다고 보고, 실패하면 안내로 전환
 
 // ---------- 유틸 ----------
 
@@ -70,61 +84,43 @@ function settingsIcon() {
   ], 'icon');
 }
 
-// 표시 규약(§1.4): 선두·후미 공백(U+0020)만 ␣로 치환, 내부 공백 유지. 빈 dst는 ∅(삭제).
-function displayToken(s) {
-  if (s === '') return '∅(삭제)';
-  let i = 0;
-  let j = s.length;
-  while (i < j && s.charCodeAt(i) === 0x20) i++;
-  while (j > i && s.charCodeAt(j - 1) === 0x20) j--;
-  return '␣'.repeat(i) + s.slice(i, j) + '␣'.repeat(s.length - j);
+function normalizeProvider(value) {
+  return PROVIDERS.some(p => p.id === value) ? value : DEFAULT_AI.provider;
 }
 
-function relTime(ts) {
-  const d = Date.now() - ts;
-  if (d < 10000) return '방금 전';
-  if (d < 60000) return Math.floor(d / 1000) + '초 전';
-  if (d < 3600000) return Math.floor(d / 60000) + '분 전';
-  if (d < 86400000) return Math.floor(d / 3600000) + '시간 전';
-  return new Date(ts).toLocaleDateString('ko-KR');
+function providerLabel(id) {
+  const found = PROVIDERS.find(p => p.id === id);
+  return found ? found.label : id;
 }
 
-// 저장값은 부분일 수 있으므로 섹션별 머지. 모르는 카테고리 id는 무시.
-function mergeCats(defaults, stored) {
-  const out = Object.assign({}, defaults);
-  if (stored && typeof stored === 'object') {
-    for (const id of CATEGORY_IDS) {
-      if (typeof stored[id] === 'boolean') out[id] = stored[id];
-    }
-  }
-  return out;
+function externalFeaturesEnabled() {
+  return settings && settings.externalFeaturesEnabled === true;
+}
+
+function bridgePort() {
+  const match = String(ai.bridgeUrl || '').match(/:(\d+)\/*$/);
+  if (match) return Number(match[1]);
+  if (Number.isFinite(Number(bridgeState.port))) return Number(bridgeState.port);
+  return DEFAULT_BRIDGE_PORT;
 }
 
 async function readSettings() {
-  let stored = {};
   try {
-    stored = (await chrome.storage.local.get('settings')).settings || {};
-  } catch (e) { /* 기본값 사용 */ }
-  const out = {
-    schemaVersion: 1,
-    docsCategories: mergeCats(DEFAULT_SETTINGS.docsCategories, stored.docsCategories),
-    genericCategories: mergeCats(DEFAULT_SETTINGS.genericCategories, stored.genericCategories),
-    disabledOrigins: Array.isArray(stored.disabledOrigins)
-      ? stored.disabledOrigins.filter((o) => typeof o === 'string')
-      : []
-  };
-  if (stored.ai && typeof stored.ai === 'object') out.ai = stored.ai;
-  if (stored.tocMaxLevel !== undefined) out.tocMaxLevel = stored.tocMaxLevel; // 옵션 페이지 소관 — 그대로 보존
-  if (stored.copyOnSelect !== undefined) out.copyOnSelect = stored.copyOnSelect; // 옵션 페이지 소관 — 그대로 보존
-  return out;
+    return (await chrome.storage.local.get('settings')).settings || {};
+  } catch (e) {
+    return {};
+  }
 }
 
-async function writeSettings(settings) {
-  await chrome.storage.local.set({ settings: settings });
+async function writeSettings(next) {
+  await chrome.storage.local.set({ settings: next });
 }
 
-function sendToTab(msg) {
-  return chrome.tabs.sendMessage(tabId, msg);
+function mergeAi(stored) {
+  const source = stored && typeof stored.ai === 'object' && stored.ai ? stored.ai : {};
+  const merged = Object.assign({}, DEFAULT_AI, source);
+  merged.provider = normalizeProvider(merged.provider);
+  return merged;
 }
 
 async function copyText(text) {
@@ -148,152 +144,210 @@ async function copyText(text) {
   }
 }
 
-function closeFindingContextMenu() {
-  if (!findingContextMenu) return;
-  findingContextMenu.remove();
-  findingContextMenu = null;
+function setStatus(text, kind) {
+  statusText = text || '';
+  statusKind = kind || 'info';
+  render();
 }
 
-function findingIssuePayload(f, report) {
-  return {
-    context: report && report.context || '',
-    src: f && f.src,
-    dst: f && f.dst,
-    cat: f && f.cat,
-    catLabel: f && (f.catLabel || f.cat),
-    before: f && f.before,
-    after: f && f.after,
-    line: f && f.line,
-    rulesVersion: report && report.rulesVersion,
-    rulesSource: report && report.rulesSource,
-    scannedAt: report && report.scannedAt,
-    pageTitle: activeTabInfo && activeTabInfo.title || '',
-    pageUrl: activeTabInfo && activeTabInfo.url || report && report.origin || ''
-  };
-}
-
-function openFindingIssue(f, report) {
+function sendBridge(action, payload) {
   return chrome.runtime.sendMessage({
-    type: 'typo:reportFindingIssue',
-    finding: findingIssuePayload(f, report)
-  });
+    type: 'typo:aiBridge',
+    action,
+    payload: payload || {}
+  }).catch(error => ({
+    ok: false,
+    error: 'extension_message_failed',
+    message: error && error.message ? error.message : String(error)
+  }));
 }
 
-function showFindingContextMenu(f, report, ev) {
-  closeFindingContextMenu();
-  ev.preventDefault();
-  ev.stopPropagation();
+// ---------- 네이티브 호스트 ----------
 
-  const menu = el('div', 'finding-context-menu');
-  menu.setAttribute('role', 'menu');
-  const reportBtn = el('button', 'finding-context-item', '오류 제보');
-  reportBtn.type = 'button';
-  reportBtn.setAttribute('role', 'menuitem');
-  reportBtn.addEventListener('click', async clickEv => {
-    clickEv.preventDefault();
-    clickEv.stopPropagation();
-    closeFindingContextMenu();
+// 확장은 프로세스를 못 띄운다. 호스트가 대신 LaunchAgent로 브리지를 상주시킨다.
+function sendNative(action) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = value => { if (!settled) { settled = true; resolve(value); } };
     try {
-      const res = await openFindingIssue(f, report);
-      if (!res || res.ok !== true) throw new Error(res && (res.message || res.error) || 'issue_open_failed');
+      chrome.runtime.sendNativeMessage(NATIVE_HOST, { action, port: bridgePort() }, res => {
+        if (chrome.runtime.lastError) {
+          done({ ok: false, error: 'native_host_missing', message: chrome.runtime.lastError.message });
+          return;
+        }
+        done(res || { ok: false, error: 'native_host_empty' });
+      });
     } catch (error) {
-      const badge = el('div', 'notice warn', '이슈 열기 실패');
-      $app.prepend(badge);
-      setTimeout(() => { badge.remove(); }, 1800);
+      done({ ok: false, error: 'native_host_missing', message: error && error.message ? error.message : String(error) });
     }
+    // 호스트가 응답하지 않는 경우까지 UI가 매달리지 않게 한다.
+    setTimeout(() => done({ ok: false, error: 'native_host_timeout' }), 40000);
   });
-  menu.appendChild(reportBtn);
-  document.body.appendChild(menu);
-
-  const margin = 6;
-  const rect = menu.getBoundingClientRect();
-  const x = Math.min(Math.max(margin, ev.clientX), Math.max(margin, window.innerWidth - rect.width - margin));
-  const y = Math.min(Math.max(margin, ev.clientY), Math.max(margin, window.innerHeight - rect.height - margin));
-  menu.style.left = x + 'px';
-  menu.style.top = y + 'px';
-  findingContextMenu = menu;
 }
 
-document.addEventListener('click', closeFindingContextMenu);
-document.addEventListener('scroll', closeFindingContextMenu, true);
-document.addEventListener('keydown', ev => {
-  if (ev.key === 'Escape') closeFindingContextMenu();
-});
-
-// ---------- 상태 화면 ----------
-
-function renderUnsupported() {
-  $app.textContent = '';
-  const box = el('div', 'state-box');
-  box.append(el('p', 'msg', '이 페이지에서는 검사할 수 없습니다.'));
-  $app.append(box);
+function nativeHostInstallCommand() {
+  return 'node tools/install_native_host.mjs';
 }
 
-function renderMessage(text, withRetry) {
-  $app.textContent = '';
-  const box = el('div', 'state-box');
-  box.append(el('p', 'msg', text));
-  if (withRetry) {
-    const btn = el('button', 'btn primary', '다시 검사');
-    btn.addEventListener('click', () => { requestReport({ type: 'typo:rescan' }, 99); });
-    box.append(btn);
+async function connectBridge() {
+  if (busyAction) return;
+  if (!externalFeaturesEnabled()) return;
+  busyAction = 'connect';
+  bridgeState = Object.assign({}, bridgeState, { state: 'checking' });
+  setStatus('브리지를 켜는 중…', 'info');
+
+  const res = await sendNative('connect');
+  busyAction = '';
+
+  if (res && res.ok) {
+    nativeHostReady = true;
+    await refreshBridge(false);
+    setStatus(res.alreadyRunning ? '이미 켜져 있습니다.' : '브리지를 켰습니다. 이제 로그인하면 자동으로 실행됩니다.', 'ok');
+    return;
   }
-  $app.append(box);
+  // 실패하면 checking 상태에 갇히지 않게 되돌린다 — 버튼이 계속 비활성이면 재시도할 방법이 없다.
+  bridgeState = Object.assign({}, bridgeState, { state: 'error' });
+  if (res && (res.error === 'native_host_missing' || res.error === 'native_host_timeout')) {
+    nativeHostReady = false;
+    setStatus('연결 도우미가 아직 설치되지 않았습니다. 아래 명령을 한 번만 실행하세요.', 'warn');
+    return;
+  }
+  setStatus('브리지를 켜지 못했습니다 — ' + bridgeErrorText(res), 'warn');
 }
 
-// ---------- 보고서 요청 ----------
+async function disconnectBridge() {
+  if (busyAction) return;
+  busyAction = 'disconnect';
+  setStatus('상주를 끄는 중…', 'info');
+  const res = await sendNative('disconnect');
+  busyAction = '';
+  if (res && res.ok) {
+    bridgeState = { state: 'error', version: '', port: bridgePort(), tools: null, error: '' };
+    setStatus('브리지 상주를 껐습니다.', 'ok');
+    return;
+  }
+  setStatus('끄지 못했습니다 — ' + bridgeErrorText(res), 'warn');
+}
 
-async function requestReport(msg, attempt) {
-  let report;
+// ---------- 동작 ----------
+
+async function refreshBridge(force) {
+  if (!externalFeaturesEnabled()) {
+    bridgeState = { state: 'off', version: '', port: null, tools: null, error: '' };
+    render();
+    return;
+  }
+  bridgeState = Object.assign({}, bridgeState, { state: 'checking' });
+  if (force) setStatus('브리지 확인 중…', 'info');
+  else render();
+
+  const res = await sendBridge('health');
+  if (res && res.ok) {
+    bridgeState = {
+      state: 'ok',
+      version: typeof res.version === 'string' ? res.version : '',
+      port: Number.isFinite(Number(res.port)) ? Number(res.port) : bridgePort(),
+      tools: res.tools && typeof res.tools === 'object' ? res.tools : null,
+      error: ''
+    };
+    if (force) setStatus('브리지에 연결되었습니다.', 'ok');
+    else render();
+    return;
+  }
+  bridgeState = {
+    state: 'error',
+    version: '',
+    port: bridgePort(),
+    tools: null,
+    error: res && (res.message || res.error) ? String(res.message || res.error) : 'bridge_unavailable'
+  };
+  if (force) setStatus('브리지에 연결하지 못했습니다. 아래 명령으로 브리지를 켜세요.', 'warn');
+  else render();
+}
+
+async function selectProvider(id) {
+  const provider = normalizeProvider(id);
+  if (provider === ai.provider) return;
+  ai = Object.assign({}, ai, { provider });
+  const stored = await readSettings();
+  stored.ai = Object.assign({}, mergeAi(stored), { provider });
+  settings = stored;
+  await writeSettings(stored);
+  setStatus(providerLabel(provider) + '(으)로 전환했습니다.', 'ok');
+}
+
+async function testProvider(id) {
+  const provider = normalizeProvider(id);
+  if (busyAction) return;
+  busyAction = 'test:' + provider;
+  setStatus(providerLabel(provider) + ' 연결 테스트 중…', 'info');
+  const res = await sendBridge('test', { provider, timeoutMs: 120000 });
+  busyAction = '';
+  if (res && res.ok) {
+    const elapsed = Number.isFinite(Number(res.elapsedMs)) ? ' · ' + Math.round(Number(res.elapsedMs) / 100) / 10 + '초' : '';
+    setStatus(providerLabel(provider) + ' 연결 성공' + elapsed, 'ok');
+    return;
+  }
+  setStatus(providerLabel(provider) + ' 연결 실패 — ' + bridgeErrorText(res), 'warn');
+}
+
+function bridgeErrorText(res) {
+  if (!res || typeof res !== 'object') return String(res || '알 수 없는 오류');
+  if (res.error === 'external_features_disabled') return '외부 기능이 꺼져 있습니다';
+  if (res.error === 'bridge_unavailable' || res.error === 'extension_message_failed') return '브리지가 꺼져 있습니다';
+  if (res.error === 'bridge_timeout') return '시간 초과';
+  const diagnostic = res.diagnostics && res.diagnostics.diagnostic;
+  const text = String(diagnostic || res.message || res.error || '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? text.slice(0, 119) + '…' : (text || '알 수 없는 오류');
+}
+
+// 밑줄 표시만 끈다. 검사와 목록·배지는 그대로 두므로 껐다 켜도 다시 스캔하지 않는다.
+async function toggleHighlight(enabled) {
+  const stored = await readSettings();
+  stored.highlightEnabled = enabled === true;
+  settings = stored;
+  await writeSettings(stored);
+  setStatus(enabled ? '본문에 빨간 밑줄을 표시합니다.' : '본문 밑줄을 감췄습니다. 검사는 계속합니다.', 'ok');
+}
+
+function highlightEnabled() {
+  return !settings || settings.highlightEnabled !== false;
+}
+
+async function fetchReport() {
+  if (typeof tabId !== 'number') return null;
   try {
-    report = await sendToTab(msg);
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'typo:get' });
+    return res && res.ok ? res : null;
   } catch (e) {
-    renderUnsupported(); // 수신자 없음 (chrome:// 등)
-    return;
+    return null; // chrome:// 등 콘텐츠 스크립트가 없는 페이지
   }
-  if (!report) {
-    renderUnsupported();
-    return;
-  }
-  if (report.ok) {
-    await renderReport(report);
-    return;
-  }
-  if (report.error === 'not_ready') {
-    if (attempt < 3) {
-      renderMessage('검사 중…', false);
-      setTimeout(() => { requestReport({ type: 'typo:get' }, attempt + 1); }, 700);
-    } else {
-      renderMessage('아직 검사 결과가 없습니다.', true);
-    }
-    return;
-  }
-  if (report.error === 'export_failed') {
-    renderMessage('구글 독스 텍스트를 가져오지 못했습니다. 보기 권한과 로그인 상태를 확인하세요.', true);
-    return;
-  }
-  renderMessage('검사 결과를 가져오지 못했습니다.', true);
 }
 
-// ---------- 설정 변경 (read-modify-write → rescan) ----------
-
-async function onToggleCategory(catId, checked, context) {
-  const settings = await readSettings();
-  const key = context === 'docs' ? 'docsCategories' : 'genericCategories';
-  settings[key][catId] = checked;
-  await writeSettings(settings);
-  await requestReport({ type: 'typo:rescan' }, 99);
+async function rescanActiveTab() {
+  if (busyAction) return;
+  busyAction = 'rescan';
+  setStatus('다시 검사 중…', 'info');
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'typo:rescan' });
+    report = res && res.ok ? res : report;
+  } catch (e) { /* 아래에서 상태만 갱신 */ }
+  busyAction = '';
+  setStatus(report ? '검사를 마쳤습니다.' : '이 페이지는 검사할 수 없습니다.', report ? 'ok' : 'warn');
 }
 
-async function setSiteDisabled(origin, disabled) {
-  if (!origin) return;
-  const settings = await readSettings();
-  const set = new Set(settings.disabledOrigins);
-  if (disabled) set.add(origin);
-  else set.delete(origin);
-  settings.disabledOrigins = Array.from(set);
-  await writeSettings(settings);
-  await requestReport({ type: 'typo:rescan' }, 99);
+async function toggleExternalFeatures(enabled) {
+  const stored = await readSettings();
+  stored.externalFeaturesEnabled = enabled === true;
+  settings = stored;
+  await writeSettings(stored);
+  if (enabled) {
+    setStatus('외부 기능을 켰습니다.', 'ok');
+    refreshBridge(false);
+    return;
+  }
+  bridgeState = { state: 'off', version: '', port: null, tools: null, error: '' };
+  setStatus('외부 기능을 껐습니다.', 'info');
 }
 
 function openSettingsPage() {
@@ -304,129 +358,133 @@ function openSettingsPage() {
   }
 }
 
-// ---------- 정상 화면 (상태 D) ----------
+// ---------- 화면 ----------
 
-async function renderReport(report) {
-  closeFindingContextMenu();
-  $app.textContent = '';
-
-  if (report.disabled) {
-    const box = el('div', 'state-box');
-    box.append(el('p', 'msg', '이 사이트에서 꺼져 있습니다.'));
-    const btn = el('button', 'btn primary', report.context === 'docs' ? '구글 독스에서 켜기' : '다시 켜기');
-    btn.addEventListener('click', () => { setSiteDisabled(report.origin, false); });
-    box.append(btn);
-    $app.append(box);
-    return;
-  }
-
-  const settings = await readSettings();
-  const ctxCats = report.context === 'docs' ? settings.docsCategories : settings.genericCategories;
-  const counts = report.categoryCounts || {};
-
-  // 헤더
-  const header = el('header', 'header');
-  const countSpan = el('div', 'count' + (report.total > 0 ? ' has-findings' : ''), '오탈자 ' + report.total + '건');
-  header.append(countSpan);
-  const metaParts = [report.context === 'docs' ? '구글 독스' : '일반 페이지'];
-  if (report.scannedAt) metaParts.push(relTime(report.scannedAt) + ' 검사');
-  if (report.rulesVersion) metaParts.push('규칙 ' + report.rulesVersion);
-  header.append(el('div', 'meta', metaParts.join(' · ')));
-  $app.append(header);
-
-  if (report.truncated) {
-    $app.append(el('p', 'notice warn', '표시 한도(500건)를 초과했습니다. 일부만 표시됩니다.'));
-  }
-  if (report.cached) {
-    $app.append(el('p', 'notice info', '10초 이내 재검사라 캐시된 텍스트 기준입니다.'));
-  }
-
-  // 카테고리 토글
-  const sec = el('section', 'cats');
-  sec.append(el('h2', 'sec-title', report.context === 'docs' ? '카테고리 (구글 독스)' : '카테고리 (일반 페이지)'));
-  for (const cat of categories) {
-    const row = el('label', 'cat-row');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = ctxCats[cat.id] !== false;
-    cb.addEventListener('change', () => { onToggleCategory(cat.id, cb.checked, report.context); });
-    row.append(cb);
-    row.append(el('span', 'cat-label', cat.label));
-    row.append(el('span', 'cat-count', '규칙 ' + cat.ruleCount));
-    const found = counts[cat.id] || 0;
-    row.append(el('span', 'cat-found' + (found > 0 ? '' : ' zero'), '발견 ' + found));
-    sec.append(row);
-  }
-  $app.append(sec);
-
-  // 발견 목록 (카테고리별 그룹, rules.json 순서)
-  const findings = Array.isArray(report.findings) ? report.findings : [];
-  if (findings.length === 0) {
-    $app.append(el('div', 'empty', '발견된 오탈자가 없습니다.'));
-  } else {
-    const byCat = new Map();
-    for (const f of findings) {
-      if (!byCat.has(f.cat)) byCat.set(f.cat, []);
-      byCat.get(f.cat).push(f);
-    }
-    const orderedIds = categories.map((c) => c.id);
-    for (const id of byCat.keys()) {
-      if (!orderedIds.includes(id)) orderedIds.push(id);
-    }
-    const list = el('div', 'findings');
-    for (const catId of orderedIds) {
-      const group = byCat.get(catId);
-      if (!group || group.length === 0) continue;
-      const details = document.createElement('details');
-      details.open = true;
-      const labelText = group[0].catLabel || catId;
-      details.append(el('summary', null, labelText + ' (' + group.length + ')'));
-      for (const f of group) {
-        details.append(buildFindingItem(f, report));
-      }
-      list.append(details);
-    }
-    $app.append(list);
-  }
-
-  // 푸터
-  const footer = el('footer', 'footer');
-  const rescanBtn = el('button', 'btn primary', '다시 검사');
-  rescanBtn.addEventListener('click', () => { requestReport({ type: 'typo:rescan' }, 99); });
-  footer.append(rescanBtn);
-  const settingsBtn = el('button', 'btn icon-btn ghost');
-  settingsBtn.appendChild(settingsIcon());
-  settingsBtn.setAttribute('aria-label', '설정');
-  settingsBtn.title = '설정';
-  settingsBtn.addEventListener('click', openSettingsPage);
-  footer.append(settingsBtn);
-  const disableBtn = el('button', 'btn ghost', report.context === 'docs' ? '구글 독스에서 끄기' : '이 사이트에서 끄기');
-  disableBtn.addEventListener('click', () => { setSiteDisabled(report.origin, true); });
-  footer.append(disableBtn);
-  $app.append(footer);
+function bridgeStateLabel() {
+  if (bridgeState.state === 'ok') return '연결됨';
+  if (bridgeState.state === 'checking') return '확인 중';
+  if (bridgeState.state === 'off') return '꺼짐';
+  if (bridgeState.state === 'error') return '연결 안 됨';
+  return '알 수 없음';
 }
 
-function buildFindingItem(f, report) {
-  const context = report && report.context;
-  const item = el('div', 'finding ' + (CAT_COLOR_CLASS[f.cat] || 'cat-red'));
+function buildHeader() {
+  const header = el('header', 'header');
+  const row = el('div', 'head-row');
+  row.append(el('div', 'title', 'Toytype'));
+  const settingsBtn = el('button', 'btn icon-btn ghost');
+  settingsBtn.type = 'button';
+  settingsBtn.appendChild(settingsIcon());
+  settingsBtn.title = '설정';
+  settingsBtn.setAttribute('aria-label', '설정');
+  settingsBtn.addEventListener('click', openSettingsPage);
+  row.append(settingsBtn);
+  header.append(row);
+  header.append(el('div', 'meta', isDocsTab ? '구글 독스 문서 · 오탈자 목록은 문서 패널에서' : '구글 독스 문서에서 오탈자 패널이 열립니다'));
+  return header;
+}
 
-  // 1행: …{before} [src] {after}…
+// 표시 규약: 선두·후미 공백만 ␣로 치환, 빈 dst는 ∅(삭제).
+function displayToken(s) {
+  if (s === '') return '∅(삭제)';
+  let i = 0;
+  let j = s.length;
+  while (i < j && s.charCodeAt(i) === 0x20) i++;
+  while (j > i && s.charCodeAt(j - 1) === 0x20) j--;
+  return '␣'.repeat(i) + s.slice(i, j) + '␣'.repeat(s.length - j);
+}
+
+function buildHighlightSection() {
+  const sec = el('section', 'sec');
+  const row = el('label', 'switch-row');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = highlightEnabled();
+  cb.addEventListener('change', () => { toggleHighlight(cb.checked); });
+  row.append(cb);
+  row.append(el('span', 'switch-label', '본문에 빨간 밑줄 표시'));
+  sec.append(row);
+  sec.append(el('p', 'hint', isDocsTab
+    ? '구글 독스는 본문에 밑줄을 긋지 않습니다. 일반 웹페이지에만 적용됩니다.'
+    : '끄면 밑줄만 감추고 검사와 목록은 그대로 유지합니다.'));
+  return sec;
+}
+
+// 오탈자 목록 — 기본은 접힘. 펼치면 카테고리별로 묶어 보여준다.
+function buildFindingsSection() {
+  const sec = el('section', 'sec');
+  const head = el('div', 'sec-head');
+  const toggle = el('button', 'findings-toggle');
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', findingsOpen ? 'true' : 'false');
+  const total = report && Number.isFinite(Number(report.total)) ? Number(report.total) : 0;
+  toggle.append(el('span', 'caret', findingsOpen ? '▾' : '▸'));
+  toggle.append(el('span', 'sec-title', '오탈자'));
+  toggle.append(el('span', 'count-chip' + (total > 0 ? ' has' : ''), report ? String(total) + '건' : '—'));
+  toggle.addEventListener('click', () => {
+    findingsOpen = !findingsOpen;
+    render();
+  });
+  head.append(toggle);
+
+  if (report) {
+    const rescan = el('button', 'btn small', busyAction === 'rescan' ? '검사 중…' : '다시 검사');
+    rescan.type = 'button';
+    rescan.disabled = !!busyAction;
+    rescan.addEventListener('click', () => { rescanActiveTab(); });
+    head.append(rescan);
+  }
+  sec.append(head);
+
+  if (!findingsOpen) return sec;
+
+  if (!report) {
+    sec.append(el('p', 'hint', '이 페이지에서는 검사할 수 없습니다.'));
+    return sec;
+  }
+  if (report.disabled) {
+    sec.append(el('p', 'hint', '이 사이트에서 꺼져 있습니다.'));
+    return sec;
+  }
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  if (findings.length === 0) {
+    sec.append(el('p', 'hint', '발견된 오탈자가 없습니다.'));
+    return sec;
+  }
+
+  const byCat = new Map();
+  for (const f of findings) {
+    if (!byCat.has(f.cat)) byCat.set(f.cat, []);
+    byCat.get(f.cat).push(f);
+  }
+  const list = el('div', 'findings');
+  for (const [catId, group] of byCat) {
+    const details = document.createElement('details');
+    details.open = true;
+    details.append(el('summary', null, (group[0].catLabel || catId) + ' (' + group.length + ')'));
+    for (const f of group) details.append(buildFindingItem(f));
+    list.append(details);
+  }
+  sec.append(list);
+  return sec;
+}
+
+function buildFindingItem(f) {
+  const item = el('div', 'finding ' + (CAT_COLOR_CLASS[f.cat] || 'cat-red'));
   const line1 = el('div', 'snippet');
   if (f.before) line1.append(document.createTextNode('…' + f.before));
   line1.append(el('mark', 'src-mark', displayToken(f.src)));
   if (f.after) line1.append(document.createTextNode(f.after + '…'));
   item.append(line1);
 
-  // 2행: {src} → {dst} + 칩 + ¶line
   const line2 = el('div', 'fix');
   line2.append(el('span', 'pair', displayToken(f.src) + ' → ' + displayToken(f.dst)));
   line2.append(el('span', 'chip', f.catLabel || f.cat));
-  if (context === 'docs' && f.line != null) {
-    line2.append(el('span', 'line', '¶' + f.line));
-  }
+  if (f.line != null) line2.append(el('span', 'line', '¶' + f.line));
   item.append(line2);
 
-  // 클릭 → 교정어 복사
+  // 클릭하면 교정어를 복사한다 — 예전 팝업과 같은 동작.
+  item.title = '클릭하면 교정어 복사';
   item.addEventListener('click', async () => {
     const ok = await copyText(f.dst);
     const old = item.querySelector('.copied');
@@ -435,11 +493,144 @@ function buildFindingItem(f, report) {
     item.append(badge);
     setTimeout(() => { badge.remove(); }, 1200);
   });
-  item.addEventListener('contextmenu', ev => {
-    showFindingContextMenu(f, report, ev);
-  });
-
   return item;
+}
+
+function buildExternalToggle() {
+  const sec = el('section', 'sec');
+  const row = el('label', 'switch-row');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = externalFeaturesEnabled();
+  cb.addEventListener('change', () => { toggleExternalFeatures(cb.checked); });
+  row.append(cb);
+  row.append(el('span', 'switch-label', '브릿지 · AI 기능 사용'));
+  sec.append(row);
+  if (!externalFeaturesEnabled()) {
+    sec.append(el('p', 'hint', '끄면 확장 자체 규칙 검사만 씁니다. 로컬 브리지와 AI 기능은 숨겨집니다.'));
+  }
+  return sec;
+}
+
+function buildBridgeSection() {
+  const sec = el('section', 'sec');
+  const head = el('div', 'sec-head');
+  head.append(el('h2', 'sec-title', '로컬 브리지'));
+  const badge = el('span', 'badge badge-' + bridgeState.state, bridgeStateLabel());
+  head.append(badge);
+  sec.append(head);
+
+  const meta = [];
+  if (bridgeState.state === 'ok') {
+    if (bridgeState.version) meta.push('v' + bridgeState.version);
+    if (bridgeState.port) meta.push('포트 ' + bridgeState.port);
+  } else {
+    meta.push(ai.bridgeUrl);
+  }
+  sec.append(el('div', 'sec-meta', meta.join(' · ')));
+
+  const actions = el('div', 'row-actions');
+
+  if (bridgeState.state === 'ok') {
+    const recheck = el('button', 'btn', '다시 확인');
+    recheck.type = 'button';
+    recheck.disabled = !!busyAction;
+    recheck.addEventListener('click', () => { refreshBridge(true); });
+    actions.append(recheck);
+
+    const off = el('button', 'btn ghost', busyAction === 'disconnect' ? '끄는 중…' : '상주 끄기');
+    off.type = 'button';
+    off.disabled = !!busyAction;
+    off.title = '자동 실행을 해제하고 브리지를 종료합니다';
+    off.addEventListener('click', () => { disconnectBridge(); });
+    actions.append(off);
+  } else {
+    const connectBtn = el('button', 'btn primary', busyAction === 'connect' || bridgeState.state === 'checking' ? '연결 중…' : '연결');
+    connectBtn.type = 'button';
+    connectBtn.disabled = !!busyAction || bridgeState.state === 'checking';
+    connectBtn.addEventListener('click', () => { connectBridge(); });
+    actions.append(connectBtn);
+  }
+  sec.append(actions);
+
+  // 도우미가 없을 때만 터미널 명령을 보여준다 — 평소에는 숨긴다.
+  if (!nativeHostReady) {
+    sec.append(el('p', 'hint', '최초 1회만 프로젝트 폴더에서 실행하세요.'));
+    const cmd = el('pre', 'command', nativeHostInstallCommand());
+    sec.append(cmd);
+    const copyBtn = el('button', 'btn ghost', '명령 복사');
+    copyBtn.type = 'button';
+    copyBtn.addEventListener('click', async () => {
+      const ok = await copyText(nativeHostInstallCommand());
+      setStatus(ok ? '명령을 복사했습니다. 터미널에 붙여넣고 확장을 새로고침하세요.' : '복사하지 못했습니다.', ok ? 'ok' : 'warn');
+    });
+    sec.append(copyBtn);
+  }
+  return sec;
+}
+
+function buildProviderSection() {
+  const sec = el('section', 'sec');
+  const head = el('button', 'group-toggle');
+  head.type = 'button';
+  head.setAttribute('aria-expanded', providersOpen ? 'true' : 'false');
+  head.append(el('span', 'caret', providersOpen ? '▾' : '▸'));
+  head.append(el('span', 'sec-title', 'AI 엔진'));
+  // 접혀 있어도 지금 무슨 엔진을 쓰는지는 보이게 한다.
+  head.append(el('span', 'group-value', providerLabel(ai.provider)));
+  head.addEventListener('click', () => {
+    providersOpen = !providersOpen;
+    render();
+  });
+  sec.append(head);
+
+  if (!providersOpen) return sec;
+
+  for (const provider of PROVIDERS) {
+    const row = el('div', 'provider-row' + (ai.provider === provider.id ? ' is-active' : ''));
+    const pick = el('button', 'provider-pick');
+    pick.type = 'button';
+    pick.setAttribute('aria-pressed', ai.provider === provider.id ? 'true' : 'false');
+    pick.addEventListener('click', () => { selectProvider(provider.id); });
+
+    const dot = el('span', 'provider-dot');
+    pick.append(dot);
+    pick.append(el('span', 'provider-name', provider.label));
+
+    const tool = bridgeState.tools && bridgeState.tools[provider.id];
+    if (tool) {
+      pick.append(el('span', 'provider-tool' + (tool.available ? ' ok' : ' missing'), tool.available ? '설치됨' : '없음'));
+    }
+    row.append(pick);
+
+    const testBtn = el('button', 'btn small', busyAction === 'test:' + provider.id ? '테스트 중…' : '테스트');
+    testBtn.type = 'button';
+    testBtn.disabled = !!busyAction || bridgeState.state !== 'ok';
+    testBtn.title = bridgeState.state === 'ok' ? provider.label + ' 연결 테스트' : '브리지를 먼저 연결하세요';
+    testBtn.addEventListener('click', () => { testProvider(provider.id); });
+    row.append(testBtn);
+    sec.append(row);
+  }
+  return sec;
+}
+
+function buildStatus() {
+  if (!statusText) return null;
+  return el('div', 'status status-' + statusKind, statusText);
+}
+
+function render() {
+  $app.textContent = '';
+  $app.append(buildHeader());
+  $app.append(buildFindingsSection());
+  if (!isDocsTab) $app.append(buildHighlightSection());
+  $app.append(buildExternalToggle());
+  if (externalFeaturesEnabled()) {
+    $app.append(buildBridgeSection());
+    $app.append(buildProviderSection());
+  }
+  const status = buildStatus();
+  if (status) $app.append(status);
 }
 
 // ---------- 시작 ----------
@@ -450,24 +641,25 @@ async function init() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     tab = tabs && tabs[0];
   } catch (e) { /* 아래에서 처리 */ }
-  if (!tab || typeof tab.id !== 'number') {
-    renderUnsupported();
-    return;
+  if (tab && typeof tab.id === 'number') {
+    tabId = tab.id;
+    isDocsTab = /^https:\/\/docs\.google\.com\/document\//.test(String(tab.url || ''));
   }
-  tabId = tab.id;
-  activeTabInfo = {
-    title: typeof tab.title === 'string' ? tab.title : '',
-    url: typeof tab.url === 'string' ? tab.url : ''
-  };
 
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'typo:getCategories' });
-    if (res && res.ok && Array.isArray(res.categories) && res.categories.length > 0) {
-      categories = res.categories;
-    }
-  } catch (e) { /* 폴백 라벨 사용 */ }
+  settings = await readSettings();
+  ai = mergeAi(settings);
+  render();
 
-  await requestReport({ type: 'typo:get' }, 0);
+  report = await fetchReport();
+  // 콘텐츠 스크립트가 알려주는 context가 url보다 정확하다 (activeTab이 늦게 붙는 경우 대비).
+  if (report && report.context) isDocsTab = report.context === 'docs';
+  render();
+
+  if (!externalFeaturesEnabled()) return;
+
+  await refreshBridge(false);
+  // 브리지가 꺼져 있으면 팝업을 여는 것만으로 켠다 — 평소에는 버튼도 누를 일이 없다.
+  if (bridgeState.state !== 'ok') connectBridge();
 }
 
 init();

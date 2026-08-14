@@ -10,7 +10,8 @@
     schemaVersion: 1,
     docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
     genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
-    disabledOrigins:   []
+    disabledOrigins:   [],
+    highlightEnabled:  true // 끄면 본문 밑줄만 감춘다 — 검사와 목록/배지는 그대로 둔다
   };
 
   const FINDING_LIMIT = 500;
@@ -229,6 +230,7 @@
   function applyHighlights(rangesByCat) {
     if (!highlightsSupported()) return;
     clearHighlights();
+    if (settings.highlightEnabled === false) return; // 밑줄만 생략 — 목록·카운트는 이미 채워져 있다
     for (const cat of Object.keys(rangesByCat)) {
       CSS.highlights.set('typo-' + cat, new Highlight(...rangesByCat[cat]));
     }
@@ -283,7 +285,8 @@
             schemaVersion: 1,
             docsCategories: Object.assign({}, DEFAULT_SETTINGS.docsCategories, stored.docsCategories || {}),
             genericCategories: Object.assign({}, DEFAULT_SETTINGS.genericCategories, stored.genericCategories || {}),
-            disabledOrigins: Array.isArray(stored.disabledOrigins) ? stored.disabledOrigins : []
+            disabledOrigins: Array.isArray(stored.disabledOrigins) ? stored.disabledOrigins : [],
+            highlightEnabled: stored.highlightEnabled !== false
           });
         });
       } catch (e) {
