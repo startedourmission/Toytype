@@ -83,6 +83,54 @@ test('T1 rules.json 구조: 정본 카테고리 8개, 모든 규칙은 [string,s
   }
 });
 
+test('규칙 충돌 방지: 같은 src 다른 dst·정반대·연쇄·합의 표기 src 없음', () => {
+  const pairs = [];
+  const srcTo = new Map();
+  for (const c of rulesJson.categories) {
+    for (const r of c.rules) {
+      const src = r[0];
+      const dst = r[1];
+      if (!src || src.trim() === '' || src === dst || dst === ' ' + src) continue;
+      pairs.push([c.id, src, dst]);
+      if (!srcTo.has(src)) srcTo.set(src, []);
+      srcTo.get(src).push([c.id, dst]);
+    }
+  }
+
+  const srcConflicts = [...srcTo.entries()]
+    .filter(([, items]) => new Set(items.map((x) => x[1])).size > 1)
+    .map(([src, items]) => ({ src, items }));
+  assert.deepEqual(srcConflicts, [], '같은 src가 서로 다른 dst를 가리킵니다');
+
+  const pairSet = new Set(pairs.map(([, src, dst]) => `${src}\t${dst}`));
+  const reversals = [];
+  const seen = new Set();
+  for (const [, src, dst] of pairs) {
+    const key = `${dst}\t${src}`;
+    if (pairSet.has(key) && !seen.has(`${src}\t${dst}`) && !seen.has(key)) {
+      seen.add(`${src}\t${dst}`);
+      reversals.push([src, dst]);
+    }
+  }
+  assert.deepEqual(reversals, [], 'X→Y와 Y→X가 동시에 있습니다');
+
+  const chains = [];
+  for (const [cat, src, dst] of pairs) {
+    if (!srcTo.has(dst)) continue;
+    for (const [ncat, ndst] of srcTo.get(dst)) {
+      if (ndst !== src) chains.push(`${cat}:${src}→${dst} → ${ncat}:${ndst}`);
+    }
+  }
+  assert.deepEqual(chains, [], 'A→B→C 연쇄가 있습니다');
+
+  const canon = [
+    'macOS', 'JSON 형식', '메타데이터', '생명주기', '더', '커맨드라인', '다음 코드', '있습니다',
+    '목푯값', '타깃 변수', '화상 채팅', 'HTTP 요청', '이런 경우', '해야', '하는', '회원 가입', '배경 지식'
+  ];
+  const canonAsSrc = canon.filter((form) => srcTo.has(form));
+  assert.deepEqual(canonAsSrc, [], '합의 표기가 src로 다시 깨집니다');
+});
+
 test('init 반환값·categories()·version', () => {
   const ret = E.init(rulesJson, ALL_IDS);
   assert.equal(ret.version, rulesJson.version);
