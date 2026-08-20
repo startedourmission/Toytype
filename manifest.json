@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "description": "내장 규칙으로 웹페이지와 구글 독스 원고의 오탈자를 찾고, 구글 독스에서는 문서 위치 선택을 지원합니다.",
   "minimum_chrome_version": "114",
-  "permissions": ["storage"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjm39BFtIQGkddNWq7R//39ayKVHFS3XfWM9c6Uu/XR7ta3OrUa1ArJUZeGPxk74a4GY8/rV7uFaaYABwx6mxWKZZ1+jFop9pVoSH0lQ2SqsYcw6lsgzcIiw6XzV6qLtQJQrFwD9tGugQplPak5W9v1oCqX63Pi6LskQRaikY88q0j6+XjxZRtxDlzpgQBlsmlKbQPQCEVQfVIAlOEWvIGaX3hGd4LOdXye+c1vu43hY6h0UJI+3QCXWszgrlEzhEM6XzDgBYkEA/N4GvHcSkStqmU0ZOUtZ02es3vytihVDwABIQwiYcmmmzJZSao5gHJ7a/LyP1oSmCtlI2M0q4nwIDAQAB",
+  "permissions": ["storage", "activeTab", "nativeMessaging"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

@@ -13,12 +13,15 @@ let rulesCache = null;
 
 const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
 
+const AI_PROVIDERS = ['codex', 'claude', 'grok'];
+
 const DEFAULT_AI_SETTINGS = {
   timeoutDefaultVersion: 2,
   provider: 'codex',
   bridgeUrl: 'http://127.0.0.1:17644',
   codexCommand: 'codex',
   claudeCommand: 'claude',
+  grokCommand: 'grok',
   workspaceDir: '~/Dev/Toytype',
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 1800000,
@@ -72,9 +75,13 @@ function normalizeBridgeUrl(value) {
   return raw.replace(/\/+$/, '');
 }
 
+function normalizeAiProvider(value) {
+  return typeof value === 'string' && AI_PROVIDERS.includes(value) ? value : DEFAULT_AI_SETTINGS.provider;
+}
+
 function mergeAiSettings(settings) {
   const ai = settings && settings.ai && typeof settings.ai === 'object' ? settings.ai : {};
-  const provider = ai.provider === 'claude' ? 'claude' : 'codex';
+  const provider = normalizeAiProvider(ai.provider);
   const requestTimeoutMs = normalizeAiRequestTimeout(ai);
   return {
     timeoutDefaultVersion: DEFAULT_AI_SETTINGS.timeoutDefaultVersion,
@@ -82,7 +89,10 @@ function mergeAiSettings(settings) {
     bridgeUrl: normalizeBridgeUrl(ai.bridgeUrl),
     codexCommand: typeof ai.codexCommand === 'string' && ai.codexCommand.trim() ? ai.codexCommand.trim() : DEFAULT_AI_SETTINGS.codexCommand,
     claudeCommand: typeof ai.claudeCommand === 'string' && ai.claudeCommand.trim() ? ai.claudeCommand.trim() : DEFAULT_AI_SETTINGS.claudeCommand,
-    workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : DEFAULT_AI_SETTINGS.workspaceDir,
+    grokCommand: typeof ai.grokCommand === 'string' && ai.grokCommand.trim() ? ai.grokCommand.trim() : DEFAULT_AI_SETTINGS.grokCommand,
+    // 비워 두면 브리지가 자기 저장소 폴더를 쓴다. 여기서 기본값을 채워 보내면
+    // 그 경로가 없는 머신에서도 덮어써 버리므로 빈 값을 그대로 넘긴다.
+    workspaceDir: typeof ai.workspaceDir === 'string' && ai.workspaceDir.trim() ? ai.workspaceDir.trim() : '',
     outputDir: typeof ai.outputDir === 'string' && ai.outputDir.trim() ? ai.outputDir.trim() : DEFAULT_AI_SETTINGS.outputDir,
     requestTimeoutMs,
     maxDocumentChars: clampNumber(ai.maxDocumentChars, DEFAULT_AI_SETTINGS.maxDocumentChars, 1000, 1000000)
@@ -111,6 +121,7 @@ function buildAiBridgePayload(ai, payload) {
       provider: ai.provider,
       codexCommand: ai.codexCommand,
       claudeCommand: ai.claudeCommand,
+      grokCommand: ai.grokCommand,
       workspaceDir: ai.workspaceDir,
       outputDir: ai.outputDir,
       requestTimeoutMs: ai.requestTimeoutMs,
@@ -264,6 +275,7 @@ function aiBridgePath(action) {
     terms: '/ai/terms',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
+    verifyFacts: '/ai/verify-facts',
     listGenerated: '/fs/list-generated',
     openOutputDir: '/fs/open-output-dir',
     cleanupGenerated: '/fs/cleanup-generated',

@@ -10,6 +10,7 @@
     disabledOrigins:   [],
     tocMaxLevel: 4, // 목차 추출에 포함할 최대 헤딩 레벨 (1~5)
     copyOnSelect: true, // 오탈자 선택 시 교정어 클립보드 자동 복사
+    charPresetDirectInsert: false, // 특수문자 프리셋을 클립보드 복사 대신 문서에 바로 입력
     externalFeaturesEnabled: false // 로컬 브리지/외부 CLI가 필요한 기능은 기본 비활성화
   };
   const CATEGORY_ORDER = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
@@ -27,9 +28,8 @@
   const FETCH_TIMEOUT = 15000;
   const SNIPPET = 20;
   const MATCH_CONTEXT = 80;
-  const AI_QUESTION_CONTEXT_BEFORE = 3500;
-  const AI_QUESTION_CONTEXT_AFTER = 2500;
-  const AI_QUESTION_TIMEOUT = 180000;
+  const AI_VERIFY_CONTEXT = 1200; // 선택 영역 앞뒤로 참고용 문맥만 전달한다
+  const AI_VERIFY_TIMEOUT = 300000; // 웹 검색을 돌리므로 길이 조절보다 넉넉히 잡는다
   const AI_LENGTH_CONTEXT = 1200;
   const AI_LENGTH_TIMEOUT = 180000;
   const AI_TERMS_TIMEOUT = 180000;
@@ -110,6 +110,10 @@
   let currentCursorOffset = null;
   let cursorPollTimer = null;
   let cursorPollBusy = false;
+  // 드래그한 영역의 글자수 집계 ({ chars, charsNoSpace, words } 또는 null)
+  let selectionCount = null;
+  // 마지막으로 글자수를 센 선택 범위('start:end'). 같으면 본문을 다시 읽지 않는다.
+  let lastSelectionSpanKey = '';
   let ignoredFindingKeys = new Set();
   let ignoredFindingDocId = null;
   let applyingFindingKey = null;
@@ -130,6 +134,9 @@
   let termsViewOpen = false;
   let termReport = null;
   let termReportDocId = null;
+  let factsViewOpen = false;
+  let factReport = null;
+  let factReportDocId = null;
   let autoTermsStartedDocId = null;
   let autoTermsTimer = null;
 
@@ -139,6 +146,7 @@
   let panelCss = null;
   let expanded = false; // 펼침 상태는 메모리만 (미저장)
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
+  let charMenuOpen = false; // 푸터 특수문자 프리셋 팔레트 펼침 상태 (메모리만)
   let stylePresetMenuOpen = false; // 추가기능 안 단락 스타일 셋팅 하위 목록 펼침 상태
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
   let findingContextMenu = null;
@@ -166,6 +174,7 @@
       disabledOrigins: Array.isArray(s.disabledOrigins) ? s.disabledOrigins : [],
       tocMaxLevel: normalizeTocMaxLevel(s.tocMaxLevel),
       copyOnSelect: s.copyOnSelect !== false,
+      charPresetDirectInsert: s.charPresetDirectInsert === true,
       externalFeaturesEnabled: s.externalFeaturesEnabled === true
     };
   }
@@ -582,6 +591,8 @@
       lastModelAt = 0;
       selectedFindingKey = null;
       currentCursorOffset = null;
+      selectionCount = null;
+      lastSelectionSpanKey = '';
       generatedRulesFiles = [];
       generatedRulesLoadedDocId = null;
       await loadIgnoredFindingsForCurrentDoc();
@@ -626,6 +637,8 @@
         cachedTextSource = textSource;
         lastModelAt = Date.now();
         updateCursorOffset(model.selection);
+        // text·selection이 같은 getText 응답이라 오프셋이 이 본문과 정확히 맞는다.
+        syncSelectionCountFromModel(text, model.selection);
       } catch (e) {
         // 내부 모델 API가 막히면 기존 export 경로로 내려간다.
       }
@@ -640,6 +653,8 @@
           cachedText = text;
           cachedTextSource = textSource;
           currentCursorOffset = null;
+          selectionCount = null;
+          lastSelectionSpanKey = '';
           lastFetchAt = Date.now();
         } catch (e) {
           status = 'error';
@@ -856,7 +871,7 @@
     if (!externalFeaturesEnabled()) return actions;
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
-      { id: 'ai-question', label: 'AI 문장 삽입', run: handleAiQuestionAddon },
+      { id: 'ai-verify', label: 'AI 사실 검증', run: handleAiVerifyAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
       ...actions
     ];
@@ -885,8 +900,10 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = !addonsMenuOpen;
+      charMenuOpen = false;
       suggestionsViewOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       render();
     });
     wrap.appendChild(btn);
@@ -905,7 +922,9 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       suggestionsViewOpen = !suggestionsViewOpen;
       if (suggestionsViewOpen) {
         loadCachedGeneratedRulesListQuiet();
@@ -929,7 +948,9 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       suggestionsViewOpen = false;
+      factsViewOpen = false;
       const docId = getDocId();
       if (termsViewOpen && termReport && termReportDocId === docId) {
         termsViewOpen = false;
@@ -945,6 +966,66 @@
     return btn;
   }
 
+  // 특수문자 프리셋 — 원고에서 자주 쓰는 동글뱅이 번호와 화살표를 커서 위치에 삽입한다.
+  const CHAR_PRESET_ITEMS = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾', '▶', '➝'];
+
+  // 기본은 클립보드 복사, 설정(charPresetDirectInsert)을 켜면 커서 위치에 바로 입력한다.
+  function insertPresetChar(ch) {
+    if (settings.charPresetDirectInsert) {
+      styleBridgeOp('typeText', { text: ch }).then(() => {
+        showToast(ch + ' 삽입됨', { durationMs: 1400 });
+      }).catch(error => {
+        console.error('[Toytype char preset] insert failed', error);
+        showToast('문자 삽입 실패 — ' + styleShortErrorText(error), { durationMs: 4200 });
+      });
+      return;
+    }
+    copyText(ch).then(
+      () => showToast(ch + ' 복사됨', { durationMs: 1400 }),
+      () => showToast('클립보드 복사 실패', { durationMs: 2600 })
+    );
+  }
+
+  function buildCharMenu() {
+    const menu = el('div', 'trd-chars-menu');
+    menu.setAttribute('role', 'menu');
+    for (const ch of CHAR_PRESET_ITEMS) {
+      const item = el('button', 'trd-chars-item');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = ch;
+      item.title = ch + ' 삽입';
+      item.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        insertPresetChar(ch);
+      });
+      menu.appendChild(item);
+    }
+    return menu;
+  }
+
+  function buildCharPresetButton() {
+    const wrap = el('div', 'trd-addons-wrap');
+    const btn = el('button', 'trd-btn trd-icon-btn trd-chars-btn' + (charMenuOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.textContent = '❶';
+    btn.setAttribute('aria-label', '특수문자 프리셋');
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', charMenuOpen ? 'true' : 'false');
+    btn.title = '특수문자 프리셋';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      charMenuOpen = !charMenuOpen;
+      addonsMenuOpen = false;
+      render();
+    });
+    wrap.appendChild(btn);
+    if (charMenuOpen) wrap.appendChild(buildCharMenu());
+    return wrap;
+  }
+
   function buildSettingsButton() {
     const btn = el('button', 'trd-btn trd-icon-btn trd-settings-btn');
     btn.type = 'button';
@@ -955,7 +1036,9 @@
       ev.preventDefault();
       ev.stopPropagation();
       addonsMenuOpen = false;
+      charMenuOpen = false;
       termsViewOpen = false;
+      factsViewOpen = false;
       openSettingsPageFromDocs();
     });
     return btn;
@@ -963,7 +1046,7 @@
 
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildTermsButton());
+    wrap.append(buildSettingsButton(), buildTermsButton(), buildCharPresetButton());
     if (externalFeaturesEnabled()) wrap.appendChild(buildSuggestionsButton());
     wrap.appendChild(buildAddonsButton());
     return wrap;
@@ -1078,12 +1161,6 @@
   function displayText(s) {
     if (s === '') return '∅(삭제)';
     return s.replace(/^ +| +$/g, m => '␣'.repeat(m.length));
-  }
-
-  function timeStr(ts) {
-    const d = new Date(ts);
-    const p = n => String(n).padStart(2, '0');
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
   function render(options) {
@@ -1279,6 +1356,8 @@
     const body = el('div', 'trd-body');
     if (termsViewOpen) {
       appendTermsView(body);
+    } else if (factsViewOpen) {
+      appendFactsView(body);
     } else if (suggestionsViewOpen) {
       appendSentenceSuggestionsView(body);
     } else if (status === 'error') {
@@ -1326,19 +1405,25 @@
     // 푸터 (우측에 설정/추가기능 버튼)
     const foot = el('div', 'trd-foot');
     const footText = el('div', 'trd-foot-text');
-    const ver = (lastReport && lastReport.rulesVersion) || (rulesJson && rulesJson.version) || '-';
-    const when = lastReport && lastReport.scannedAt ? timeStr(lastReport.scannedAt) : '-';
-    const l2 = document.createElement('div');
-    const ruleSource = termsViewOpen ? '용어 통일 표' : (suggestionsViewOpen ? '문장제안.json' : (activeRulesSource === 'builtin' ? 'rules.json' : 'JSON ' + (rulesSourceLabel || 'uploaded.json')));
-    l2.textContent = ruleSource + ' · 버전 ' + ver + ' · 마지막 검사 ' + when;
-    const addonStatusText = addonStatusLineText();
-    if (addonStatusText) {
-      const statusLine = document.createElement('div');
-      statusLine.className = 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : '');
-      statusLine.textContent = addonStatusText;
+    const countText = selectionCountText();
+    if (countText) {
+      const countLine = el('div', 'trd-selection-count');
+      countLine.textContent = countText;
+      footText.appendChild(countLine);
+    }
+    const addonLines = addonStatusLines();
+    if (addonLines && addonLines.head) {
+      const statusLine = el('div', 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : ''));
+      const headLine = el('div', 'trd-addon-status-head');
+      headLine.textContent = addonLines.head;
+      statusLine.appendChild(headLine);
+      if (addonLines.detail) {
+        const detailLine = el('div', 'trd-addon-status-detail');
+        detailLine.textContent = addonLines.detail;
+        statusLine.appendChild(detailLine);
+      }
       footText.appendChild(statusLine);
     }
-    footText.appendChild(l2);
     if (externalFeaturesEnabled()) foot.appendChild(buildBridgeStatusBadge());
     foot.append(footText, buildFooterActions());
     panel.appendChild(foot);
@@ -1431,6 +1516,173 @@
     }
 
     body.appendChild(wrap);
+  }
+
+  const FACT_STATUS_LABEL = {
+    supported: '근거 있음',
+    contradicted: '사실과 다름',
+    unverifiable: '확인 불가',
+    needs_context: '맥락 필요'
+  };
+
+  function appendFactsView(body) {
+    const docId = getDocId();
+    const report = factReportDocId === docId ? factReport : null;
+    const wrap = el('div', 'trd-terms-view');
+    const head = el('div', 'trd-terms-head');
+    const title = el('div', 'trd-terms-title');
+    title.textContent = 'AI 사실 검증';
+    const closeBtn = el('button', 'trd-btn trd-terms-refresh');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '닫기';
+    closeBtn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      factsViewOpen = false;
+      render();
+    });
+    head.append(title, closeBtn);
+    wrap.appendChild(head);
+
+    if (isAddonBusy('ai-verify') && !report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '사실 검증 중…';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+    if (!report) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '문장을 선택하고 [추가기능] ▸ [AI 사실 검증]을 실행하세요.';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+
+    // 웹 접근 여부는 판정 신뢰도에 직접 영향을 주므로 표 위에 명시한다.
+    // 웹 없이 나온 판정은 검증이 아니라 모델의 기억이므로 눈에 띄게 경고한다.
+    if (report.webAccess !== 'used') {
+      const note = el('div', 'trd-msg trd-fact-warn');
+      note.textContent = report.webAccess === 'partial'
+        ? '일부 항목만 웹 근거를 확인했습니다. 근거 링크가 없는 항목은 모델 지식입니다.'
+        : '웹 검색이 되지 않아 모델 지식만으로 판단했습니다. 검증 결과로 신뢰하지 마세요.';
+      wrap.appendChild(note);
+      if (report.provider !== 'codex') {
+        const hint = el('div', 'trd-msg trd-fact-warn');
+        hint.textContent = '팝업의 [AI 엔진]에서 Codex로 바꾸면 웹 검증이 동작합니다.';
+        wrap.appendChild(hint);
+      }
+    }
+
+    if (report.claims.length === 0) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '검증할 사실 주장을 찾지 못했습니다.';
+      wrap.appendChild(msg);
+      body.appendChild(wrap);
+      return;
+    }
+
+    const tableWrap = el('div', 'trd-terms-table-wrap');
+    const table = document.createElement('table');
+    table.className = 'trd-terms-table';
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const label of ['주장', '판정', '근거']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    // 사실과 다른 항목을 위로 올린다 — 눈으로 훑을 때 놓치지 않도록.
+    const order = { contradicted: 0, needs_context: 1, unverifiable: 2, supported: 3 };
+    const claims = report.claims.slice().sort((a, b) => {
+      const av = order[a.status] === undefined ? 9 : order[a.status];
+      const bv = order[b.status] === undefined ? 9 : order[b.status];
+      return av - bv;
+    });
+    for (const claim of claims) tbody.appendChild(buildFactRow(claim));
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    wrap.appendChild(tableWrap);
+    body.appendChild(wrap);
+  }
+
+  function buildFactRow(claim) {
+    const tr = document.createElement('tr');
+
+    const source = document.createElement('td');
+    const sourceText = el('div', 'trd-fact-source');
+    sourceText.textContent = displayText(claim.sourceText);
+    sourceText.title = '클릭하면 문서에서 이 부분을 선택합니다';
+    sourceText.addEventListener('click', () => { selectFactClaimInDoc(claim); });
+    source.appendChild(sourceText);
+
+    const status = document.createElement('td');
+    const badge = el('div', 'trd-fact-status trd-fact-' + claim.status);
+    badge.textContent = FACT_STATUS_LABEL[claim.status] || claim.status;
+    status.appendChild(badge);
+    if (claim.confidence) {
+      const conf = el('div', 'trd-fact-confidence');
+      conf.textContent = claim.confidence;
+      status.appendChild(conf);
+    }
+
+    const evidence = document.createElement('td');
+    if (claim.finding) {
+      const finding = el('div', 'trd-fact-finding');
+      finding.textContent = displayText(claim.finding);
+      evidence.appendChild(finding);
+    }
+    if (claim.suggestedReplacement) {
+      const fix = el('div', 'trd-fact-fix');
+      fix.textContent = '→ ' + displayText(claim.suggestedReplacement);
+      fix.title = '클릭하면 교정문을 복사합니다';
+      fix.addEventListener('click', () => {
+        copyText(claim.suggestedReplacement).then(
+          () => showToast('교정문 복사됨', { durationMs: 1400 }),
+          () => showToast('클립보드 복사 실패', { durationMs: 2600 })
+        );
+      });
+      evidence.appendChild(fix);
+    }
+    for (const src of claim.sources) {
+      const url = String(src && src.url || '').trim();
+      if (!url || !/^https?:\/\//i.test(url)) continue;
+      const link = document.createElement('a');
+      link.className = 'trd-fact-source-link';
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = String(src.publisher || src.title || url).slice(0, 40);
+      link.title = url;
+      evidence.appendChild(link);
+    }
+
+    tr.append(source, status, evidence);
+    return tr;
+  }
+
+  // 표에서 주장을 누르면 문서의 해당 위치를 잡아 준다 (문장 제안 클릭과 같은 경로).
+  async function selectFactClaimInDoc(claim) {
+    const text = String(claim && claim.sourceText || '').trim();
+    if (!text) return;
+    let start = cachedText === null ? -1 : String(cachedText).indexOf(text);
+    if (start === -1 || cachedTextSource !== 'model') {
+      await refreshCachedModelTextForSuggestion();
+      start = cachedText === null ? -1 : String(cachedText).indexOf(text);
+    }
+    if (start === -1 || cachedTextSource !== 'model') {
+      showToast('문서에서 해당 문장을 찾지 못했습니다', { durationMs: 3000 });
+      return;
+    }
+    selectDocsModelRange(start, start + text.length).then(res => {
+      updateCursorOffset(res && res.selection ? res.selection : [{ start, end: start + text.length }]);
+      showToast('문서 위치 선택됨', { durationMs: 1400 });
+    }, () => {
+      showToast('위치 선택 실패', { durationMs: 2600 });
+    });
   }
 
   function buildTermRow(term) {
@@ -1734,7 +1986,7 @@
     select.value = activeRulesSource;
     const builtinOption = document.createElement('option');
     builtinOption.value = 'builtin';
-    builtinOption.textContent = 'rules' + rulesVersionSuffix(builtinRulesJson);
+    builtinOption.textContent = '기본 규칙';
     select.appendChild(builtinOption);
     for (const file of generatedRulesFilesForSelect()) {
       const generatedOption = document.createElement('option');
@@ -1746,7 +1998,7 @@
     if (uploadedRulesJson) {
       const uploadedOption = document.createElement('option');
       uploadedOption.value = 'uploaded';
-      uploadedOption.textContent = 'JSON' + rulesVersionSuffix(uploadedRulesJson);
+      uploadedOption.textContent = uploadedRulesLabel || '업로드한 JSON';
       uploadedOption.title = uploadedRulesLabel || 'uploaded.json';
       select.appendChild(uploadedOption);
     }
@@ -1774,10 +2026,6 @@
     return select;
   }
 
-  function rulesVersionSuffix(json) {
-    return json && json.version ? ' ' + json.version : '';
-  }
-
   function handleRulesSourceChange(source) {
     if (source === activeRulesSource) return;
     try {
@@ -1789,13 +2037,15 @@
     }
     suggestionsViewOpen = false;
     termsViewOpen = false;
+    factsViewOpen = false;
     showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
     enqueueScan(cachedText === null);
   }
 
   function syncCursorWatcher() {
+    // 커서 마커는 order 모드에서만 쓰지만, 선택 글자수는 어느 화면에서나 보여준다.
     const shouldPoll = expanded && status === 'ready' && lastReport &&
-      lastReport.textSource === 'model' && listMode === 'order';
+      lastReport.textSource === 'model';
     if (shouldPoll && !cursorPollTimer) {
       cursorPollTimer = setInterval(() => { pollCursorSelection(); }, CURSOR_POLL_INTERVAL);
       pollCursorSelection();
@@ -1809,19 +2059,44 @@
     clearInterval(cursorPollTimer);
     cursorPollTimer = null;
     cursorPollBusy = false;
+    lastSelectionSpanKey = '';
+    if (selectionCount !== null) {
+      selectionCount = null;
+      if (expanded) render();
+    }
   }
 
   function pollCursorSelection() {
     // 적용 진행 중에는 모델 호출 경합을 피하려고 커서 폴링을 쉰다.
     if (cursorPollBusy || applyingFindingKey !== null || addonBusyActions.size > 0 || isNativeControlInteractionActive()) return;
     cursorPollBusy = true;
+    // 가벼운 getSelection으로 먼저 범위를 보고, 범위가 실제로 바뀌었을 때만
+    // 본문까지 가져오는 getSelectionText를 부른다(매 틱 전체 본문 조회 방지).
     fetchDocsSelection().then(selection => {
-      if (updateCursorOffset(selection) && expanded && listMode === 'order') render();
-    }).catch(() => {
-      if (currentCursorOffset !== null) {
-        currentCursorOffset = null;
-        if (expanded && listMode === 'order') render();
+      const cursorChanged = updateCursorOffset(selection) && listMode === 'order';
+      const range = selectionRange(selection);
+      const spanKey = range && range.end > range.start ? range.start + ':' + range.end : '';
+      if (spanKey === lastSelectionSpanKey) {
+        if (cursorChanged && expanded) render();
+        return null;
       }
+      lastSelectionSpanKey = spanKey;
+      if (!spanKey) {
+        const cleared = updateSelectionCount('');
+        if ((cursorChanged || cleared) && expanded) render();
+        return null;
+      }
+      return fetchDocsSelectionText().then(res => {
+        const countChanged = updateSelectionCount(res.selectedText);
+        if ((cursorChanged || countChanged) && expanded) render();
+      });
+    }).catch(() => {
+      const cursorChanged = currentCursorOffset !== null;
+      const countChanged = selectionCount !== null;
+      currentCursorOffset = null;
+      selectionCount = null;
+      lastSelectionSpanKey = '';
+      if ((cursorChanged || countChanged) && expanded) render();
     }).finally(() => {
       cursorPollBusy = false;
     });
@@ -1849,6 +2124,53 @@
       start: Math.min(first.start, first.end),
       end: Math.max(first.start, first.end)
     };
+  }
+
+  // 서로게이트 쌍(이모지 등)을 한 글자로 세려고 Array.from을 쓴다.
+  function countTextStats(text) {
+    const chars = Array.from(text);
+    let charsNoSpace = 0;
+    for (const ch of chars) {
+      if (!/\s/.test(ch)) charsNoSpace++;
+    }
+    const words = text.split(/\s+/).filter(Boolean).length;
+    return { chars: chars.length, charsNoSpace, words };
+  }
+
+  // getText 응답(본문+오프셋)으로 글자수와 범위 키를 함께 갱신한다.
+  // 폴러가 이 결과를 중복 조회하지 않도록 키까지 맞춰 둔다.
+  function syncSelectionCountFromModel(text, selection) {
+    const range = selectionRange(selection);
+    lastSelectionSpanKey = range && range.end > range.start ? range.start + ':' + range.end : '';
+    return updateSelectionCount(sliceSelectedText(text, selection));
+  }
+
+  // 같은 응답에서 온 본문·오프셋 쌍을 잘라낸다. 짝이 안 맞으면 세지 않는다.
+  function sliceSelectedText(text, selection) {
+    if (typeof text !== 'string') return '';
+    const range = selectionRange(selection);
+    if (!range || range.end <= range.start || range.end > text.length) return '';
+    return text.slice(range.start, range.end);
+  }
+
+  function updateSelectionCount(selectedText) {
+    const next = selectedText ? countTextStats(selectedText) : null;
+    if (selectionCountsEqual(next, selectionCount)) return false;
+    selectionCount = next;
+    return true;
+  }
+
+  function selectionCountsEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return a.chars === b.chars && a.charsNoSpace === b.charsNoSpace && a.words === b.words;
+  }
+
+  function selectionCountText() {
+    if (!selectionCount) return '';
+    return '선택 ' + selectionCount.chars.toLocaleString() + '자' +
+      ' · 공백 제외 ' + selectionCount.charsNoSpace.toLocaleString() + '자' +
+      ' · ' + selectionCount.words.toLocaleString() + '단어';
   }
 
   function filterIgnoredFindings(findings) {
@@ -2524,11 +2846,8 @@
         finalStatus += ' · 축약 ' + (res.compactedRules || 0) + '건';
         if (res.droppedRules) finalStatus += ' · 제외 ' + res.droppedRules + '건';
       }
-      if (res.displayName || res.fileName) {
-        finalStatus += ' · ' + (res.displayName || res.fileName);
-      }
       if (res.factCheck && res.factCheck.model) {
-        finalStatus += ' · 사실확인 ' + res.factCheck.model;
+        finalStatus += ' · 사실확인 완료';
       }
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2624,8 +2943,6 @@
       const n = Array.isArray(termReport.terms) ? termReport.terms.length : 0;
       const doneLabel = res.fromCache ? '저장된 용어 표 불러옴' : '용어 분석 완료';
       finalStatus = n ? doneLabel + ' · ' + n + '건' : doneLabel + ' · 혼용 없음';
-      if (res.model) finalStatus += ' · ' + res.model;
-      if (res.displayName || res.fileName) finalStatus += ' · ' + (res.displayName || res.fileName);
       successToast = finalStatus;
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -2676,19 +2993,20 @@
     };
   }
 
-  async function handleAiQuestionAddon() {
-    const actionId = 'ai-question';
+  // 드래그한 문장만 사실 검증한다. 문서는 건드리지 않고 결과를 패널 표로만 보여준다.
+  async function handleAiVerifyAddon() {
+    const actionId = 'ai-verify';
     if (isAddonBusy(actionId)) return;
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
     let successToast = '';
-    startAiQuestionStatus('본문/커서 읽는 중');
+    startAiVerifyStatus('선택 영역 읽는 중');
     try {
       const doc = await readCurrentDocumentTextForAddon();
       if (doc.source !== 'model') {
-        const error = new Error('Google Docs model text is required for cursor insertion');
-        error.userMessage = '문서 모델을 읽지 못해 삽입할 수 없습니다';
+        const error = new Error('Google Docs model text is required for fact verification');
+        error.userMessage = '문서 선택 영역을 읽지 못했습니다';
         throw error;
       }
       let selection = doc.selection || null;
@@ -2700,200 +3018,88 @@
           selection = null;
         }
       }
-      const offset = selectionOffset(selection);
-      if (!Number.isFinite(offset) || offset < 0 || offset > doc.text.length) {
-        const error = new Error('current Google Docs cursor is unavailable');
-        error.userMessage = '커서 위치를 읽지 못했습니다';
+      const range = selectionRange(selection);
+      if (!range || range.end <= range.start) {
+        const error = new Error('selected text is required');
+        error.userMessage = '검증할 문장을 드래그해 선택하세요';
+        throw error;
+      }
+      const selectedText = doc.text.slice(range.start, range.end);
+      if (!selectedText.trim()) {
+        const error = new Error('selected text is blank');
+        error.userMessage = '공백이 아닌 문장을 선택하세요';
         throw error;
       }
 
-      const context = buildAiQuestionContext(doc.text, offset);
-      const anchor = buildInsertionSuggestionAnchor(doc.text, offset);
-      const insertionProfile = classifyAiSentenceInsertion(doc.text, offset);
-      updateAiQuestionStatus(insertionProfile.mode === 'question' ? 'AI 발문 생성 중' : 'AI 설명 문장 생성 중');
-      const res = await sendAiBridge('question', {
-        timeoutMs: AI_QUESTION_TIMEOUT,
+      updateAiVerifyStatus('AI 사실 검증 중');
+      const res = await sendAiBridge('verifyFacts', {
+        timeoutMs: AI_VERIFY_TIMEOUT,
         document: {
           id: doc.docId,
           title: doc.title,
           url: location.href,
           textSource: doc.source,
-          cursorOffset: offset,
-          totalChars: doc.text.length,
-          contextBefore: context.before,
-          contextAfter: context.after,
-          insertionMode: insertionProfile.mode,
-          insertionModeReason: insertionProfile.reason,
-          insertionPreviousLine: insertionProfile.previousLine,
-          insertionCurrentLinePrefix: insertionProfile.currentLinePrefix,
-          insertionCurrentLineSuffix: insertionProfile.currentLineSuffix,
-          insertionSource: anchor.source,
-          insertionPrefixLength: anchor.prefixLength
+          selectedText,
+          contextBefore: doc.text.slice(Math.max(0, range.start - AI_VERIFY_CONTEXT), range.start),
+          contextAfter: doc.text.slice(range.end, range.end + AI_VERIFY_CONTEXT)
         }
       });
-      if (!res || !res.ok || !res.json) {
-        throw aiBridgeError(res, 'AI 문장 생성 실패');
+      if (!res || !res.ok) {
+        throw aiBridgeError(res, 'AI 사실 검증 실패');
       }
 
-      updateAiQuestionStatus('문장 제안 JSON 저장 중');
-      const n = activateGeneratedRulesResponse(res, '문장제안.json');
-      debugLog('[Toytype addons] AI sentence insertion suggestion result', {
-        chars: typeof res.text === 'string' ? Array.from(res.text).length : null,
-        provider: res.provider || '',
-        model: res.model || ''
-      });
-      finalStatus = 'AI 문장 제안 저장 완료';
-      if (n) finalStatus += ' · 누적 ' + n + '건';
-      if (res.model) finalStatus += ' · ' + res.model;
-      successToast = 'AI 문장 제안을 저장했습니다';
+      factReport = normalizeFactReportForView(res, selectedText);
+      factReportDocId = getDocId();
+      factsViewOpen = true;
+      termsViewOpen = false;
+      suggestionsViewOpen = false;
+      addonsMenuOpen = false;
+
+      const flagged = factReport.claims.filter(c => c.status === 'contradicted').length;
+      finalStatus = 'AI 사실 검증 완료 · 주장 ' + factReport.claims.length + '건';
+      if (flagged) finalStatus += ' · 모순 ' + flagged + '건';
+      successToast = flagged
+        ? '사실과 다른 내용 ' + flagged + '건을 찾았습니다'
+        : '검증을 마쳤습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
       if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
-      console.error('[Toytype addons] AI sentence insertion suggestion failed', summary);
-      debugLog('[Toytype addons] AI sentence insertion suggestion failed detail', {
+      console.error('[Toytype addons] AI fact verification failed', summary);
+      debugLog('[Toytype addons] AI fact verification failed detail', {
         response: error && error.response !== undefined ? error.response : null,
         stack: error && error.stack ? error.stack : ''
       });
-      finalStatus = error && error.userMessage ? error.userMessage : 'AI 문장 제안 저장 실패';
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 사실 검증 실패';
       errorToast = finalStatus;
     } finally {
       setAddonBusy(actionId, false);
-      finishAiQuestionStatus(errorToast ? 'error' : 'success', finalStatus);
+      finishAiVerifyStatus(errorToast ? 'error' : 'success', finalStatus);
       if (errorToast) showToast(errorToast, { durationMs: 4200 });
       else if (successToast) showToast(successToast);
+      render();
     }
   }
 
-  function buildAiQuestionContext(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
+  // 브리지 응답을 표에 그리기 좋은 형태로 좁힌다.
+  function normalizeFactReportForView(res, selectedText) {
+    const raw = Array.isArray(res && res.claims) ? res.claims : [];
+    const claims = raw.map(item => ({
+      sourceText: String(item && item.sourceText || ''),
+      status: String(item && item.status || 'unverifiable'),
+      confidence: String(item && item.confidence || ''),
+      finding: String(item && item.finding || ''),
+      suggestedReplacement: String(item && item.suggestedReplacement || ''),
+      sources: Array.isArray(item && item.sources) ? item.sources.filter(Boolean).slice(0, 4) : []
+    })).filter(c => c.sourceText || c.finding);
     return {
-      before: source.slice(Math.max(0, pos - AI_QUESTION_CONTEXT_BEFORE), pos),
-      after: source.slice(pos, pos + AI_QUESTION_CONTEXT_AFTER)
+      claims,
+      selectedText: String(selectedText || ''),
+      provider: String(res && res.provider || ''),
+      model: String(res && res.model || ''),
+      webAccess: String(res && res.webAccess || ''),
+      checkedAt: Date.now()
     };
-  }
-
-  function classifyAiSentenceInsertion(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
-    const lineStart = pos > 0 ? source.lastIndexOf('\n', pos - 1) + 1 : 0;
-    const lineEndIndex = source.indexOf('\n', pos);
-    const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex;
-    const currentLinePrefix = source.slice(lineStart, pos);
-    const currentLineSuffix = source.slice(pos, lineEnd);
-    const previous = previousNonEmptyLine(source, lineStart);
-    const onlyWhitespaceSincePrevious = previous
-      ? source.slice(previous.end, pos).trim() === ''
-      : false;
-    const atParagraphStart = currentLinePrefix.trim() === '';
-    const titleLike = previous ? looksLikeTitleLine(previous.text) : false;
-    if (previous && atParagraphStart && onlyWhitespaceSincePrevious && titleLike) {
-      return {
-        mode: 'question',
-        reason: 'title-below',
-        previousLine: previous.text,
-        currentLinePrefix: currentLinePrefix,
-        currentLineSuffix: currentLineSuffix
-      };
-    }
-    return {
-      mode: 'explanation',
-      reason: previous ? 'body-context' : 'document-start',
-      previousLine: previous ? previous.text : '',
-      currentLinePrefix: currentLinePrefix,
-      currentLineSuffix: currentLineSuffix
-    };
-  }
-
-  function previousNonEmptyLine(text, lineStart) {
-    let end = Math.max(0, Number(lineStart) || 0);
-    while (end > 0) {
-      const prevBreak = text.lastIndexOf('\n', end - 2);
-      const start = prevBreak === -1 ? 0 : prevBreak + 1;
-      const lineEnd = end > 0 && text.charCodeAt(end - 1) === 10 ? end - 1 : end;
-      const raw = text.slice(start, lineEnd);
-      const trimmed = raw.trim();
-      if (trimmed) return { text: trimmed, start, end: lineEnd };
-      if (prevBreak === -1) break;
-      end = prevBreak + 1;
-    }
-    return null;
-  }
-
-  function looksLikeTitleLine(line) {
-    const text = String(line || '').trim();
-    if (!text) return false;
-    const chars = Array.from(text).length;
-    if (chars < 2 || chars > 80) return false;
-    if (/^[\-*+•]\s+/.test(text)) return false;
-    if (/[.?!。！？]$/.test(text) && !/^\d+(?:[.)]|장)\s+\S/.test(text)) return false;
-    if (/[.!?。！？].+[.!?。！？]/.test(text)) return false;
-    return true;
-  }
-
-  function buildInsertionSuggestionAnchor(text, offset) {
-    const source = String(text || '');
-    const pos = Math.max(0, Math.min(source.length, Number(offset) || 0));
-    const right = buildOneSidedInsertionAnchor(source, pos, 'right');
-    if (right) return right;
-    const left = buildOneSidedInsertionAnchor(source, pos, 'left');
-    if (left) return left;
-
-    let best = null;
-    for (const radius of [16, 24, 40, 72, 120]) {
-      const beforeLen = Math.min(pos, Math.ceil(radius / 2));
-      const afterLen = Math.min(source.length - pos, Math.floor(radius / 2));
-      const start = pos - beforeLen;
-      const end = pos + afterLen;
-      const candidate = source.slice(start, end);
-      if (!candidate.trim()) continue;
-      const anchor = {
-        source: candidate,
-        prefixLength: beforeLen,
-        start,
-        end,
-        occurrences: countTextOccurrences(source, candidate, 2)
-      };
-      best = anchor;
-      if (anchor.occurrences === 1) return anchor;
-    }
-    if (best) return best;
-    const error = new Error('insertion anchor unavailable');
-    error.userMessage = '문장을 넣을 기준 문맥을 찾지 못했습니다';
-    throw error;
-  }
-
-  function buildOneSidedInsertionAnchor(text, pos, side) {
-    const lengths = [4, 6, 8, 12, 18, 28, 44, 72];
-    for (const len of lengths) {
-      const start = side === 'right' ? pos : Math.max(0, pos - len);
-      const end = side === 'right' ? Math.min(text.length, pos + len) : pos;
-      const candidate = text.slice(start, end);
-      if (!candidate.trim()) continue;
-      const anchor = {
-        source: candidate,
-        prefixLength: side === 'right' ? 0 : candidate.length,
-        start,
-        end,
-        occurrences: countTextOccurrences(text, candidate, 2)
-      };
-      if (anchor.occurrences === 1) return anchor;
-    }
-    return null;
-  }
-
-  function countTextOccurrences(text, needle, stopAfter) {
-    if (!needle) return 0;
-    let count = 0;
-    let index = 0;
-    const limit = Number.isFinite(Number(stopAfter)) ? Number(stopAfter) : Infinity;
-    while ((index = text.indexOf(needle, index)) !== -1) {
-      count++;
-      if (count >= limit) return count;
-      index += Math.max(1, needle.length);
-    }
-    return count;
   }
 
   async function handleAiLengthAddon() {
@@ -2963,7 +3169,6 @@
       const n = activateGeneratedRulesResponse(res, '문장제안.json');
       finalStatus = 'AI 문장 제안 저장 완료 · 목표 ' + targetChars + '자';
       if (n) finalStatus += ' · 누적 ' + n + '건';
-      if (res.model) finalStatus += ' · ' + res.model;
       successToast = 'AI 문장 제안을 저장했습니다';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
@@ -3162,11 +3367,15 @@
 
   // ---------------- 단락 스타일 셋팅 (골든래빗 프리셋, 로컬 브리지 불필요) ----------------
   // 문서 끝 임시 문단에 목표 서식을 만든 뒤 각 단락 스타일 정의를 Docs의 '스타일 업데이트'
-  // 메뉴로 반영한다. 폰트 패밀리는 건드리지 않는다(기준 Arimo는 한글에 효과가 없음).
+  // 메뉴로 반영한다. 서체는 집필 가이드 기준인 Arimo, 줄간격은 1.5로 맞춘다.
   // 메뉴·툴바·키 입력 자동화는 페이지 브리지의 stylePresetOp이 페이지 월드에서 실행한다 —
   // 콘텐트 스크립트에서 만든 KeyboardEvent는 keyCode 재정의가 페이지에 보이지 않는다.
 
   const STYLE_PRESET_TEMP_TEXT = 'toytype-style-preset-temp';
+  const STYLE_PRESET_CLEANUP_ATTEMPTS = 8;   // 선택+Backspace 재시도 횟수
+  const STYLE_PRESET_UNDO_ATTEMPTS = 12;     // 실행취소 최후 수단 상한
+  const STYLE_PRESET_FONT = 'Arimo';         // 집필 가이드 기준 서체
+  const STYLE_PRESET_LINE_SPACING = '1.5';   // 줄간격 메뉴의 배수 항목 캡션
   const STYLE_PRESET_DEFS = [
     { key: 'normal', label: '일반 텍스트', sizePt: 10, bold: false, underline: false, colorRgb: 'rgb(0, 0, 0)' },
     { key: 'h1', label: '제목 1', sizePt: 25, bold: true, underline: false, colorRgb: 'rgb(0, 0, 0)' },
@@ -3178,6 +3387,16 @@
 
   function styleDelay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // 실패 원인을 토스트에 담을 수 있게 짧은 한국어 문구로 줄인다.
+  // 페이지 브리지가 던지는 메시지는 이미 한국어이므로 그대로 쓰고, 길면 자른다.
+  function styleShortErrorText(error) {
+    const raw = error && error.message ? String(error.message) : '';
+    if (!raw) return '알 수 없는 오류 · 콘솔 확인';
+    const cleaned = raw.replace(/^stylePresetOp \w+ failed:?\s*/, '').trim();
+    if (!cleaned) return '알 수 없는 오류 · 콘솔 확인';
+    return cleaned.length > 70 ? cleaned.slice(0, 70) + '…' : cleaned;
   }
 
   // 페이지 브리지의 stylePresetOp으로 DOM 자동화 한 단계를 실행한다.
@@ -3201,9 +3420,14 @@
 
   // 문서 끝(마지막 문단 뒤)에 임시 문단을 만든다: 커서 이동 → Enter → 임시 텍스트 타이핑.
   async function styleInsertTempParagraph() {
-    const before = await styleGetModelText();
+    let before = await styleGetModelText();
+    // 이전 실행이 남긴 잔여물은 기능을 잠그지 않고 먼저 정리한다.
     if (before.lastIndexOf(STYLE_PRESET_TEMP_TEXT) !== -1) {
-      throw new Error('임시 문단이 이미 문서에 남아 있습니다 — 문서 끝을 확인하세요');
+      const cleaned = await styleRemoveTempParagraph({ enterCreated: true });
+      if (!cleaned) {
+        throw new Error('이전 임시 문단을 정리하지 못했습니다 — 문서 끝의 ' + STYLE_PRESET_TEMP_TEXT + ' 줄을 직접 지워주세요');
+      }
+      before = await styleGetModelText();
     }
     const cursor = Math.max(0, before.length - 1);
     await selectDocsModelRange(cursor, cursor);
@@ -3223,19 +3447,40 @@
   }
 
   // 임시 문단 삭제 — 앞 개행까지 선택해 Backspace로 지우면 앞 문단이 자기 스타일을 유지한 채 합쳐진다.
-  async function styleRemoveTempParagraph(tempInfo) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const text = await styleGetModelText();
+  // 선택+Backspace를 우선 시도하고, 그래도 남으면 실행취소로 확실히 되돌린다.
+  // 실제 Docs 호출은 주입받아 제어 흐름만 테스트할 수 있게 한다.
+  async function removeStylePresetTempText(tempInfo, deps) {
+    const getText = deps.getText;
+    const tempGone = async () => (await getText()).lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
+    for (let attempt = 0; attempt < STYLE_PRESET_CLEANUP_ATTEMPTS; attempt++) {
+      const text = await getText();
       const idx = text.lastIndexOf(STYLE_PRESET_TEMP_TEXT);
       if (idx === -1) return true;
       const includeNewline = tempInfo && tempInfo.enterCreated && idx > 0 && text[idx - 1] === '\n';
       const start = includeNewline ? idx - 1 : idx;
-      await selectDocsModelRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
-      await styleDelay(200);
-      await styleBridgeOp('backspace');
+      await deps.selectRange(start, idx + STYLE_PRESET_TEMP_TEXT.length);
+      await deps.delay(250);
+      await deps.backspace();
     }
-    const after = await styleGetModelText();
-    return after.lastIndexOf(STYLE_PRESET_TEMP_TEXT) === -1;
+    if (await tempGone()) return true;
+    // 최후 수단: 실행취소를 한 번씩 보내며 매회 잔존을 확인한다.
+    // 사라지는 즉시 멈추므로 사용자의 이전 편집까지 되돌리지 않는다.
+    for (let attempt = 0; attempt < STYLE_PRESET_UNDO_ATTEMPTS; attempt++) {
+      await deps.undo();
+      await deps.delay(250);
+      if (await tempGone()) return true;
+    }
+    return false;
+  }
+
+  function styleRemoveTempParagraph(tempInfo) {
+    return removeStylePresetTempText(tempInfo, {
+      getText: styleGetModelText,
+      selectRange: selectDocsModelRange,
+      backspace: () => styleBridgeOp('backspace'),
+      undo: () => styleBridgeOp('undo'),
+      delay: styleDelay
+    });
   }
 
   async function styleApplyPresetDef(def, range) {
@@ -3257,6 +3502,12 @@
     await styleBridgeOp('toggle', { buttonId: 'italicButton', want: false });
     await styleBridgeOp('toggle', { buttonId: 'underlineButton', want: def.underline });
     await styleBridgeOp('fontSize', { sizePt: def.sizePt });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('fontFamily', { fontName: STYLE_PRESET_FONT });
+    await selectDocsModelRange(range.start, range.end);
+    await styleDelay(200);
+    await styleBridgeOp('lineSpacing', { spacing: STYLE_PRESET_LINE_SPACING });
     await selectDocsModelRange(range.start, range.end);
     await styleDelay(200);
     await styleBridgeOp('color', { colorRgb: def.colorRgb });
@@ -3295,15 +3546,15 @@
       return { done, removed: tempInfo.removed, total: defs.length };
     })().then(result => {
       if (!result.removed) {
-        finalToast = '스타일 셋팅 ' + result.done.length + '/' + result.total + ' 완료 · 임시 문단 삭제 실패 — 문서 끝을 확인하세요';
-        finalToastDuration = 5000;
+        finalToast = '스타일 셋팅 ' + result.done.length + '/' + result.total + ' 완료 · 임시 문단 삭제 실패 — 문서 끝의 ' + STYLE_PRESET_TEMP_TEXT + ' 줄을 직접 지워주세요';
+        finalToastDuration = 6000;
         return;
       }
       finalToast = '단락 스타일 셋팅 완료: ' + result.done.join(', ');
     }).catch(error => {
       console.error('[Toytype style preset] failed', error);
-      finalToast = '단락 스타일 셋팅 실패 · 콘솔 확인';
-      finalToastDuration = 3600;
+      finalToast = '단락 스타일 셋팅 실패 — ' + styleShortErrorText(error);
+      finalToastDuration = 6000;
     }).finally(() => {
       setAddonBusy(actionId, false);
       if (expanded) render();
@@ -3350,10 +3601,10 @@
     if (expanded) render();
   }
 
-  function startAiQuestionStatus(phase) {
+  function startAiVerifyStatus(phase) {
     addonStatus = {
-      type: 'ai-question',
-      label: 'AI 문장 삽입',
+      type: 'ai-verify',
+      label: 'AI 사실 검증',
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
@@ -3364,21 +3615,21 @@
     if (expanded) render();
   }
 
-  function updateAiQuestionStatus(phase) {
-    if (!addonStatus || addonStatus.type !== 'ai-question' || addonStatus.state !== 'running') {
-      startAiQuestionStatus(phase);
+  function updateAiVerifyStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-verify' || addonStatus.state !== 'running') {
+      startAiVerifyStatus(phase);
       return;
     }
     addonStatus.phase = phase || addonStatus.phase;
     if (expanded) render();
   }
 
-  function finishAiQuestionStatus(state, message) {
+  function finishAiVerifyStatus(state, message) {
     const now = Date.now();
-    const previous = addonStatus && addonStatus.type === 'ai-question' ? addonStatus : null;
+    const previous = addonStatus && addonStatus.type === 'ai-verify' ? addonStatus : null;
     addonStatus = {
-      type: 'ai-question',
-      label: 'AI 문장 삽입',
+      type: 'ai-verify',
+      label: 'AI 사실 검증',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
@@ -3562,18 +3813,29 @@
     addonStatusTimer = null;
   }
 
-  function addonStatusLineText() {
-    if (!addonStatus) return '';
+  // 푸터 상태: 1줄 요약(제목 · 경과) + 2줄 상세. 상세가 요약을 되풀이하면 생략한다.
+  function addonStatusLines() {
+    if (!addonStatus) return null;
     const label = addonStatus.label || (addonStatus.type === 'ai-proofread' ? 'AI 교정' : 'AI 작업');
     const now = addonStatus.state === 'running' ? Date.now() : (addonStatus.finishedAt || Date.now());
     const elapsed = formatElapsed(now - (addonStatus.startedAt || now));
-    if (addonStatus.state === 'running') {
-      return [label + ' 중', elapsed + ' 경과', addonStatus.phase || '대기 중'].join(' · ');
-    }
-    if (addonStatus.state === 'error') {
-      return [label + ' 실패', elapsed + ' 경과', addonStatus.message || '오류 발생'].join(' · ');
-    }
-    return [label + ' 완료', elapsed + ' 경과', addonStatus.message || '완료'].join(' · ');
+    const state = addonStatus.state;
+    const suffix = state === 'running' ? ' 중' : (state === 'error' ? ' 실패' : ' 완료');
+    const head = label + suffix + ' · ' + elapsed;
+    const raw = state === 'running'
+      ? (addonStatus.phase || '')
+      : (addonStatus.message || (state === 'error' ? '오류 발생' : ''));
+    const detail = stripStatusHeadEcho(raw, label + suffix);
+    return { head, detail };
+  }
+
+  // '<라벨> 완료 · JSON 업로드됨' 처럼 상세 앞머리가 요약과 겹치면 잘라낸다.
+  function stripStatusHeadEcho(detail, head) {
+    const text = String(detail || '').trim();
+    if (!text) return '';
+    if (text === head) return '';
+    if (text.startsWith(head + ' · ')) return text.slice(head.length + 3);
+    return text;
   }
 
   function formatElapsed(ms) {
@@ -3616,6 +3878,7 @@
       cachedTextSource = 'model';
       lastModelAt = Date.now();
       updateCursorOffset(res.selection || null);
+      syncSelectionCountFromModel(res.text, res.selection || null);
       return {
         docId,
         title: documentTitleForAddon(),
@@ -4610,6 +4873,17 @@
     });
   }
 
+  // 선택 오프셋과 그 구간의 실제 본문을 한 번에 받는다(글자수 집계용).
+  function fetchDocsSelectionText() {
+    return requestDocsModel('getSelectionText', { docId: getDocId() }).then(res => {
+      if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'getSelectionText failed');
+      return {
+        selection: res.selection || null,
+        selectedText: typeof res.selectedText === 'string' ? res.selectedText : ''
+      };
+    });
+  }
+
   // 연구용: annotated 모델 호출(getText/getSelection 등)의 실제 지연을 측정한다.
   // 콘솔에서 ToytypeProfileModelOpsFromContent() 로 호출.
   function profileModelOpsFromContent(options) {
@@ -5594,6 +5868,18 @@
   window.ToytypeApplyStateFromContent = applyStateFromContent;
   window.ToytypeListFindingsFromContent = listFindingsFromContent;
   window.ToytypeBridgeStatusFromContent = pageBridgeStatus;
+
+  // 순수 로직 테스트용 훅 — Docs 없이 검증할 수 있는 함수만 노출한다.
+  globalThis.ToytypeDocsInternal = {
+    STYLE_PRESET_TEMP_TEXT,
+    STYLE_PRESET_CLEANUP_ATTEMPTS,
+    STYLE_PRESET_UNDO_ATTEMPTS,
+    removeStylePresetTempText,
+    styleShortErrorText,
+    countTextStats,
+    sliceSelectedText,
+    stripStatusHeadEcho
+  };
 
   init();
 })();

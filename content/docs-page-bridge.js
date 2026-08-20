@@ -239,6 +239,21 @@
           postResponse(data, { ok: true, action: data.action, selection });
         });
       }
+      // 드래그 영역 글자수용. 오프셋과 본문을 페이지 쪽에서 한 번에 잘라
+      // 캐시가 낡아 엉뚱한 구간을 세는 일을 막는다.
+      if (data.action === 'getSelectionText') {
+        return getSelection(obj).then(selection => {
+          const range = selectionSpan(selection);
+          if (!range) {
+            postResponse(data, { ok: true, action: data.action, selection, selectedText: '' });
+            return;
+          }
+          return getText(obj).then(text => {
+            const selectedText = typeof text === 'string' ? text.slice(range.start, range.end) : '';
+            postResponse(data, { ok: true, action: data.action, selection, selectedText });
+          });
+        });
+      }
       if (data.action === 'setSelection') {
         const range = readRange(data);
         return setSelection(obj, range.start, range.end).then(result => {
@@ -320,6 +335,16 @@
 
   function setSelection(obj, start, end) {
     return callAnnotatedMethod(obj, 'setSelection', [start, end]);
+  }
+
+  // 접힌 커서(start === end)는 선택이 아니므로 null.
+  function selectionSpan(selection) {
+    if (!Array.isArray(selection) || selection.length === 0) return null;
+    const first = selection[0];
+    if (!first || typeof first.start !== 'number' || typeof first.end !== 'number') return null;
+    const start = Math.min(first.start, first.end);
+    const end = Math.max(first.start, first.end);
+    return end > start ? { start, end } : null;
   }
 
   function probeFindReplace(annotatedObj, data) {
@@ -3870,10 +3895,20 @@
     return doc.getElementById('docs-texteventtarget-descendant') || doc.activeElement || doc.body;
   }
 
-  function styleSynthKey(target, type, key, keyCode, charCode) {
+  function styleSynthKey(target, type, key, keyCode, charCode, modifiers) {
     const view = target.ownerDocument && target.ownerDocument.defaultView || window;
     const Ctor = view.KeyboardEvent || KeyboardEvent;
-    const ev = new Ctor(type, { bubbles: true, cancelable: true, composed: true, key });
+    const mods = modifiers || {};
+    const ev = new Ctor(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      key,
+      ctrlKey: !!mods.ctrlKey,
+      metaKey: !!mods.metaKey,
+      shiftKey: !!mods.shiftKey,
+      altKey: !!mods.altKey
+    });
     Object.defineProperty(ev, 'keyCode', { get: () => keyCode });
     Object.defineProperty(ev, 'charCode', { get: () => charCode || 0 });
     Object.defineProperty(ev, 'which', { get: () => charCode || keyCode });
@@ -3960,6 +3995,61 @@
     return { sizePt };
   }
 
+  // 글꼴 콤보(#docs-font-family)는 텍스트 입력이 아니라 메뉴 버튼이라
+  // 크기 콤보와 달리 열고 항목을 눌러야 한다. 목록에 같은 이름이 여러 번
+  // 나오면(최근 사용 항목) 본목록 쪽인 마지막 항목을 쓴다.
+  async function styleSetFontFamily(fontName) {
+    const btn = document.querySelector('#docs-font-family');
+    if (!btn) throw new Error('글꼴 목록을 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let menu = null;
+    for (let i = 0; i < 12 && !menu; i++) {
+      await delay(120);
+      menu = styleVisibleMenus().find(m => (m.textContent || '').indexOf(fontName) !== -1);
+    }
+    if (!menu) throw new Error('글꼴 메뉴가 열리지 않았습니다');
+    try {
+      // 항목 이름 뒤에 붙는 목록 표시(►)와 공백은 떼고 비교한다.
+      const items = Array.prototype.slice.call(menu.querySelectorAll('.goog-menuitem'))
+        .filter(item => item.textContent.trim().replace(/[►▸\s]/g, '') === fontName);
+      const target = items[items.length - 1];
+      if (!target) throw new Error('글꼴 항목 없음: ' + fontName);
+      styleSynthHover(target);
+      await delay(80);
+      styleSynthAct(target);
+      await delay(600);
+      return { fontName };
+    } finally {
+      styleDismissMenus();
+    }
+  }
+
+  // 줄간격 메뉴(#lineSpacingMenuButton)에서 배수 항목을 고른다.
+  // 항목 캡션이 곧 배수값이라("1.5") 그대로 비교한다.
+  async function styleSetLineSpacing(spacing) {
+    const btn = document.querySelector('#lineSpacingMenuButton');
+    if (!btn) throw new Error('줄간격 메뉴를 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let menu = null;
+    for (let i = 0; i < 12 && !menu; i++) {
+      await delay(120);
+      menu = styleVisibleMenus().find(m => (m.textContent || '').indexOf(spacing) !== -1);
+    }
+    if (!menu) throw new Error('줄간격 메뉴가 열리지 않았습니다');
+    try {
+      const item = Array.prototype.slice.call(menu.querySelectorAll('.goog-menuitem'))
+        .find(node => node.textContent.trim() === spacing);
+      if (!item) throw new Error('줄간격 항목 없음: ' + spacing);
+      styleSynthHover(item);
+      await delay(80);
+      styleSynthAct(item);
+      await delay(600);
+      return { spacing };
+    } finally {
+      styleDismissMenus();
+    }
+  }
+
   async function styleSetTextColor(colorRgb) {
     const btn = document.getElementById('textColorButton');
     if (!btn) throw new Error('텍스트 색 버튼을 찾지 못했습니다');
@@ -3992,6 +4082,15 @@
     return { enterCreated, length: text.length };
   }
 
+  // 현재 커서 위치에 텍스트를 그대로 타이핑한다 (Enter 없음) — 특수문자 프리셋용.
+  async function styleTypePlainText(text) {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    styleTypeText(target, text);
+    return { length: text.length };
+  }
+
   // 현재 선택 영역을 Backspace로 지운다.
   async function styleSendBackspace() {
     const target = styleKeyboardTarget();
@@ -4002,14 +4101,33 @@
     return { handled };
   }
 
+  // 실행취소 1회. 임시 문단 정리가 실패했을 때만 쓰는 최후 수단이며,
+  // 호출자가 매회 임시 텍스트 잔존 여부를 확인해 필요한 만큼만 보낸다
+  // (횟수를 미리 세어 몰아 보내면 사용자의 이전 편집까지 되돌릴 수 있다).
+  async function styleSendUndo() {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    // charCode 0으로 보내 문자 입력으로 해석될 여지를 남기지 않는다.
+    const mac = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+    const handled = styleSynthKey(target, 'keydown', 'z', 90, 0,
+      mac ? { metaKey: true } : { ctrlKey: true });
+    await delay(400);
+    return { handled };
+  }
+
   function stylePresetOp(data) {
     const op = data && data.op;
     if (op === 'menu') return styleRunHeadingMenuCommand(String(data.label || ''), data.update === true);
     if (op === 'toggle') return styleSetToolbarToggle(String(data.buttonId || ''), data.want === true);
     if (op === 'fontSize') return styleSetFontSize(Number(data.sizePt));
+    if (op === 'fontFamily') return styleSetFontFamily(String(data.fontName || ''));
+    if (op === 'lineSpacing') return styleSetLineSpacing(String(data.spacing || ''));
     if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
     if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
+    if (op === 'typeText') return styleTypePlainText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();
+    if (op === 'undo') return styleSendUndo();
     return Promise.reject(new Error('unknown style preset op: ' + op));
   }
 

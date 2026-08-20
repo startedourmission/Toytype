@@ -5,6 +5,7 @@ const DEFAULT_CLEANUP_DAYS = 30;
 const CLEANUP_DAY_OPTIONS = [1, 7, 30, 60, 180];
 const LEGACY_AI_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_EXTERNAL_FEATURES_ENABLED = false;
+const AI_PROVIDERS = ['codex', 'claude', 'grok'];
 const UPLOAD_JSON_EXAMPLE = JSON.stringify({
   version: 'custom',
   source: 'manual-upload',
@@ -28,7 +29,8 @@ const DEFAULT_AI = {
   bridgeUrl: 'http://127.0.0.1:17644',
   codexCommand: 'codex',
   claudeCommand: 'claude',
-  workspaceDir: '~/Dev/Toytype',
+  grokCommand: 'grok',
+  workspaceDir: '', // 비우면 브리지가 자기 저장소 폴더를 쓴다
   outputDir: '~/.toytype/generated',
   requestTimeoutMs: 1800000,
   maxDocumentChars: 180000
@@ -42,8 +44,10 @@ const els = {
   health: document.getElementById('health'),
   codexCommand: document.getElementById('codexCommand'),
   claudeCommand: document.getElementById('claudeCommand'),
+  grokCommand: document.getElementById('grokCommand'),
   testCodex: document.getElementById('testCodex'),
   testClaude: document.getElementById('testClaude'),
+  testGrok: document.getElementById('testGrok'),
   workspaceDir: document.getElementById('workspaceDir'),
   outputDir: document.getElementById('outputDir'),
   openOutputDir: document.getElementById('openOutputDir'),
@@ -53,6 +57,8 @@ const els = {
   maxDocumentChars: document.getElementById('maxDocumentChars'),
   tocMaxLevel: document.getElementById('tocMaxLevel'),
   copyOnSelect: document.getElementById('copyOnSelect'),
+  highlightEnabled: document.getElementById('highlightEnabled'),
+  charPresetDirectInsert: document.getElementById('charPresetDirectInsert'),
   uploadJsonExample: document.getElementById('uploadJsonExample'),
   copyUploadJson: document.getElementById('copyUploadJson'),
   status: document.getElementById('status')
@@ -91,13 +97,17 @@ async function writeAiSettings(ai) {
   await chrome.storage.local.set({ settings });
 }
 
+function normalizeProvider(value) {
+  return AI_PROVIDERS.includes(value) ? value : 'codex';
+}
+
 function selectedProvider() {
   const checked = document.querySelector('input[name="provider"]:checked');
-  return checked ? checked.value : 'codex';
+  return normalizeProvider(checked ? checked.value : 'codex');
 }
 
 function setSelectedProvider(provider) {
-  const value = provider === 'claude' ? 'claude' : 'codex';
+  const value = normalizeProvider(provider);
   const input = document.querySelector('input[name="provider"][value="' + value + '"]');
   if (input) input.checked = true;
 }
@@ -109,7 +119,8 @@ function formToAi() {
     bridgeUrl: els.bridgeUrl.value.trim() || DEFAULT_AI.bridgeUrl,
     codexCommand: els.codexCommand.value.trim() || DEFAULT_AI.codexCommand,
     claudeCommand: els.claudeCommand.value.trim() || DEFAULT_AI.claudeCommand,
-    workspaceDir: els.workspaceDir.value.trim() || DEFAULT_AI.workspaceDir,
+    grokCommand: els.grokCommand.value.trim() || DEFAULT_AI.grokCommand,
+    workspaceDir: els.workspaceDir.value.trim(),
     outputDir: els.outputDir.value.trim() || DEFAULT_AI.outputDir,
     requestTimeoutMs: clampNumber(els.requestTimeoutMs.value, DEFAULT_AI.requestTimeoutMs, 5000, 3600000),
     maxDocumentChars: clampNumber(els.maxDocumentChars.value, DEFAULT_AI.maxDocumentChars, 1000, 1000000)
@@ -126,6 +137,7 @@ function fillForm(ai) {
   els.bridgeUrl.value = ai.bridgeUrl;
   els.codexCommand.value = ai.codexCommand;
   els.claudeCommand.value = ai.claudeCommand;
+  els.grokCommand.value = ai.grokCommand;
   els.workspaceDir.value = ai.workspaceDir;
   els.outputDir.value = ai.outputDir;
   els.requestTimeoutMs.value = String(ai.requestTimeoutMs);
@@ -264,6 +276,8 @@ async function save() {
   settings.ai = ai;
   settings.tocMaxLevel = clampNumber(els.tocMaxLevel.value, DEFAULT_TOC_MAX_LEVEL, 1, 5);
   settings.copyOnSelect = els.copyOnSelect.checked;
+  settings.highlightEnabled = els.highlightEnabled.checked !== false;
+  settings.charPresetDirectInsert = els.charPresetDirectInsert.checked === true;
   settings.generatedJsonCleanupDays = cleanupDaysValue(els.cleanupDays.value);
   await chrome.storage.local.set({ settings });
   fillForm(ai);
@@ -342,6 +356,8 @@ async function init() {
   els.tocMaxLevel.value = String(tocMaxLevelFromSettings(settings));
   els.cleanupDays.value = String(cleanupDaysFromSettings(settings));
   els.copyOnSelect.checked = settings.copyOnSelect !== false;
+  els.highlightEnabled.checked = settings.highlightEnabled !== false;
+  els.charPresetDirectInsert.checked = settings.charPresetDirectInsert === true;
   updateExternalControls();
   setStatus('설정을 불러왔습니다.');
   if (!externalFeaturesEnabled()) return;
@@ -371,6 +387,11 @@ function applyDetectedToolPaths(res) {
     els.claudeCommand.value = res.tools.claude.path;
     changed = true;
   }
+  if ((!current.grokCommand || current.grokCommand === DEFAULT_AI.grokCommand) &&
+      res.tools.grok && res.tools.grok.available && res.tools.grok.path) {
+    els.grokCommand.value = res.tools.grok.path;
+    changed = true;
+  }
   if (res.settings && typeof res.settings.workspaceDir === 'string' &&
       (!current.workspaceDir || current.workspaceDir === DEFAULT_AI.workspaceDir)) {
     els.workspaceDir.value = res.settings.workspaceDir;
@@ -391,6 +412,7 @@ els.save.addEventListener('click', () => { save().catch(error => handleUiError('
 els.health.addEventListener('click', () => { checkHealth().catch(error => handleUiError('health check failed', error)); });
 els.testCodex.addEventListener('click', () => { test('codex').catch(error => handleUiError('codex test failed', error)); });
 els.testClaude.addEventListener('click', () => { test('claude').catch(error => handleUiError('claude test failed', error)); });
+els.testGrok.addEventListener('click', () => { test('grok').catch(error => handleUiError('grok test failed', error)); });
 els.openOutputDir.addEventListener('click', () => { openOutputDir().catch(error => handleUiError('open output directory failed', error)); });
 els.cleanupGenerated.addEventListener('click', () => { cleanupGenerated().catch(error => handleUiError('cleanup generated JSON failed', error)); });
 els.copyUploadJson.addEventListener('click', () => { copyUploadJsonExample().catch(error => handleUiError('copy upload JSON failed', error)); });
