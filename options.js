@@ -276,7 +276,7 @@ async function save() {
   settings.ai = ai;
   settings.tocMaxLevel = clampNumber(els.tocMaxLevel.value, DEFAULT_TOC_MAX_LEVEL, 1, 5);
   settings.copyOnSelect = els.copyOnSelect.checked;
-  settings.highlightEnabled = els.highlightEnabled.checked !== false;
+  settings.highlightEnabled = els.highlightEnabled.checked === true;
   settings.charPresetDirectInsert = els.charPresetDirectInsert.checked === true;
   settings.generatedJsonCleanupDays = cleanupDaysValue(els.cleanupDays.value);
   await chrome.storage.local.set({ settings });
@@ -356,7 +356,7 @@ async function init() {
   els.tocMaxLevel.value = String(tocMaxLevelFromSettings(settings));
   els.cleanupDays.value = String(cleanupDaysFromSettings(settings));
   els.copyOnSelect.checked = settings.copyOnSelect !== false;
-  els.highlightEnabled.checked = settings.highlightEnabled !== false;
+  els.highlightEnabled.checked = settings.highlightEnabled === true;
   els.charPresetDirectInsert.checked = settings.charPresetDirectInsert === true;
   updateExternalControls();
   setStatus('설정을 불러왔습니다.');

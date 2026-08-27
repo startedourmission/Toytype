@@ -311,7 +311,7 @@ async function toggleHighlight(enabled) {
 }
 
 function highlightEnabled() {
-  return !settings || settings.highlightEnabled !== false;
+  return !!settings && settings.highlightEnabled === true;
 }
 
 async function fetchReport() {
@@ -406,7 +406,7 @@ function buildHighlightSection() {
   sec.append(row);
   sec.append(el('p', 'hint', isDocsTab
     ? '구글 독스는 본문에 밑줄을 긋지 않습니다. 일반 웹페이지에만 적용됩니다.'
-    : '끄면 밑줄만 감추고 검사와 목록은 그대로 유지합니다.'));
+    : '끄면(기본) 밑줄만 감추고 검사와 목록은 그대로 유지합니다.'));
   return sec;
 }
 
