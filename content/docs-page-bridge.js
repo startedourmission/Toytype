@@ -3970,15 +3970,23 @@
     }
   }
 
+  // 원하는 상태를 늘 눌러서 확정한다. -checked가 이미 맞다고 건너뛰면 그 서식은
+  // 적용한 제목 스타일에서 상속된 값으로만 남고, 뒤따르는 색·크기 변경에서
+  // 재계산될 때 딸려오지 않는 경우가 있다(제목 3의 굵게가 그렇게 풀렸다).
+  // 이미 맞는 상태면 한 번 뒤집었다 되돌려 직접 지정한 서식으로 만든다.
   async function styleSetToolbarToggle(buttonId, want) {
     const btn = document.getElementById(buttonId);
     if (!btn) throw new Error('툴바 버튼 없음: ' + buttonId);
     const isOn = () => /-checked(\s|$)/.test(btn.className);
-    if (isOn() === want) return { buttonId, want, changed: false };
-    styleSynthAct(btn);
-    await delay(250);
-    if (isOn() !== want) throw new Error('툴바 토글 실패: ' + buttonId);
-    return { buttonId, want, changed: true };
+    const press = async expected => {
+      styleSynthAct(btn);
+      await delay(250);
+      if (isOn() !== expected) throw new Error('툴바 토글 실패: ' + buttonId);
+    };
+    const already = isOn() === want;
+    if (already) await press(!want);
+    await press(want);
+    return { buttonId, want, changed: !already, reasserted: already };
   }
 
   async function styleSetFontSize(sizePt) {
