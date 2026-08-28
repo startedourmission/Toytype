@@ -3970,10 +3970,13 @@
     }
   }
 
-  // 원하는 상태를 늘 눌러서 확정한다. -checked가 이미 맞다고 건너뛰면 그 서식은
-  // 적용한 제목 스타일에서 상속된 값으로만 남고, 뒤따르는 색·크기 변경에서
-  // 재계산될 때 딸려오지 않는 경우가 있다(제목 3의 굵게가 그렇게 풀렸다).
-  // 이미 맞는 상태면 한 번 뒤집었다 되돌려 직접 지정한 서식으로 만든다.
+  // 켜야 하는데 -checked가 이미 맞다고 건너뛰면 그 서식은 적용한 제목 스타일에서
+  // 상속된 값으로만 남고, 뒤따르는 색·크기 변경에서 재계산될 때 딸려오지 않는
+  // 경우가 있다(제목 3의 굵게가 그렇게 풀렸다). 그래서 켤 때만 한 번 뒤집었다
+  // 되돌려 직접 지정한 서식으로 만든다.
+  //
+  // 끌 때는 뒤집지 않는다. 꺼져 있는 걸 켰다 끄면 확정할 서식이 생기는 게 아니라
+  // 밑줄이 그 런에 남아 다음 스타일로 새어 나간다(제목 4 다음의 밑줄이 그랬다).
   async function styleSetToolbarToggle(buttonId, want) {
     const btn = document.getElementById(buttonId);
     if (!btn) throw new Error('툴바 버튼 없음: ' + buttonId);
@@ -3984,7 +3987,8 @@
       if (isOn() !== expected) throw new Error('툴바 토글 실패: ' + buttonId);
     };
     const already = isOn() === want;
-    if (already) await press(!want);
+    if (already && !want) return { buttonId, want, changed: false, reasserted: false };
+    if (already) await press(false);
     await press(want);
     return { buttonId, want, changed: !already, reasserted: already };
   }
