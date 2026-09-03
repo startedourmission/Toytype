@@ -564,3 +564,33 @@ test('T10 성능: init 후 100,000자 스캔 ≤ 1500ms', () => {
   assert.ok(scanMs <= 1500, `scan ${scanMs.toFixed(0)}ms (findings ${res.findings.length})`);
   assert.ok(res.findings.filter((f) => f.src === '갯수').length >= 50);
 });
+
+test('규칙 옵션 allowCodeToken: 순수 ASCII 경로 토큰도 검출한다', () => {
+  const ret = E.init(synth([cat('a', [
+    ['~/.claude/skills/', 'skills/', { allowCodeToken: true }]
+  ])]), ['a']);
+  assert.equal(ret.activeRules, 1);
+  // 가드 B라면 0건이 되는 자리
+  assert.equal(E.scan('만들 위치: ~/.claude/skills/slack-daily-briefing/ 좋음?').findings.length, 1);
+  // 한글이 섞인 토큰은 원래도 통과했다
+  assert.equal(E.scan('만들 위치: ~/.claude/skills/슬랙브리핑/에 저장').findings.length, 1);
+});
+
+test('규칙 옵션 allowCodeToken: 플래그가 없으면 가드 B가 그대로 막는다', () => {
+  E.init(synth([cat('a', [['~/.claude/skills/', 'skills/']])]), ['a']);
+  assert.equal(E.scan('만들 위치: ~/.claude/skills/slack-daily-briefing/ 좋음?').findings.length, 0);
+});
+
+test('규칙 옵션 allowCodeToken: 가드 A(ASCII 단어 경계)는 계속 적용된다', () => {
+  E.init(synth([cat('a', [['skills/', 'skills2/', { allowCodeToken: true }]])]), ['a']);
+  // 앞이 ASCII 영숫자면 가드 A로 탈락
+  assert.equal(E.scan('myskills/foo bar').findings.length, 0);
+  assert.equal(E.scan('경로 skills/foo 확인').findings.length, 1);
+});
+
+test('규칙 옵션 allowCodeToken: boolean이 아니면 init이 거부한다', () => {
+  assert.throws(
+    () => E.init(synth([cat('a', [['가', '나', { allowCodeToken: 'yes' }]])]), ['a']),
+    /invalid rule options/
+  );
+});

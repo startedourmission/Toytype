@@ -51,7 +51,13 @@
 
   function validRuleOptions(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    return validStringList(value.rejectBefore) && validStringList(value.rejectAfter);
+    return validStringList(value.rejectBefore) &&
+      validStringList(value.rejectAfter) &&
+      validBoolean(value.allowCodeToken);
+  }
+
+  function validBoolean(value) {
+    return value === undefined || typeof value === 'boolean';
   }
 
   function validStringList(value) {
@@ -114,6 +120,8 @@
           rejectBefore: stringList(rule[2] && rule[2].rejectBefore),
           rejectAfter: stringList(rule[2] && rule[2].rejectAfter),
           allowsUrlPrefixCleanup: dst === '' && (src === 'http://' || src === 'www.'),
+          // 가드 B 예외: 경로·명령어·파일명 토큰 자체를 고치는 규칙
+          allowCodeToken: !!(rule[2] && rule[2].allowCodeToken === true),
           // 가드 D용: 후미 공백만 추가하는 규칙 ("➊"→"➊ ")
           addsTailSpace: dst === src + ' '
         };
@@ -158,6 +166,10 @@
       const nc = text.charCodeAt(end);
       if (!(isAsciiAlnum(nc) || (nc > 160 && nc !== 0x3000))) return true;
     }
+
+    // 가드 B 예외: 경로·명령어·파일명처럼 코드 토큰 자체가 교정 대상인 규칙은
+    // 토큰 판정을 건너뛴다. 가드 A(ASCII 단어 경계)와 문맥 예외는 그대로 적용된다.
+    if (entry.allowCodeToken) return false;
 
     // 가드 B: 양끝 공백을 깎은 코어 기준으로 토큰 확장 (space1의 선행 공백이 토큰에 안 섞이게)
     let cs = start;

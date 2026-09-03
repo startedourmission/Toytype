@@ -289,6 +289,16 @@ Google Docs 패널의 [추가기능] ➝ [단락 스타일 셋팅]은 브릿지�
 
 - `rejectBefore`: 매칭 직전 문자열이 있으면 제외
 - `rejectAfter`: 매칭 직후 문자열이 있으면 제외
+- `allowCodeToken`: 코드·URL 토큰 판정(가드 B)을 건너뜀
+
+`allowCodeToken`은 경로·명령어·파일명 자체를 고치는 규칙에 씁니다. 엔진은 기본적으로
+`~/.claude/skills/foo/`처럼 순수 ASCII에 `/ . _ :`가 섞인 토큰을 코드로 보고 검출하지 않는데,
+그 토큰이 바로 교정 대상일 때는 이 플래그로 예외를 둡니다. ASCII 단어 경계(가드 A)와
+`rejectBefore`/`rejectAfter`는 그대로 적용됩니다.
+
+```json
+["~/.claude/skills/", "skills/", { "allowCodeToken": true }]
+```
 
 `rules.json` 정본은 Google Sheets 규칙 시트입니다. 시트를 수정한 뒤 루트에서 다음 명령을 실행합니다.
 

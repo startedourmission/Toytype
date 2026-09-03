@@ -394,7 +394,13 @@
 
   function validRuleOptions(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    return validStringList(value.rejectBefore) && validStringList(value.rejectAfter);
+    return validStringList(value.rejectBefore) &&
+      validStringList(value.rejectAfter) &&
+      validBoolean(value.allowCodeToken);
+  }
+
+  function validBoolean(value) {
+    return value === undefined || typeof value === 'boolean';
   }
 
   function validStringList(value) {
