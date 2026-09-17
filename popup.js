@@ -7,6 +7,8 @@
 
 const DEFAULT_BRIDGE_PORT = 17644;
 const NATIVE_HOST = 'com.toytype.bridge_host';
+// Safari의 sendNativeMessage는 Chrome 호스트가 아닌 별도의 네이티브 앱으로 전달된다.
+const IS_SAFARI = chrome.runtime.getURL('').startsWith('safari-web-extension:');
 
 const DEFAULT_AI = {
   timeoutDefaultVersion: 2,
@@ -186,12 +188,23 @@ function sendNative(action) {
 }
 
 function nativeHostInstallCommand() {
+  if (IS_SAFARI) return 'node tools/toytype_native_host.mjs --connect --port ' + bridgePort();
   return 'node tools/install_native_host.mjs';
 }
 
 async function connectBridge() {
   if (busyAction) return;
   if (!externalFeaturesEnabled()) return;
+  if (IS_SAFARI) {
+    await refreshBridge(false);
+    if (bridgeState.state !== 'ok') {
+      nativeHostReady = false;
+      setStatus('Safari에서는 브리지 자동 실행을 터미널에서 등록해야 합니다. 아래 명령을 실행한 뒤 [다시 확인]을 누르세요.', 'warn');
+    } else {
+      setStatus('브리지에 연결되었습니다.', 'ok');
+    }
+    return;
+  }
   busyAction = 'connect';
   bridgeState = Object.assign({}, bridgeState, { state: 'checking' });
   setStatus('브리지를 켜는 중…', 'info');
@@ -538,14 +551,16 @@ function buildBridgeSection() {
     recheck.addEventListener('click', () => { refreshBridge(true); });
     actions.append(recheck);
 
-    const off = el('button', 'btn ghost', busyAction === 'disconnect' ? '끄는 중…' : '상주 끄기');
-    off.type = 'button';
-    off.disabled = !!busyAction;
-    off.title = '자동 실행을 해제하고 브리지를 종료합니다';
-    off.addEventListener('click', () => { disconnectBridge(); });
-    actions.append(off);
+    if (!IS_SAFARI) {
+      const off = el('button', 'btn ghost', busyAction === 'disconnect' ? '끄는 중…' : '상주 끄기');
+      off.type = 'button';
+      off.disabled = !!busyAction;
+      off.title = '자동 실행을 해제하고 브리지를 종료합니다';
+      off.addEventListener('click', () => { disconnectBridge(); });
+      actions.append(off);
+    }
   } else {
-    const connectBtn = el('button', 'btn primary', busyAction === 'connect' || bridgeState.state === 'checking' ? '연결 중…' : '연결');
+    const connectBtn = el('button', 'btn primary', busyAction === 'connect' || bridgeState.state === 'checking' ? '연결 중…' : (IS_SAFARI ? '다시 확인' : '연결'));
     connectBtn.type = 'button';
     connectBtn.disabled = !!busyAction || bridgeState.state === 'checking';
     connectBtn.addEventListener('click', () => { connectBridge(); });
@@ -554,7 +569,7 @@ function buildBridgeSection() {
   sec.append(actions);
 
   // 도우미가 없을 때만 터미널 명령을 보여준다 — 평소에는 숨긴다.
-  if (!nativeHostReady) {
+  if (!nativeHostReady && bridgeState.state !== 'ok') {
     sec.append(el('p', 'hint', '최초 1회만 프로젝트 폴더에서 실행하세요.'));
     const cmd = el('pre', 'command', nativeHostInstallCommand());
     sec.append(cmd);
@@ -562,7 +577,7 @@ function buildBridgeSection() {
     copyBtn.type = 'button';
     copyBtn.addEventListener('click', async () => {
       const ok = await copyText(nativeHostInstallCommand());
-      setStatus(ok ? '명령을 복사했습니다. 터미널에 붙여넣고 확장을 새로고침하세요.' : '복사하지 못했습니다.', ok ? 'ok' : 'warn');
+      setStatus(ok ? (IS_SAFARI ? '명령을 복사했습니다. 프로젝트 폴더의 터미널에서 실행한 뒤 [다시 확인]을 누르세요.' : '명령을 복사했습니다. 터미널에 붙여넣고 확장을 새로고침하세요.') : '복사하지 못했습니다.', ok ? 'ok' : 'warn');
     });
     sec.append(copyBtn);
   }

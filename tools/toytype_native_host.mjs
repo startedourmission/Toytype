@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Toytype — Chrome 네이티브 메시징 호스트
+// Toytype — Chrome 네이티브 메시징 호스트 / macOS 브리지 상주 관리
 // 확장은 로컬 프로세스를 직접 띄울 수 없다. 이 호스트가 그 역할을 대신해서
 // 팝업의 [연결] 한 번으로 브리지를 상주(LaunchAgent)로 올리고 상태를 돌려준다.
 //
@@ -248,4 +248,40 @@ function main() {
   process.stdin.on('end', () => { process.exit(0); });
 }
 
-main();
+// Safari는 Chrome의 NativeMessagingHosts를 사용하지 않는다.
+// 터미널에서도 동일한 LaunchAgent를 등록할 수 있게 일반 CLI를 제공한다.
+export function parseCliArgs(args) {
+  const [command, ...rest] = args;
+  if (!['--connect', '--status', '--disconnect'].includes(command)) {
+    throw new Error('Usage: node tools/toytype_native_host.mjs [--connect|--status|--disconnect] [--port 17644]');
+  }
+  if (rest.length && (rest.length !== 2 || rest[0] !== '--port')) {
+    throw new Error('Expected --port followed by a port number.');
+  }
+  const port = rest.length ? Number(rest[1]) : DEFAULT_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('Port must be an integer from 1 to 65535.');
+  }
+  return { action: command.slice(2), port };
+}
+
+async function runCli(args) {
+  try {
+    const message = parseCliArgs(args);
+    if (process.platform !== 'darwin') throw new Error('LaunchAgent management requires macOS.');
+    const result = await handle(message);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exitCode = 1;
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.length > 2 && !process.argv[2].startsWith('chrome-extension://')) {
+    runCli(process.argv.slice(2));
+  } else {
+    main();
+  }
+}
