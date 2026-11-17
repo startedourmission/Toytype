@@ -453,6 +453,8 @@ async function runCodex(prompt, settings, options = {}) {
   if (typeof options.reasoningEffort === 'string' && options.reasoningEffort.trim()) {
     args.splice(1, 0, '-c', `model_reasoning_effort="${options.reasoningEffort.trim()}"`);
   }
+  // -i는 값을 여러 개 받으므로 '-'(stdin 프롬프트)를 이미지로 먹지 않게 앞쪽 플래그 사이에 둔다.
+  for (const imagePath of options.imagePaths || []) args.splice(1, 0, '-i', imagePath);
   const result = await runCommand(settings.codexCommand, args, {
     cwd: settings.workspaceDir,
     input: prompt,
@@ -480,6 +482,10 @@ async function runClaude(prompt, settings, options = {}) {
     // 이게 빠지면 모델이 "I don't have permission to use WebSearch"라며 근거 없이 답한다.
     args.push('--tools', 'WebFetch,WebSearch');
     args.push('--allowedTools', 'WebFetch', 'WebSearch');
+  } else if (Array.isArray(options.imagePaths) && options.imagePaths.length) {
+    // claude -p는 이미지 첨부 플래그가 없어 Read 도구로 파일을 보게 한다. 임시 폴더만 연다.
+    args.push('--tools', 'Read', '--allowedTools', 'Read');
+    for (const dir of new Set(options.imagePaths.map(p => path.dirname(p)))) args.push('--add-dir', dir);
   } else {
     args.push('--tools', '');
   }
@@ -1089,13 +1095,13 @@ function buildLengthAdjustmentPrompt(document) {
   return [
     'You adjust the length of a selected Korean manuscript sentence or passage.',
     '',
-    'Return only one valid Toytype-compatible JSON object. Do not wrap it in markdown.',
+    'Return only one valid JSON object of the form {"replacement": "..."}. Do not wrap it in markdown.',
     untrustedManuscriptDataInstructions(),
     manuscriptNotationInstructions(),
     '',
     'Hard requirements:',
-    '- Output JSON must have version, source, categories.',
-    `- Include exactly one rule whose sourceText is exactly the selected text below.`,
+    '- The "replacement" value is your rewritten version of the selected text below. Do not copy the selected text into the JSON.',
+    '- Escape line breaks inside the JSON string as \\n. Keep paragraph breaks only where the selected text has them.',
     '- The replacement must preserve the meaning, tone, terminology, and factual claims.',
     `- Adjust the replacement toward ${targetChars} Korean characters.`,
     `- Try to keep the replacement between ${targetMinChars} and ${targetMaxChars} Korean characters (target +/- ${toleranceChars}).`,
@@ -1104,7 +1110,6 @@ function buildLengthAdjustmentPrompt(document) {
     '- If shortening, remove redundancy rather than changing the point.',
     '- If lengthening, add clarifying connective detail grounded only in the provided context. Do not invent facts.',
     '- Return no notes outside JSON.',
-    '- Use category id "ai-sentence-suggestions" and label "AI 문장 제안".',
     '',
     'Document metadata:',
     JSON.stringify(meta, null, 2),
@@ -1124,18 +1129,42 @@ function buildLengthAdjustmentPrompt(document) {
     contextAfter,
     'TOYTYPE_CONTEXT_AFTER',
     '',
-    'Required JSON shape:',
-    JSON.stringify({
-      version: 'YYYY-MM-DD',
-      source: 'sentence-suggestions:' + title,
-      categories: [{
-        id: SENTENCE_SUGGESTION_CATEGORY_ID,
-        label: SENTENCE_SUGGESTION_CATEGORY_LABEL,
-        defaultOn: true,
-        rules: [[selectedText, 'length-adjusted replacement']]
-      }]
-    }, null, 2)
+    'Required JSON shape (replace the angle-bracket description with the actual rewritten text):',
+    JSON.stringify({ replacement: LENGTH_REPLACEMENT_PLACEHOLDER })
   ].join('\n');
+}
+
+// 프롬프트 예시의 자리표시자. 모델이 이것을 그대로 돌려주면 제안으로 저장하지 않는다.
+const LENGTH_REPLACEMENT_PLACEHOLDER = '<adjusted text>';
+const LENGTH_REPLACEMENT_PLACEHOLDERS = new Set([
+  LENGTH_REPLACEMENT_PLACEHOLDER,
+  'length-adjusted replacement',
+  'replacement',
+  '...'
+]);
+
+// 긴 선택 영역은 원문을 JSON에 다시 베끼다가 깨지거나 예시 자리표시자를 그대로 돌려주는 일이 잦았다.
+// 원문은 브리지가 직접 붙이고, 모델 응답에서는 실제로 고쳐 쓴 문장만 꺼낸다.
+function parseLengthAdjustmentReplacement(responseText, selectedText) {
+  const objects = extractJsonObjects(responseText);
+  for (const json of objects) {
+    const replacement = firstReplacementFromToytypeJson(json);
+    if (isUsableLengthReplacement(replacement, selectedText)) return replacement;
+  }
+  const sawPlaceholder = objects.some(json => {
+    const r = firstReplacementFromToytypeJson(json);
+    return r && LENGTH_REPLACEMENT_PLACEHOLDERS.has(r.trim().toLowerCase());
+  });
+  throw new HttpError(502, sawPlaceholder
+    ? 'AI response returned the example placeholder instead of a replacement'
+    : 'AI response did not contain a replacement', { responseTail: tail(responseText) });
+}
+
+function isUsableLengthReplacement(replacement, selectedText) {
+  const text = String(replacement || '');
+  if (!text.trim()) return false;
+  if (LENGTH_REPLACEMENT_PLACEHOLDERS.has(text.trim().toLowerCase())) return false;
+  return text !== String(selectedText || '');
 }
 
 function normalizeTargetChars(document, currentChars) {
@@ -1232,42 +1261,84 @@ Toytype JSON schema:
 }
 
 function extractJsonObject(text) {
+  const [first] = extractJsonObjects(text, { limit: 1 });
+  if (first) return first;
+  throw new HttpError(502, 'AI response did not contain a valid JSON object', { responseTail: tail(text) });
+}
+
+// 응답 안의 최상위 JSON 객체를 앞에서부터 모두 꺼낸다. 모델이 문자열 안에 줄바꿈 같은 제어 문자를
+// 날것으로 넣어 JSON.parse가 거부하면, 문자열 안의 제어 문자만 이스케이프해서 다시 읽는다.
+function extractJsonObjects(text, options = {}) {
   const input = String(text || '');
-  for (let start = input.indexOf('{'); start !== -1; start = input.indexOf('{', start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < input.length; i++) {
-      const ch = input[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === '\\') {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === '{') depth++;
-      else if (ch === '}') {
-        depth--;
-        if (depth === 0) {
-          const candidate = input.slice(start, i + 1);
-          try {
-            return JSON.parse(candidate);
-          } catch (_) {
-            break;
-          }
-        }
-      }
+  const limit = Number.isFinite(options.limit) ? options.limit : Infinity;
+  const found = [];
+  let start = input.indexOf('{');
+  while (start !== -1 && found.length < limit) {
+    const end = findJsonObjectEnd(input, start);
+    const parsed = end === -1 ? undefined : parseJsonLenient(input.slice(start, end + 1));
+    if (parsed !== undefined) {
+      found.push(parsed);
+      start = input.indexOf('{', end + 1);
+    } else {
+      start = input.indexOf('{', start + 1);
     }
   }
-  throw new HttpError(502, 'AI response did not contain a valid JSON object', { responseTail: tail(input) });
+  return found;
+}
+
+function findJsonObjectEnd(input, start) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function parseJsonLenient(candidate) {
+  try {
+    return JSON.parse(candidate);
+  } catch (_) { /* 아래에서 제어 문자를 고쳐 다시 시도한다 */ }
+  try {
+    return JSON.parse(escapeControlCharsInJsonStrings(candidate));
+  } catch (_) {
+    return undefined;
+  }
+}
+
+function escapeControlCharsInJsonStrings(candidate) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (const ch of candidate) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      else if (ch < ' ') {
+        out += ch === '\n' ? '\\n' : ch === '\r' ? '\\r' : ch === '\t' ? '\\t'
+          : '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+        continue;
+      }
+    } else if (ch === '"') {
+      inString = true;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 function normalizeGeneratedQuestionText(text) {
@@ -2635,11 +2706,7 @@ async function generateLengthAdjustment(body) {
     throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, providerFailureDetails(run, { model }));
   }
 
-  const aiJson = extractJsonObject(run.response);
-  const replacement = firstReplacementFromToytypeJson(aiJson);
-  if (!replacement.trim()) {
-    throw new HttpError(502, 'AI response did not contain a replacement', { responseTail: tail(run.response) });
-  }
+  const replacement = parseLengthAdjustmentReplacement(run.response, selectedText);
   const json = buildSentenceSuggestionJson(document, [selectedText, replacement], {
     category: SENTENCE_SUGGESTION_CATEGORY_ID,
     type: 'length-adjustment',
@@ -2669,6 +2736,652 @@ async function generateLengthAdjustment(body) {
     elapsedMs: run.elapsedMs,
     diagnostics: providerRunPublicDiagnostics(run)
   };
+}
+
+const DIAGRAM_OCR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'ocr_text_boxes.swift');
+const DIAGRAM_COLOR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'sample_box_colors.swift');
+// 글상자(그리기의 [텍스트 상자]) 원래 속성: 테두리·채우기 없음
+const DIAGRAM_TEXTBOX_PROPS = [44, 0, 165, 0, 166, 1];
+const DIAGRAM_MAX_ITEMS = 60;
+const DIAGRAM_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const DIAGRAM_SITES = ['top', 'bottom', 'left', 'right'];
+const DIAGRAM_HEADS = ['none', 'dot', 'arrow'];
+const DIAGRAM_KINDS = ['straight', 'elbow', 'elbow2'];
+// AI 비전 모델은 긴 변 1568px 또는 약 115만 화소를 넘는 이미지를 줄여서 본다. 줄어든 이미지에서 잡은 좌표는
+// 원본과 어긋나므로, 한도 안으로 줄인 사본을 보여 주고 그 좌표를 원본 픽셀로 되돌린다.
+const DIAGRAM_VIEW_MAX_EDGE = 1500;
+const DIAGRAM_VIEW_MAX_PIXELS = 1100000;
+
+// AI 도해: 선택 텍스트(+스크린샷)로 구글 그리기용 도해 스펙을 만든다.
+// 스펙을 구글 그리기 클립보드 형식으로 바꾸는 일은 확장(content/drawing-clip.js)이 한다.
+async function generateDiagram(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!document.id) document.id = extractDocId(document.url);
+  const instruction = cleanDiagramInstruction(document.selectedText);
+  if (!instruction) throw new HttpError(400, 'document.selectedText is required');
+  const image = decodeDiagramImage(body.image);
+  // 이미지로 된 도해를 편집 가능한 도형으로 다시 그린다(스크린샷 강조 대신)
+  const redraw = !!image && body.mode === 'redraw';
+  const drawing = !image && body.drawing && Array.isArray(body.drawing.items) && body.drawing.items.length
+    ? normalizeDiagramSpec(body.drawing, null)
+    : null;
+  // 그리기 수정: 그리기 전체를 렌더링한 PNG(참고용). 1px = ptPerPx pt
+  const reference = drawing && body.drawing.reference ? decodeDiagramImage(body.drawing.reference) : null;
+  const ptPerPx = reference ? clampNumber(body.drawing.reference.ptPerPx, 0, 0.001, 100) : 0;
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toytype-diagram-'));
+  try {
+    let imagePath = '';
+    let ocr = null;
+    const seen = image || reference;
+    let view = null;
+    if (seen) {
+      imagePath = path.join(tmpDir, (image ? 'screenshot.' : 'drawing.') + seen.ext);
+      fs.writeFileSync(imagePath, seen.data);
+      if (image) {
+        view = await makeDiagramViewImage(imagePath, image.width, image.height, tmpDir, settings);
+        imagePath = view.path;
+      }
+      ocr = await runDiagramOcr(imagePath, settings);
+      if (ocr && reference) ocr = scaleOcrToPt(ocr, ptPerPx);
+    }
+    const prompt = buildDiagramPrompt({
+      title: document.title || document.id || 'Google Docs document',
+      instruction,
+      contextBefore: String(document.contextBefore || '').slice(-800),
+      contextAfter: String(document.contextAfter || '').slice(0, 800),
+      image: image ? { path: imagePath, width: view.width, height: view.height } : null,
+      redraw,
+      drawing,
+      reference: reference ? { path: imagePath, width: reference.width, height: reference.height, ptPerPx } : null,
+      ocr,
+      canSeeImage: provider !== 'grok'
+    });
+    const run = await runProvider(provider, prompt, settings, {
+      imagePaths: imagePath ? [imagePath] : [],
+      timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+    });
+    if (!run.ok) {
+      throw new HttpError(502, `${provider} exited with code ${run.exitCode}`, providerFailureDetails(run));
+    }
+    let spec;
+    if (redraw) {
+      spec = await finishRedrawSpec(extractJsonObject(run.response), { view, image, ocr, settings });
+    } else {
+      spec = normalizeDiagramSpec(extractJsonObject(run.response), image);
+      if (image) spec = placeCalloutsInRightMargin(spec, view.width);
+      if (drawing) spec = placeNewCalloutsInRightMargin(spec, drawing);
+      if (view && view.scale !== 1) spec = scaleAnnotateSpec(spec, 1 / view.scale);
+    }
+    if (!spec.items.length) {
+      throw new HttpError(502, 'AI response did not contain diagram items', { responseTail: tail(run.response) });
+    }
+    return {
+      ok: true,
+      provider,
+      spec,
+      ocrLines: ocr ? ocr.lines.length : null,
+      elapsedMs: run.elapsedMs,
+      diagnostics: providerRunPublicDiagnostics(run)
+    };
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  }
+}
+
+// ---------- 이미지 도해 다시 그리기 ----------
+
+// 붙여 넣은 그리기가 원래 이미지를 본문에 넣었을 때와 같은 크기가 되게 한다(drawing-clip.js와 같은 규칙).
+// 레티나 캡처는 절반 폭, 본문 폭(468pt)을 넘지 않는다.
+function redrawPtPerPx(pixelWidth) {
+  const w = pixelWidth >= 900 ? pixelWidth / 2 : pixelWidth * 0.75;
+  return Math.min(468, Math.max(120, w)) / pixelWidth;
+}
+
+// 거의 검정·흰색인 색(글자 가장자리 섞임)은 순색으로 맞춘다.
+function snapDiagramColor(value) {
+  const hex = diagramColor(value);
+  if (!hex) return undefined;
+  const ch = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  if (ch.every(v => v <= 12)) return '#000000';
+  if (ch.every(v => v >= 243)) return '#FFFFFF';
+  return hex;
+}
+
+async function sampleDiagramColors(imagePath, rects, settings) {
+  if (!rects.length || process.platform !== 'darwin' || !fs.existsSync(DIAGRAM_COLOR_SCRIPT)) return [];
+  const run = await runCommand('swift', [DIAGRAM_COLOR_SCRIPT, imagePath, JSON.stringify(rects)], {
+    cwd: settings.workspaceDir,
+    timeoutMs: 90000
+  });
+  if (!run.ok) {
+    bridgeError('diagram color sampling failed', { exitCode: run.exitCode, diagnostic: summarizeProviderFailureDiagnostic(run.stderr) });
+    return [];
+  }
+  try {
+    const json = JSON.parse(run.stdout);
+    return Array.isArray(json) ? json : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// 상자 안에 든 OCR 줄 높이(px)의 중간값. 글자 크기(px)와 거의 같다.
+function ocrTextHeightIn(rect, ocr) {
+  if (!ocr || !Array.isArray(ocr.lines)) return 0;
+  const [x, y, w, h] = rect;
+  const hs = ocr.lines
+    .map(line => line.box)
+    .filter(b => Array.isArray(b) && b.length === 4)
+    .filter(b => {
+      const cx = b[0] + b[2] / 2;
+      const cy = b[1] + b[3] / 2;
+      return cx >= x && cx <= x + w && cy >= y && cy <= y + h;
+    })
+    .map(b => b[3])
+    .sort((a, b) => a - b);
+  return hs.length ? hs[Math.floor(hs.length / 2)] : 0;
+}
+
+// AI가 이미지 픽셀로 준 도형·선을 그리기 pt 스펙으로 바꾼다. 색은 픽셀에서 잰 값, 글자 크기는 OCR 높이를 우선한다.
+async function finishRedrawSpec(raw, ctx) {
+  const json = raw && typeof raw === 'object' ? raw : {};
+  const rawItems = Array.isArray(json.items) ? json.items.slice(0, DIAGRAM_MAX_ITEMS).filter(it => it && typeof it === 'object') : [];
+  const isShape = it => (it.type === 'node' || it.type === 'text') && diagramRect(it.rect) && Number(it.rect[2]) > 0 && Number(it.rect[3]) > 0;
+  const shapes = rawItems.filter(isShape);
+  const colors = await sampleDiagramColors(ctx.view.path, shapes.map(it => it.rect.map(Number)), ctx.settings);
+  const sampled = new Map(shapes.map((it, i) => [it, colors[i] || {}]));
+  const f = redrawPtPerPx(ctx.image.width) / ctx.view.scale; // 보낸 사본 1px → pt
+  const pt = v => Math.round(Number(v) * f * 100) / 100;
+
+  const items = rawItems.map(it => {
+    if (isShape(it)) {
+      const c = sampled.get(it);
+      const rect = it.rect.map(Number);
+      const out = { id: it.id, type: 'node', text: it.text };
+      const textPx = ocrTextHeightIn(rect, ctx.ocr) || Number(it.textHeight) || 0;
+      if (textPx > 0) out.size = Math.round(textPx * f * 0.95);
+      const textColor = snapDiagramColor(c.text) || snapDiagramColor(it.color);
+      if (textColor && textColor !== '#000000') out.color = textColor;
+      if (it.type === 'text') {
+        // 글상자는 글자가 줄바꿈되지 않게 양옆을 조금 넓힌다
+        out.shapeType = 108;
+        out.rect = [pt(rect[0]) - 6, pt(rect[1]) - 3, pt(rect[2]) + 12, pt(rect[3]) + 6].map(v => Math.round(v * 100) / 100);
+        out.align = it.align === 'left' ? 1 : it.align === 'right' ? 3 : 2;
+        return out;
+      }
+      out.rect = rect.map(pt);
+      out.shapeType = it.round === false ? 6 : 7;
+      const fill = c.fill === null ? null : snapDiagramColor(c.fill);
+      if (fill !== undefined) out.fill = fill;
+      else if (it.fill === null || diagramColor(it.fill)) out.fill = it.fill === null ? null : diagramColor(it.fill);
+      else out.fill = null;
+      // 테두리가 안 보이면 채우기와 같은 색 선으로 둔다(없는 선을 검정으로 만들지 않게)
+      out.line = snapDiagramColor(c.line) || (c.line === null && out.fill ? out.fill : snapDiagramColor(it.line) || '#000000');
+      const weightPx = Number(it.weight);
+      out.weight = Math.min(6, Math.max(0.5, Math.round((weightPx > 0 ? weightPx * f : 1) * 4) / 4));
+      return out;
+    }
+    if (it.type !== 'arrow') return null;
+    const out = Object.assign({}, it);
+    const points = diagramPoints(it.points);
+    if (points) out.points = points.map(p => p.map(pt));
+    else delete out.points;
+    const weightPx = Number(it.weight);
+    out.weight = Math.min(6, Math.max(0.5, Math.round((weightPx > 0 ? weightPx * f : 1) * 4) / 4));
+    out.line = snapDiagramColor(it.line) || '#000000';
+    out.dash = it.dashed === true || (Number.isInteger(it.dash) && it.dash > 0) ? 2 : 0;
+    delete out.adjust;
+    return out;
+  }).filter(Boolean);
+
+  const spec = normalizeDiagramSpec({ title: json.title || '도해 다시 그리기', mode: 'diagram', items }, null);
+  spec.items = spec.items.map(it => {
+    if (it.type !== 'node' || it.shapeType !== 108) return it;
+    const { fill, line, weight, ...rest } = it;
+    return Object.assign(rest, { rawProps: DIAGRAM_TEXTBOX_PROPS.slice() });
+  });
+  spec.redraw = true;
+  return spec;
+}
+
+// 선택 영역의 이미지 자리표시 문자 등 제어 문자를 지운다.
+function cleanDiagramInstruction(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f￼]/g, '')
+    .trim()
+    .slice(0, 6000);
+}
+
+function decodeDiagramImage(value) {
+  if (!value || typeof value !== 'object' || typeof value.dataUrl !== 'string') return null;
+  const m = /^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=\s]+)$/i.exec(value.dataUrl);
+  if (!m) throw new HttpError(400, 'image.dataUrl must be a base64 image data URL');
+  const data = Buffer.from(m[2], 'base64');
+  if (data.length > DIAGRAM_MAX_IMAGE_BYTES) throw new HttpError(413, 'image is too large');
+  const ext = m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase();
+  const dims = imageDimensions('screenshot.' + ext, data) || {};
+  const width = Number(dims.width || value.width);
+  const height = Number(dims.height || value.height);
+  if (!(width > 0 && height > 0)) throw new HttpError(400, 'image dimensions are unavailable');
+  return { data, ext, width, height };
+}
+
+// 스크린샷이 비전 한도를 넘으면 sips로 줄인 사본을 만든다. scale = 사본 / 원본.
+async function makeDiagramViewImage(imagePath, width, height, tmpDir, settings) {
+  const scale = Math.min(1, DIAGRAM_VIEW_MAX_EDGE / Math.max(width, height), Math.sqrt(DIAGRAM_VIEW_MAX_PIXELS / (width * height)));
+  if (scale >= 1 || process.platform !== 'darwin') return { path: imagePath, width, height, scale: 1 };
+  const w = Math.max(1, Math.round(width * scale));
+  const h = Math.max(1, Math.round(height * scale));
+  const out = path.join(tmpDir, 'view.png');
+  const run = await runCommand('sips', ['-s', 'format', 'png', '-z', String(h), String(w), imagePath, '--out', out], {
+    cwd: settings.workspaceDir,
+    timeoutMs: 60000
+  });
+  if (!run.ok || !fs.existsSync(out)) return { path: imagePath, width, height, scale: 1 };
+  return { path: out, width: w, height: h, scale: w / width };
+}
+
+// 설명 글박스는 스크린샷 바깥 오른쪽 여백에 둔다(편집자 규칙). 커넥터가 메뉴 글자 위를 지나지 않게
+// 강조 박스 오른쪽 → 글박스 왼쪽으로 잇는다. AI가 지시를 어겨도 결과가 같도록 코드로 맞춘다.
+function placeCalloutsInRightMargin(spec, imageWidth) {
+  const minX = imageWidth + 24;
+  return Object.assign({}, spec, {
+    items: spec.items.map(it => {
+      if (it.type !== 'label' || !Array.isArray(it.rect)) return it;
+      const next = Object.assign({}, it, { rect: [Math.max(it.rect[0], minX)].concat(it.rect.slice(1)) });
+      if (next.to) {
+        next.fromSite = 'left';
+        next.toSite = 'right';
+      }
+      return next;
+    })
+  });
+}
+
+// 그리기 수정: 새로 생긴 글박스(원래 없던 id, 글자 있음)를 이미지들의 오른쪽 끝 바깥으로 옮기고,
+// 세로로 겹치면 아래로 밀어 낸다. 그 글박스에 붙은 선은 왼쪽 → 오른쪽 연결점으로 맞춘다.
+function placeNewCalloutsInRightMargin(spec, drawing) {
+  const existing = new Set(drawing.items.map(it => it.id).filter(Boolean));
+  const images = spec.items.filter(it => it.type === 'image' && Array.isArray(it.rect));
+  if (!images.length) return spec;
+  const minX = Math.max(...images.map(it => it.rect[0] + it.rect[2])) + 18;
+  const callouts = spec.items
+    .filter(it => it.type === 'node' && it.text && !existing.has(it.id) && Array.isArray(it.rect) && it.rect[2] && it.rect[3])
+    .sort((a, b) => a.rect[1] - b.rect[1]);
+  const moved = new Map();
+  let bottom = -Infinity;
+  for (const c of callouts) {
+    const y = Math.max(c.rect[1], bottom + 6);
+    const rect = [Math.max(c.rect[0], minX), y, c.rect[2], c.rect[3]];
+    bottom = y + c.rect[3];
+    moved.set(c.id, rect);
+  }
+  return Object.assign({}, spec, {
+    items: spec.items.map(it => {
+      if (moved.has(it.id)) return Object.assign({}, it, { rect: moved.get(it.id) });
+      if (it.type === 'arrow' && moved.has(it.from) && it.to) return Object.assign({}, it, { fromSite: 'left', toSite: 'right' });
+      if (it.type === 'arrow' && moved.has(it.to) && it.from) return Object.assign({}, it, { fromSite: 'right', toSite: 'left' });
+      return it;
+    })
+  });
+}
+
+// 줄인 사본 기준 좌표를 원본 픽셀로 되돌린다(rect의 null은 자동 크기라 그대로 둔다).
+function scaleAnnotateSpec(spec, factor) {
+  const r = v => (v === null ? null : Math.round(v * factor * 10) / 10);
+  return Object.assign({}, spec, {
+    items: spec.items.map(it => (Array.isArray(it.rect) ? Object.assign({}, it, { rect: it.rect.map(r) }) : it))
+  });
+}
+
+// macOS Vision OCR. swift가 없거나 실패하면 null을 돌려주고 AI가 이미지만 보고 판단한다.
+async function runDiagramOcr(imagePath, settings) {
+  if (process.platform !== 'darwin' || !fs.existsSync(DIAGRAM_OCR_SCRIPT)) return null;
+  const run = await runCommand('swift', [DIAGRAM_OCR_SCRIPT, imagePath], {
+    cwd: settings.workspaceDir,
+    timeoutMs: 90000
+  });
+  if (!run.ok) {
+    bridgeError('diagram OCR failed', { exitCode: run.exitCode, diagnostic: summarizeProviderFailureDiagnostic(run.stderr) });
+    return null;
+  }
+  try {
+    const json = JSON.parse(run.stdout);
+    return Array.isArray(json.lines) ? json : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// 그리기 렌더링에서 잰 OCR 위치(px)를 그리기 좌표(pt)로 바꾼다.
+function scaleOcrToPt(ocr, ptPerPx) {
+  const box = b => b.map(v => Math.round(v * ptPerPx * 10) / 10);
+  return {
+    unit: 'pt',
+    lines: ocr.lines.map(line => Object.assign({}, line, {
+      box: box(line.box),
+      words: Array.isArray(line.words) ? line.words.map(w => Object.assign({}, w, { box: box(w.box) })) : undefined
+    }))
+  };
+}
+
+function buildDiagramPrompt(input) {
+  const common = [
+    'You design one diagram for a Korean IT book editor. It will be pasted into a Google Docs drawing.',
+    '',
+    'Return only one valid JSON object. Do not wrap it in markdown.',
+    untrustedManuscriptDataInstructions(),
+    (input.image || input.reference) && input.canSeeImage ? '- Exception: you may read the one image file named below, and nothing else.' : '',
+    '',
+    'Common rules:',
+    '- All visible text is Korean unless it is a product, menu, or code name shown in the source.',
+    '- Text must be a single line. Never include newline characters.',
+    '- "title" is a short Korean name for this diagram (max 30 chars).',
+    '- Every item id is a short unique string.'
+  ];
+
+  if (input.image && input.redraw) {
+    const ocrLines = input.ocr && input.ocr.lines ? input.ocr.lines : null;
+    return common.concat([
+      '',
+      'Task: redraw a diagram image as editable Google Docs drawing shapes.',
+      'The selected image is a box-and-arrow diagram (flowchart, architecture, process, hierarchy, etc.). Rebuild it so it looks the same, but every box, label, and line is an editable shape.',
+      'The selected manuscript text is the editor\'s instruction. Follow any extra changes it asks for (renaming, adding, removing); otherwise reproduce the image faithfully.',
+      input.canSeeImage
+        ? `Diagram image file: ${input.image.path} (${input.image.width}x${input.image.height} px). Look at it carefully before deciding coordinates.`
+        : `You cannot see the image (${input.image.width}x${input.image.height} px). Rely on the OCR text positions below.`,
+      '',
+      'Coordinates are image pixels, origin at the top-left. Measure each shape\'s visible edge, not its text.',
+      '',
+      'Item types:',
+      '- {"id","type":"node","text","rect":[x,y,w,h],"round":true|false,"weight":<border px>} a box with a visible border or fill. rect is the outer edge of the box. "round": false for square corners. Text is everything written inside the box joined into one line.',
+      '- {"id","type":"text","text","rect":[x,y,w,h],"align":"left|center|right"} text with no box around it (captions, edge labels, titles inside the image). rect hugs the text.',
+      '- {"type":"arrow","from":"<id>","to":"<id>","fromSite","toSite","kind","head","startHead","weight":<line px>,"line":"#RRGGBB","dashed":true|false} a line or arrow.',
+      '  - "from"/"to" are the shapes the line touches. If an end does not touch a shape, omit that id and give "points": [[x1,y1],[x2,y2]] in image pixels for both ends.',
+      '  - "fromSite"/"toSite": top|bottom|left|right, the side of the shape where the line starts/ends.',
+      '  - "kind": "straight" for a straight line, "elbow" for one bend (L shape), "elbow2" for two bends (Z or U shape).',
+      '  - "head": arrowhead at the "to" end: "arrow" or "none". "startHead": arrowhead at the "from" end, usually "none".',
+      '',
+      'Rules:',
+      '- Include every box, every piece of text, and every line in the image. Do not merge or drop shapes, and do not invent ones that are not there.',
+      '- Use the OCR boxes below for text content and position. Fix obvious OCR mistakes by looking at the image.',
+      '- A figure caption below or above the diagram (e.g. "그림 3-1 ...") is not part of the diagram: leave it out.',
+      '- Icons, photos, and logos cannot be redrawn: skip them, but keep their text labels.',
+      '- Colors are measured from the pixels afterward, so you may omit fill and border colors. Give "line" colors for arrows.',
+      '',
+      'OCR text lines (pixel boxes [x,y,w,h]):',
+      ocrLines ? JSON.stringify(ocrLines) : '(OCR unavailable)',
+      '',
+      'Selected manuscript text (instruction):',
+      '<<<TOYTYPE_SELECTED_TEXT',
+      input.instruction,
+      'TOYTYPE_SELECTED_TEXT',
+      '',
+      'Required JSON shape:',
+      JSON.stringify({
+        title: '요청 처리 흐름',
+        mode: 'redraw',
+        items: [
+          { id: 'n1', type: 'node', text: '사용자 요청', rect: [100, 100, 360, 140], round: true, weight: 4 },
+          { id: 'n2', type: 'node', text: 'API 서버', rect: [620, 100, 360, 140], round: true, weight: 4 },
+          { id: 't1', type: 'text', text: '조회 실패 시', rect: [820, 380, 150, 34], align: 'left' },
+          { type: 'arrow', from: 'n1', to: 'n2', fromSite: 'right', toSite: 'left', kind: 'straight', head: 'arrow', weight: 4, line: '#000000', dashed: false }
+        ]
+      }, null, 2)
+    ]).join('\n');
+  }
+
+  if (input.image) {
+    const ocrLines = input.ocr && input.ocr.lines ? input.ocr.lines : null;
+    return common.concat([
+      '',
+      'Task: screenshot annotation (mode "annotate").',
+      'The selected manuscript text is the editor\'s instruction for what to highlight and what callout text to write.',
+      input.canSeeImage
+        ? `Screenshot file: ${input.image.path} (${input.image.width}x${input.image.height} px). Look at it before deciding coordinates.`
+        : `You cannot see the screenshot (${input.image.width}x${input.image.height} px). Rely on the OCR text positions below.`,
+      '',
+      'Coordinates are screenshot pixels, origin at the top-left. Labels may sit outside the screenshot (negative x/y or beyond the width/height) when there is no empty space inside.',
+      '',
+      'Item types:',
+      '- {"id","type":"box","rect":[x,y,w,h]} red highlight box around a UI target. Leave 6-10 px margin around the target. Optional "round": false for square corners.',
+      '- {"id","type":"label","text","rect":[x,y,null,null],"to":"<box id>"} white callout with red border, connected to the box with a dot-ended connector. Width/height null means auto-size from text. Text max 40 chars.',
+      '- {"id","type":"arrow","from":"<id>","to":"<id>","kind":"straight|elbow|elbow2"} arrow between two shapes, only when the instruction describes a sequence or movement.',
+      '- Optional on labels/arrows: "fromSite"/"toSite" as top|bottom|left|right. Omit to auto-pick.',
+      '',
+      'Layout rules:',
+      '- Use OCR boxes for text targets (buttons, menus, tabs). For a single word inside a line, use that word\'s box from "words".',
+      '- Put every callout OUTSIDE the screenshot, in the right margin: x >= screenshot width + 24. Align each callout vertically with its target box and keep callouts from overlapping each other.',
+      '- Connect callouts with "fromSite": "left" and "toSite": "right" so the connector runs from the right edge of the highlight box to the callout.',
+      '- If the instruction gives no callout text, use boxes only.',
+      '',
+      'OCR text lines (pixel boxes [x,y,w,h]):',
+      ocrLines ? JSON.stringify(ocrLines) : '(OCR unavailable)',
+      '',
+      'Selected manuscript text (instruction):',
+      '<<<TOYTYPE_SELECTED_TEXT',
+      input.instruction,
+      'TOYTYPE_SELECTED_TEXT',
+      '',
+      'Required JSON shape:',
+      JSON.stringify({
+        title: '첨부 버튼 강조',
+        mode: 'annotate',
+        items: [
+          { id: 'b1', type: 'box', rect: [372, 124, 176, 70] },
+          { id: 'l1', type: 'label', text: '여기를 눌러 파일을 첨부하세요', rect: [180, 230, null, null], to: 'b1' }
+        ]
+      }, null, 2)
+    ]).join('\n');
+  }
+
+  if (input.drawing) {
+    const ocrLines = input.ocr && input.ocr.lines ? input.ocr.lines : null;
+    return common.concat([
+      '',
+      'Task: edit an existing Google Docs drawing (mode "diagram").',
+      'The selected manuscript text is the editor\'s instruction for how to change the drawing below.',
+      input.reference && input.canSeeImage
+        ? `Rendered drawing: ${input.reference.path} (${input.reference.width}x${input.reference.height} px). Its top-left is drawing (0,0); 1 px = ${input.reference.ptPerPx.toFixed(4)} pt. Look at it to see what the screenshots inside the drawing show.`
+        : 'You cannot see the drawing. Rely on the items and OCR text positions below.',
+      '',
+      'Rules:',
+      '- Return the FULL drawing after the change: every item, not only changed ones. Keep every "image" item (screenshots) unless the instruction says to remove it.',
+      '- Keep everything the instruction does not mention exactly as it is: ids, rect, shapeType, fill, line, weight, size, points, adjust, rotated, kind, heads.',
+      '- Coordinates are pt, origin at the drawing\'s top-left. rect is [x, y, width, height]. Arrow "points" are [[x1,y1],[x2,y2]] and are used for ends not attached to a node or image ("from"/"to").',
+      '- For a new node, give a rect that fits the existing layout and spacing. Arrows may attach to images by id.',
+      '- "fill": null means no fill. Text must be a single line.',
+      '- When the instruction asks to highlight or annotate part of a screenshot, use the editor\'s house style:',
+      '  - highlight box: {"type":"node","text":"","shapeType":7,"fill":null,"line":"#FF0000","weight":2.25} with 3-6 pt margin around the target',
+      '  - callout: {"type":"node","text":"...","shapeType":7,"fill":"#FFFFFF","line":"#FF0000","weight":3,"size":12}, placed OUTSIDE the screenshots in the right margin (x >= right edge of the images + 18), vertically aligned with its target, not overlapping other callouts',
+      '  - callout connector: {"type":"arrow","from":"<callout id>","to":"<highlight id>","fromSite":"left","toSite":"right","line":"#FF0000","weight":1.5,"dash":2,"head":"dot"}',
+      '  - movement or sequence arrow: {"type":"arrow","from":"<id>","to":"<id>","kind":"elbow2","line":"#FF0000","weight":1.5,"dash":2,"head":"arrow"}',
+      '- Do not invent facts in node text.',
+      '',
+      'OCR text positions in the rendered drawing (pt boxes [x,y,w,h]):',
+      ocrLines ? JSON.stringify(ocrLines) : '(OCR unavailable)',
+      '',
+      'Existing drawing (bounds ' + JSON.stringify(input.drawing.bounds || null) + '):',
+      JSON.stringify({ title: '', mode: 'diagram', items: input.drawing.items }),
+      '',
+      'Selected manuscript text (instruction):',
+      '<<<TOYTYPE_SELECTED_TEXT',
+      input.instruction,
+      'TOYTYPE_SELECTED_TEXT',
+      '',
+      'Required JSON shape: {"title": "...", "mode": "diagram", "items": [ ...all items... ]}'
+    ]).join('\n');
+  }
+
+  return common.concat([
+    '',
+    'Task: box-and-arrow diagram (mode "diagram").',
+    'The selected manuscript text is the content to visualize. If it also contains an instruction about the diagram, follow it.',
+    'Positions are computed automatically from the nodes and arrows; do not give coordinates.',
+    '',
+    'Item types:',
+    '- {"id","type":"node","text","fill"} a box. Text max 24 chars. "fill" is optional, one of ' + JSON.stringify(['#CFE2F3', '#D9EAD3', '#FFF2CC', '#FCE5CD', '#F4CCCC', '#D9D2E9', '#EFEFEF', '#FFFFFF']) + '. Use fills to group related nodes, not decoration.',
+    '- {"type":"arrow","from":"<node id>","to":"<node id>","head":"arrow|none"} connection. Use "none" for plain hierarchy/classification lines, "arrow" for flow, sequence, or causality.',
+    '',
+    'Rules:',
+    '- "direction": "TB" for hierarchies and classifications, "LR" for processes and pipelines.',
+    '- Use at most 30 nodes. Merge minor details; the diagram must be readable on a book page.',
+    '- Node text is a noun phrase taken from the manuscript wording. Do not invent facts.',
+    '',
+    'Document title: ' + JSON.stringify(input.title),
+    '',
+    'Context before selection:',
+    '<<<TOYTYPE_CONTEXT_BEFORE',
+    input.contextBefore,
+    'TOYTYPE_CONTEXT_BEFORE',
+    '',
+    'Selected manuscript text:',
+    '<<<TOYTYPE_SELECTED_TEXT',
+    input.instruction,
+    'TOYTYPE_SELECTED_TEXT',
+    '',
+    'Context after selection:',
+    '<<<TOYTYPE_CONTEXT_AFTER',
+    input.contextAfter,
+    'TOYTYPE_CONTEXT_AFTER',
+    '',
+    'Required JSON shape:',
+    JSON.stringify({
+      title: '자료구조 분류',
+      mode: 'diagram',
+      direction: 'TB',
+      items: [
+        { id: 'root', type: 'node', text: '자료구조' },
+        { id: 'linear', type: 'node', text: '선형 구조', fill: '#D9EAD3' },
+        { type: 'arrow', from: 'root', to: 'linear', head: 'none' }
+      ]
+    }, null, 2)
+  ]).join('\n');
+}
+
+function diagramText(value, max) {
+  return String(value == null ? '' : value).replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function diagramRect(value) {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const out = value.map((v, i) => (v === null && i >= 2 ? null : Number(v)));
+  if (!Number.isFinite(out[0]) || !Number.isFinite(out[1])) return null;
+  for (let i = 2; i < 4; i++) if (out[i] !== null && !(out[i] > 0)) out[i] = null;
+  return out;
+}
+
+function diagramPoints(value) {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const pts = value.map(p => (Array.isArray(p) && p.length === 2 ? p.map(Number) : null));
+  return pts.every(p => p && p.every(Number.isFinite)) ? pts : null;
+}
+
+function copyDiagramLineStyle(from, to) {
+  const line = diagramColor(from.line);
+  if (line) to.line = line;
+  if (Number.isFinite(Number(from.weight))) to.weight = clampNumber(from.weight, 1, 0.25, 8);
+  if (Number.isInteger(from.dash) && from.dash >= 0 && from.dash < 20) to.dash = from.dash;
+}
+
+function diagramColor(value) {
+  const v = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toUpperCase() : undefined;
+}
+
+// AI 응답을 확장이 그대로 그릴 수 있는 스펙으로 정리한다. 모르는 필드와 깨진 참조는 버린다.
+function normalizeDiagramSpec(raw, image) {
+  const json = raw && typeof raw === 'object' ? raw : {};
+  const mode = image ? 'annotate' : 'diagram';
+  const items = [];
+  const ids = new Set();
+  const rawItems = Array.isArray(json.items) ? json.items.slice(0, DIAGRAM_MAX_ITEMS) : [];
+  const shapeTypes = mode === 'annotate' ? ['box', 'label'] : ['node', 'image'];
+
+  for (const it of rawItems) {
+    if (!it || typeof it !== 'object' || !shapeTypes.includes(it.type)) continue;
+    const id = diagramText(it.id, 40);
+    if (!id || ids.has(id)) continue;
+    const item = { id, type: it.type };
+    const rect = diagramRect(it.rect);
+    if (it.type === 'image') {
+      // 그리기 안의 스크린샷. 확장이 id로 원래 이미지를 다시 붙이므로 위치만 남긴다
+      if (!rect || !rect[2] || !rect[3]) continue;
+      item.rect = rect;
+      ids.add(id);
+      items.push(item);
+      continue;
+    }
+    if (it.type !== 'box') {
+      item.text = diagramText(it.text, 60);
+      // 기존 그리기를 고칠 때는 글자 없는 도형(위치가 있는 것)도 남긴다
+      if (!item.text && !(it.type === 'node' && rect && rect[2] && rect[3])) continue;
+    }
+    if (mode === 'annotate') {
+      if (!rect) continue;
+      if (it.type === 'box' && (rect[2] === null || rect[3] === null)) continue;
+      item.rect = rect;
+      if (typeof it.round === 'boolean') item.round = it.round;
+    } else {
+      if (it.fill === null) item.fill = null;
+      else if (diagramColor(it.fill)) item.fill = diagramColor(it.fill);
+      if (rect && rect[2] && rect[3]) item.rect = rect;
+      if (Number.isInteger(it.shapeType) && it.shapeType > 0 && it.shapeType < 1000) item.shapeType = it.shapeType;
+      copyDiagramLineStyle(it, item);
+      if (Number.isFinite(Number(it.size))) item.size = clampNumber(it.size, 12, 7, 36);
+      if (diagramColor(it.color)) item.color = diagramColor(it.color);
+      if (Number.isInteger(it.align) && it.align >= 0 && it.align <= 3) item.align = it.align;
+    }
+    ids.add(id);
+    items.push(item);
+  }
+
+  for (const it of rawItems) {
+    if (!it || typeof it !== 'object') continue;
+    if (it.type === 'label' && mode === 'annotate') {
+      const label = items.find(x => x.id === diagramText(it.id, 40) && x.type === 'label');
+      const to = diagramText(it.to, 40);
+      if (label && to && ids.has(to) && to !== label.id) {
+        label.to = to;
+        if (DIAGRAM_HEADS.includes(it.head)) label.head = it.head;
+        if (DIAGRAM_SITES.includes(it.fromSite)) label.fromSite = it.fromSite;
+        if (DIAGRAM_SITES.includes(it.toSite)) label.toSite = it.toSite;
+      }
+      continue;
+    }
+    if (it.type !== 'arrow') continue;
+    const from = diagramText(it.from, 40);
+    const to = diagramText(it.to, 40);
+    const points = diagramPoints(it.points);
+    // 도형에 붙지 않은 끝은 points 좌표가 있어야 그릴 수 있다
+    if ((!ids.has(from) || !ids.has(to)) && !(mode === 'diagram' && points)) continue;
+    if (from && from === to) continue;
+    const arrow = { type: 'arrow' };
+    if (ids.has(from)) arrow.from = from;
+    if (ids.has(to)) arrow.to = to;
+    if (points && mode === 'diagram') arrow.points = points;
+    if (Number.isFinite(Number(it.adjust))) arrow.adjust = Math.round(Number(it.adjust));
+    if (typeof it.rotated === 'boolean') arrow.rotated = it.rotated;
+    copyDiagramLineStyle(it, arrow);
+    if (DIAGRAM_HEADS.includes(it.head)) arrow.head = it.head;
+    if (DIAGRAM_HEADS.includes(it.startHead)) arrow.startHead = it.startHead;
+    if (DIAGRAM_KINDS.includes(it.kind)) arrow.kind = it.kind;
+    if (DIAGRAM_SITES.includes(it.fromSite)) arrow.fromSite = it.fromSite;
+    if (DIAGRAM_SITES.includes(it.toSite)) arrow.toSite = it.toSite;
+    items.push(arrow);
+  }
+
+  const spec = {
+    title: diagramText(json.title, 40) || (mode === 'annotate' ? '스크린샷 강조' : '도해'),
+    bounds: json.bounds && typeof json.bounds === 'object' ? { width: Number(json.bounds.width) || 0, height: Number(json.bounds.height) || 0 } : undefined,
+    mode,
+    items
+  };
+  if (mode === 'diagram') spec.direction = String(json.direction || '').toUpperCase() === 'LR' ? 'LR' : 'TB';
+  return spec;
 }
 
 async function testProvider(body) {
@@ -2817,6 +3530,10 @@ async function route(req, res) {
     await sendLoggedAiJson(res, 'AI adjust-length', body, generateLengthAdjustment);
     return;
   }
+  if (url.pathname === '/ai/diagram') {
+    await sendLoggedAiJson(res, 'AI diagram', body, generateDiagram);
+    return;
+  }
   if (url.pathname === '/ai/verify-facts') {
     await sendLoggedAiJson(res, 'AI verify-facts', body, verifySelectionFacts);
     return;
@@ -2883,6 +3600,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === BRIDGE_FILE) {
 
 export {
   extractJsonObject,
+  extractJsonObjects,
+  buildLengthAdjustmentPrompt,
+  parseLengthAdjustmentReplacement,
   validateToytypeJson,
   extractDocId,
   mergeSettings,

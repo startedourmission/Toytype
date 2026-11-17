@@ -130,6 +130,31 @@ function buildAiBridgePayload(ai, payload) {
   });
 }
 
+// AI 도해용: 독스 본문 이미지(googleusercontent)는 페이지 출처로 받으면 CORS에 막히므로
+// host_permissions가 적용되는 서비스워커에서 받아 data URL로 넘긴다.
+const IMAGE_FETCH_MAX_BYTES = 20 * 1024 * 1024;
+
+async function fetchImageAsDataUrl(url) {
+  let u;
+  try {
+    u = new URL(String(url || ''));
+  } catch (_) {
+    return { ok: false, error: 'image_url_invalid' };
+  }
+  if (u.protocol !== 'https:' || !/(^|\.)(googleusercontent|google)\.com$/.test(u.hostname)) {
+    return { ok: false, error: 'image_url_not_allowed' };
+  }
+  const res = await fetch(u.href, { credentials: 'include' });
+  if (!res.ok) return { ok: false, error: 'image_fetch_failed', status: res.status };
+  const type = String(res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!/^image\/(png|jpe?g|gif|webp)$/i.test(type)) return { ok: false, error: 'not_an_image', contentType: type };
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length > IMAGE_FETCH_MAX_BYTES) return { ok: false, error: 'image_too_large', bytes: bytes.length };
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { ok: true, dataUrl: 'data:' + type + ';base64,' + btoa(bin), bytes: bytes.length };
+}
+
 async function callAiBridge(path, payload) {
   const settings = await readSettings();
   const ai = mergeAiSettings(settings);
@@ -276,6 +301,7 @@ function aiBridgePath(action) {
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
     verifyFacts: '/ai/verify-facts',
+    diagram: '/ai/diagram',
     listGenerated: '/fs/list-generated',
     openOutputDir: '/fs/open-output-dir',
     cleanupGenerated: '/fs/cleanup-generated',
@@ -357,6 +383,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'typo:reportFindingIssue') {
     openIssueTab(msg.finding).then(sendResponse, error => {
       sendResponse({ ok: false, error: 'issue_open_failed', message: error && error.message ? error.message : String(error) });
+    });
+    return true;
+  }
+
+  if (msg.type === 'typo:fetchImage') {
+    fetchImageAsDataUrl(msg.url).then(sendResponse, error => {
+      sendResponse({ ok: false, error: 'image_fetch_failed', message: error && error.message ? error.message : String(error) });
     });
     return true;
   }

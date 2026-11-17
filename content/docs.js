@@ -32,6 +32,11 @@
   const AI_VERIFY_TIMEOUT = 300000; // 웹 검색을 돌리므로 길이 조절보다 넉넉히 잡는다
   const AI_LENGTH_CONTEXT = 1200;
   const AI_LENGTH_TIMEOUT = 180000;
+  const AI_DIAGRAM_TIMEOUT = 300000;
+  const AI_DIAGRAM_CONTEXT = 800;
+  const DIAGRAM_STORE_KEY = 'toytypeDiagrams';
+  const DIAGRAM_MAX_PER_DOC = 12;
+  const DIAGRAM_KIND_LABEL = { diagram: '도해', annotate: '스크린샷 강조', edit: '그리기 수정', redraw: '도해 다시 그리기' };
   const AI_TERMS_TIMEOUT = 180000;
   const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
   const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
@@ -139,6 +144,12 @@
   let factReportDocId = null;
   let autoTermsStartedDocId = null;
   let autoTermsTimer = null;
+  // AI 도해 결과(문장 제안 탭에 표시). 문서별로 chrome.storage.local에 저장한다.
+  let diagramResults = [];
+  let diagramResultsDocId = null;
+  // 독스 copy 이벤트에서 마지막으로 읽은 데이터. AI 도해가 선택 영역의 이미지·그리기를 얻을 때 쓴다.
+  let lastDocsCopy = null;
+  const docsCopyCaptureWindows = new WeakSet();
 
   let host = null;
   let shadowRoot = null;
@@ -879,6 +890,7 @@
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
       { id: 'ai-verify', label: 'AI 사실 검증', run: handleAiVerifyAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
+      { id: 'ai-diagram', label: 'AI 도해', run: handleAiDiagramAddon },
       ...actions
     ];
   }
@@ -1451,12 +1463,14 @@
 
   function appendSentenceSuggestionsView(body) {
     const rules = sentenceSuggestionRules();
-    if (rules.length === 0) {
+    const diagrams = diagramResultsForDoc();
+    if (rules.length === 0 && diagrams.length === 0) {
       const msg = el('div', 'trd-msg');
       msg.textContent = '문장 제안이 없습니다.';
       body.appendChild(msg);
       return;
     }
+    for (const diagram of diagrams) body.appendChild(buildDiagramResultItem(diagram));
     for (let i = 0; i < rules.length; i++) {
       body.appendChild(buildSentenceSuggestionItem(rules[i], i));
     }
@@ -1772,6 +1786,440 @@
     });
     item.appendChild(deleteBtn);
     return item;
+  }
+
+  function buildDiagramResultItem(diagram) {
+    const item = el('div', 'trd-item trd-suggestion-item trd-diagram-item');
+    const ctx = el('div', 'trd-ctx');
+    ctx.textContent = displayText(diagram.instruction || '');
+    const fix = el('div', 'trd-fix');
+    fix.textContent = diagram.title || '도해';
+    const ln = el('span', 'trd-line');
+    const kind = DIAGRAM_KIND_LABEL[diagram.kind] || (diagram.spec && diagram.spec.mode === 'annotate' ? '스크린샷 강조' : '도해');
+    ln.textContent = kind + ' · ' + formatDiagramTime(diagram.createdAt) + (diagram.imageMissing ? ' · 이미지 없음' : '');
+    fix.appendChild(ln);
+    item.append(ctx, fix);
+    item.title = '누르면 복사 · 그리기 창에서 ⌘V';
+    item.addEventListener('click', () => {
+      copyDiagramResult(diagram);
+    });
+    const deleteBtn = el('button', 'trd-suggestion-delete-btn');
+    deleteBtn.type = 'button';
+    deleteBtn.appendChild(trashIcon());
+    deleteBtn.title = '도해 삭제';
+    deleteBtn.setAttribute('aria-label', '도해 삭제');
+    deleteBtn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      deleteDiagramResult(diagram.id);
+    });
+    item.appendChild(deleteBtn);
+    return item;
+  }
+
+  function formatDiagramTime(ms) {
+    const d = new Date(Number(ms) || Date.now());
+    const pad = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  // copy 이벤트로 구글 그리기 내부 형식을 쓴다. 버튼 클릭 직후(사용자 활성화 안)에서만 동작한다.
+  function copyDiagramResult(diagram) {
+    const clip = globalThis.ToytypeDrawingClip;
+    if (!clip) {
+      showToast('도해 모듈을 찾지 못했습니다', { durationMs: 3200 });
+      return;
+    }
+    try {
+      const payload = clip.buildDrawingPayload(diagram.spec, diagram.image || null);
+      if (!clip.writeDrawingClipboard(payload, document)) throw new Error('copy event was not delivered');
+      showToast('도해 복사됨 · 그리기 창에서 ⌘V', { durationMs: 2800 });
+    } catch (error) {
+      console.error('[Toytype addons] diagram copy failed', summarizeErrorForConsole(error));
+      showToast('도해 복사 실패', { durationMs: 3200 });
+    }
+  }
+
+  function diagramResultsForDoc() {
+    const docId = getDocId();
+    return docId && diagramResultsDocId === docId ? diagramResults : [];
+  }
+
+  function loadDiagramResults() {
+    const docId = getDocId();
+    if (!docId) return Promise.resolve();
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(DIAGRAM_STORE_KEY, items => {
+          const store = items && items[DIAGRAM_STORE_KEY];
+          const list = store && Array.isArray(store[docId]) ? store[docId] : [];
+          // 다른 문서로 넘어간 뒤 늦게 도착한 결과는 버린다
+          if (getDocId() === docId) {
+            diagramResults = list;
+            diagramResultsDocId = docId;
+          }
+          resolve();
+        });
+      } catch (_) {
+        resolve();
+      }
+    });
+  }
+
+  // 이미지 data URL 때문에 저장소 한도에 걸리면 오래된 결과부터 뺀다.
+  // 그래도 안 되면 이미지만 빼고 저장하고 메모리 결과는 그대로 쓴다.
+  function saveDiagramResults() {
+    const docId = diagramResultsDocId;
+    if (!docId) return Promise.resolve();
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get(DIAGRAM_STORE_KEY, items => {
+          const store = Object.assign({}, items && items[DIAGRAM_STORE_KEY]);
+          const attempt = list => {
+            store[docId] = list;
+            chrome.storage.local.set({ [DIAGRAM_STORE_KEY]: store }, () => {
+              if (!chrome.runtime.lastError) {
+                resolve();
+                return;
+              }
+              if (list.length > 1) attempt(list.slice(0, -1));
+              else if (list.length === 1 && list[0].image) attempt([Object.assign({}, list[0], { image: null, imageMissing: true })]);
+              else resolve();
+            });
+          };
+          attempt(diagramResults.slice(0, DIAGRAM_MAX_PER_DOC));
+        });
+      } catch (_) {
+        resolve();
+      }
+    });
+  }
+
+  function deleteDiagramResult(id) {
+    diagramResults = diagramResults.filter(d => d.id !== id);
+    saveDiagramResults();
+    render();
+    showToast('도해를 삭제했습니다');
+  }
+
+  // 독스는 ⌘C 때 텍스트 입력용 iframe 안에서 copy 이벤트를 처리한다. 독스 처리기가 데이터를 넣은 뒤
+  // (버블 단계) 읽어서, 선택 영역에 든 이미지 주소와 그리기 명령을 기억해 둔다.
+  function installDocsCopyCapture() {
+    const windows = [window];
+    const iframe = document.querySelector('iframe.docs-texteventtarget-iframe');
+    try {
+      if (iframe && iframe.contentWindow) windows.push(iframe.contentWindow);
+    } catch (_) { /* 접근할 수 없는 iframe은 건너뛴다 */ }
+    for (const w of windows) {
+      if (docsCopyCaptureWindows.has(w)) continue;
+      try {
+        w.addEventListener('copy', onDocsCopy, false);
+        docsCopyCaptureWindows.add(w);
+      } catch (_) { /* 다음 설치 시도에서 다시 본다 */ }
+    }
+  }
+
+  function onDocsCopy(ev) {
+    const clip = globalThis.ToytypeDrawingClip;
+    if (!clip || !ev || !ev.clipboardData) return;
+    const data = clip.readCopyEventData(ev.clipboardData);
+    if (!Object.keys(data).length) return;
+    const summary = clip.summarizeDocsCopy(data);
+    lastDocsCopy = Object.assign({ docId: getDocId(), at: Date.now() }, summary);
+    debugLog('[Toytype addons] docs copy captured', {
+      types: Object.keys(data),
+      imageUrls: summary.imageUrls.length,
+      drawing: !!summary.drawingCommands
+    });
+  }
+
+  // [AI 도해]를 누른 순간(사용자 클릭 안) 선택 영역의 독스 원본 데이터를 얻는다.
+  //  1) 텍스트 입력 iframe에서 copy를 일으켜, 독스 처리기가 넣은 데이터를 버블 단계에서 읽는다.
+  //  2) 못 읽었으면 paste로 시스템 클립보드를 읽는다(clipboardRead 권한). 1)의 복사가 됐다면 그 내용이다.
+  // 사용자 클립보드는 선택 영역 내용으로 바뀐다(⌘C와 같다). 클릭 핸들러 안에서 동기로 불러야 한다.
+  function captureDocsSelection() {
+    const startedAt = Date.now();
+    installDocsCopyCapture();
+    let copied = false;
+    try {
+      const iframe = document.querySelector('iframe.docs-texteventtarget-iframe');
+      const d = iframe && iframe.contentDocument;
+      if (d) copied = d.execCommand('copy');
+    } catch (_) { /* 아래 paste 읽기로 넘어간다 */ }
+    if (lastDocsCopy && lastDocsCopy.at >= startedAt) return Object.assign({}, lastDocsCopy, { via: 'copy' });
+    const pasted = readClipboardViaPaste();
+    if (!pasted) return { via: copied ? 'copy-empty' : 'none', imageUrls: [], drawingRenderUrls: [], drawingCommands: null, text: '' };
+    return Object.assign({ docId: getDocId(), at: Date.now() }, pasted, { via: copied ? 'copy+paste' : 'paste' });
+  }
+
+  function readClipboardViaPaste() {
+    const clip = globalThis.ToytypeDrawingClip;
+    if (!clip || !shadowRoot) return null;
+    // 임시 textarea도 페이지 DOM이 아닌 shadow root 안에만 둔다 (무수정 invariant)
+    const ta = document.createElement('textarea');
+    ta.style.cssText = 'position:absolute;left:-9999px;opacity:0;';
+    shadowRoot.appendChild(ta);
+    let data = null;
+    const onPaste = ev => {
+      ev.preventDefault();
+      data = clip.readCopyEventData(ev.clipboardData);
+    };
+    ta.addEventListener('paste', onPaste);
+    ta.focus();
+    try {
+      document.execCommand('paste');
+    } catch (_) { /* 권한이 없으면 data가 null로 남는다 */ }
+    ta.removeEventListener('paste', onPaste);
+    ta.remove();
+    return data && Object.keys(data).length ? clip.summarizeDocsCopy(data) : null;
+  }
+
+  // paste로 읽은 클립보드는 예전 내용일 수 있으니 선택한 글과 겹칠 때만 쓴다.
+  function capturedMatchesSelection(captured, selectedText) {
+    if (!captured) return false;
+    if (captured.via === 'copy') return true;
+    const norm = s => String(s || '').replace(/[\s\u0000-\u001f￼*]/g, '');
+    const a = norm(captured.text);
+    const b = norm(selectedText);
+    if (!a || !b) return false;
+    return a.includes(b.slice(0, 24)) || b.includes(a.slice(0, 24));
+  }
+
+  // 본문 그리기의 원본 명령은 그리기 편집 창 페이지 HTML에 들어 있다(같은 출처라 쿠키로 바로 받는다).
+  // AI가 그림을 보고 위치를 잡도록 같은 범위의 렌더링 PNG도 받는다.
+  async function loadInlineDrawing(renderUrl, docId) {
+    const clip = globalThis.ToytypeDrawingClip;
+    const fail = (message, detail) => {
+      const error = new Error(detail || message);
+      error.userMessage = message;
+      return error;
+    };
+    const drawingId = clip.drawingIdFromRenderUrl(renderUrl);
+    if (!drawingId) throw fail('선택한 그리기의 ID를 찾지 못했습니다');
+    const res = await fetch(clip.drawingEditorUrl(drawingId, docId), { credentials: 'include' });
+    if (!res.ok) throw fail('선택한 그리기를 읽지 못했습니다', 'drawing editor page status ' + res.status);
+    const html = await res.text();
+    const spec = clip.drawingCommandsToSpec(clip.extractEditorCommands(html));
+    if (!spec.items.length) throw fail('선택한 그리기에서 도형을 찾지 못했습니다');
+    // 그리기 안 스크린샷의 픽셀을 받아 둔다. 붙여넣을 때 이미지 데이터를 직접 넣어야 깨지지 않는다
+    const imageUrls = clip.extractEditorImageUrls(html);
+    for (const it of spec.items) {
+      if (it.type !== 'image' || !imageUrls[it.blob]) continue;
+      try {
+        const img = await fetch(imageUrls[it.blob], { credentials: 'include' });
+        if (!img.ok) continue;
+        const dataUrl = await blobToDataUrl(await img.blob());
+        const size = await imageSizeFromDataUrl(dataUrl);
+        Object.assign(it, { dataUrl, pixelWidth: size.width, pixelHeight: size.height });
+      } catch (_) { /* 이 이미지는 blob id 참조로 남는다 */ }
+    }
+    const { width, height } = spec.bounds;
+    if (width > 0 && height > 0) {
+      // AI는 긴 변 1568px 또는 약 115만 화소를 넘는 이미지를 줄여서 본다. 줄어들면 AI가 눈으로 잡은 좌표가
+      // 그만큼 어긋나므로 처음부터 그 한도 안의 크기로 렌더링한다.
+      const pxPerPt = Math.min(2, 1500 / Math.max(width, height), Math.sqrt(1100000 / (width * height)));
+      const w = Math.max(1, Math.round(width * pxPerPt));
+      const h = Math.max(1, Math.round(height * pxPerPt));
+      try {
+        const png = await fetch(clip.drawingRenderPngUrl(drawingId, docId, w, h), { credentials: 'include' });
+        if (png.ok) spec.reference = { dataUrl: await blobToDataUrl(await png.blob()), width: w, height: h, ptPerPx: width / w };
+      } catch (_) { /* 참고 이미지 없이도 도형 정보만으로 고칠 수 있다 */ }
+    }
+    return spec;
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('blob read failed'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // AI 응답에 원래 정보를 id로 다시 붙인다: image는 blob id와 속성, 기존 도형은 rawProps.
+  // 모르는 id의 image는 다시 만들 수 없어 버린다.
+  function restoreDrawingOriginals(spec, drawing) {
+    const originals = new Map(drawing.items.filter(it => it.id).map(it => [it.id, it]));
+    const items = [];
+    for (const it of spec.items || []) {
+      const orig = it.id ? originals.get(it.id) : null;
+      if (it.type === 'image') {
+        if (orig && orig.type === 'image') items.push(Object.assign({}, orig, Array.isArray(it.rect) ? { rect: it.rect } : {}));
+        continue;
+      }
+      if (orig && orig.rawProps && it.type === 'node') items.push(Object.assign({}, it, { rawProps: orig.rawProps }));
+      else items.push(it);
+    }
+    return Object.assign({}, spec, { items });
+  }
+
+  function fetchImageDataUrl(url) {
+    if (/^data:image\//i.test(url)) return Promise.resolve({ ok: true, dataUrl: url });
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'typo:fetchImage', url }, res => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: 'extension_message_failed', message: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(res || { ok: false, error: 'no_response' });
+        });
+      } catch (e) {
+        resolve({ ok: false, error: 'extension_message_failed', message: e && e.message ? e.message : String(e) });
+      }
+    });
+  }
+
+  function imageSizeFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = () => reject(new Error('image decode failed'));
+      img.src = dataUrl;
+    });
+  }
+
+  async function handleAiDiagramAddon() {
+    const actionId = 'ai-diagram';
+    if (isAddonBusy(actionId)) return;
+    setAddonBusy(actionId, true);
+    let finalStatus = '';
+    let errorToast = '';
+    let successToast = '';
+    startAiDiagramStatus('선택 영역 읽는 중');
+    // 첫 await 전에(클릭의 사용자 활성화가 살아 있을 때) 선택 영역 데이터를 잡는다
+    let captured;
+    try {
+      captured = captureDocsSelection();
+    } catch (error) {
+      captured = { via: 'error', imageUrls: [], drawingRenderUrls: [], drawingCommands: null, text: '' };
+    }
+    try {
+      const doc = await readCurrentDocumentTextForAddon();
+      if (doc.source !== 'model') {
+        const error = new Error('Google Docs model text is required for diagrams');
+        error.userMessage = '문서 선택 영역을 읽지 못했습니다';
+        throw error;
+      }
+      let selection = doc.selection || null;
+      if (!selection) {
+        try {
+          selection = await fetchDocsSelection();
+          updateCursorOffset(selection);
+        } catch (_) {
+          selection = null;
+        }
+      }
+      const range = selectionRange(selection);
+      const selectedText = range && range.end > range.start ? doc.text.slice(range.start, range.end) : '';
+      if (!selectedText.replace(/[\s\u0000-\u001f￼]/g, '')) {
+        const error = new Error('selected text is required');
+        error.userMessage = '도해로 만들 글이나 지시문을 함께 선택하세요';
+        throw error;
+      }
+
+      const source = capturedMatchesSelection(captured, selectedText) ? captured : null;
+      console.info('[Toytype addons] AI diagram selection source', {
+        via: captured.via,
+        used: !!source,
+        imageUrls: captured.imageUrls.length,
+        drawingCommands: captured.drawingCommands ? captured.drawingCommands.length : 0,
+        drawingRenderUrls: captured.drawingRenderUrls ? captured.drawingRenderUrls.length : 0
+      });
+      let image = null;
+      let drawing = null;
+      if (source && source.drawingCommands && globalThis.ToytypeDrawingClip) {
+        const spec = globalThis.ToytypeDrawingClip.drawingCommandsToSpec(source.drawingCommands);
+        if (spec.items.some(it => it.type === 'node')) drawing = spec;
+      }
+      if (!drawing && source && source.drawingRenderUrls && source.drawingRenderUrls.length) {
+        updateAiDiagramStatus('선택한 그리기 읽는 중');
+        drawing = await loadInlineDrawing(source.drawingRenderUrls[0], doc.docId);
+      }
+      if (!drawing && source && source.imageUrls.length) {
+        updateAiDiagramStatus('선택한 이미지 받는 중');
+        const res = await fetchImageDataUrl(source.imageUrls[0]);
+        if (!res || !res.ok || !res.dataUrl) {
+          const error = new Error('image fetch failed: ' + (res && (res.error || res.status)));
+          error.userMessage = '선택한 이미지를 받지 못했습니다';
+          throw error;
+        }
+        const size = await imageSizeFromDataUrl(res.dataUrl);
+        image = { dataUrl: res.dataUrl, width: size.width, height: size.height };
+      }
+
+      // 이미지 + "그리기로 다시 그려줘" 같은 지시 → 이미지 속 도해를 편집 가능한 도형으로 다시 그린다
+      const redraw = !!image && globalThis.ToytypeDrawingClip.isRedrawInstruction(selectedText);
+      const kind = drawing ? 'edit' : redraw ? 'redraw' : image ? 'annotate' : 'diagram';
+      updateAiDiagramStatus({
+        edit: 'AI 그리기 수정 중',
+        redraw: 'AI 도해 다시 그리는 중',
+        annotate: 'AI 스크린샷 강조 생성 중',
+        diagram: 'AI 도해 생성 중'
+      }[kind]);
+      const res = await sendAiBridge('diagram', {
+        timeoutMs: AI_DIAGRAM_TIMEOUT,
+        mode: redraw ? 'redraw' : undefined,
+        image,
+        // 이미지 blob id와 도형의 원래 속성(rawProps)은 AI에 보내지 않고, 응답을 받은 뒤 id로 다시 붙인다
+        drawing: drawing ? {
+          items: drawing.items.map(it => {
+            if (it.type === 'image') return { id: it.id, type: 'image', rect: it.rect };
+            const { rawProps, ...rest } = it;
+            return rest;
+          }),
+          bounds: drawing.bounds,
+          reference: drawing.reference || null
+        } : null,
+        document: {
+          id: doc.docId,
+          title: doc.title,
+          url: location.href,
+          textSource: doc.source,
+          selectionStart: range.start,
+          selectionEnd: range.end,
+          selectedText,
+          contextBefore: doc.text.slice(Math.max(0, range.start - AI_DIAGRAM_CONTEXT), range.start),
+          contextAfter: doc.text.slice(range.end, range.end + AI_DIAGRAM_CONTEXT)
+        }
+      });
+      if (!res || !res.ok || !res.spec) {
+        throw aiBridgeError(res, 'AI 도해 생성 실패');
+      }
+      if (diagramResultsDocId !== doc.docId) await loadDiagramResults();
+      const result = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        createdAt: Date.now(),
+        title: res.spec.title,
+        kind,
+        instruction: selectedText.replace(/\s+/g, ' ').trim().slice(0, 200),
+        spec: drawing ? restoreDrawingOriginals(res.spec, drawing) : res.spec,
+        // 다시 그린 도해에는 원래 이미지가 들어가지 않으므로 저장하지 않는다
+        image: redraw ? null : image
+      };
+      diagramResults = [result].concat(diagramResults).slice(0, DIAGRAM_MAX_PER_DOC);
+      diagramResultsDocId = doc.docId;
+      await saveDiagramResults();
+      suggestionsViewOpen = true;
+      termsViewOpen = false;
+      factsViewOpen = false;
+      finalStatus = DIAGRAM_KIND_LABEL[kind] + ' 완료 · 문장 제안 탭에서 눌러 복사';
+      if (kind === 'diagram' && captured.via !== 'copy') finalStatus += ' · 선택 영역의 이미지·그리기를 읽지 못해 글로만 만듦';
+      successToast = 'AI 도해 생성 완료 · 문장 제안 탭에서 눌러 복사';
+    } catch (error) {
+      const summary = summarizeErrorForConsole(error);
+      if (error && error.userMessage) summary.userMessage = error.userMessage;
+      if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+      console.error('[Toytype addons] AI diagram failed', summary);
+      finalStatus = error && error.userMessage ? error.userMessage : 'AI 도해 생성 실패';
+      errorToast = finalStatus;
+    } finally {
+      setAddonBusy(actionId, false);
+      finishAiDiagramStatus(errorToast ? 'error' : 'success', finalStatus);
+      if (errorToast) showToast(errorToast, { durationMs: 4200 });
+      else if (successToast) showToast(successToast, { durationMs: 3200 });
+    }
   }
 
   function sentenceSuggestionStatus(rule) {
@@ -3714,6 +4162,45 @@
     addonStatus = {
       type: 'ai-length',
       label: 'AI 문장',
+      state: state === 'error' ? 'error' : 'success',
+      startedAt: previous && previous.startedAt ? previous.startedAt : now,
+      finishedAt: now,
+      phase: '',
+      message: message || ''
+    };
+    stopAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function startAiDiagramStatus(phase) {
+    addonStatus = {
+      type: 'ai-diagram',
+      label: 'AI 도해',
+      state: 'running',
+      startedAt: Date.now(),
+      finishedAt: null,
+      phase: phase || '시작 중',
+      message: ''
+    };
+    startAddonStatusTicker();
+    if (expanded) render();
+  }
+
+  function updateAiDiagramStatus(phase) {
+    if (!addonStatus || addonStatus.type !== 'ai-diagram' || addonStatus.state !== 'running') {
+      startAiDiagramStatus(phase);
+      return;
+    }
+    addonStatus.phase = phase || addonStatus.phase;
+    if (expanded) render();
+  }
+
+  function finishAiDiagramStatus(state, message) {
+    const now = Date.now();
+    const previous = addonStatus && addonStatus.type === 'ai-diagram' ? addonStatus : null;
+    addonStatus = {
+      type: 'ai-diagram',
+      label: 'AI 도해',
       state: state === 'error' ? 'error' : 'success',
       startedAt: previous && previous.startedAt ? previous.startedAt : now,
       finishedAt: now,
@@ -5811,6 +6298,9 @@
     }
     await injectPanel();
     await loadCachedGeneratedRulesList();
+    loadDiagramResults();
+    // 텍스트 입력용 iframe이 늦게 생길 수 있어 몇 번 더 설치를 시도한다(이미 설치된 창은 건너뜀).
+    for (const ms of [0, 3000, 10000, 30000]) setTimeout(installDocsCopyCapture, ms);
     injectPageBridgeScript();
     refreshGeneratedRulesListQuiet();
     // document_idle + 3000ms 후 1회 자동 스캔. 이후 자동 폴링 없음.
