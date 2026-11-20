@@ -594,3 +594,104 @@ test('규칙 옵션 allowCodeToken: boolean이 아니면 init이 거부한다', 
     /invalid rule options/
   );
 });
+
+// ── 가드 A 머리 경계 완화: "ASCII 단어의 꼬리" 규칙 ─────────────────────────────
+function applyAll(text) {
+  let out = '';
+  let pos = 0;
+  for (const f of E.scan(text).findings) {
+    out += text.slice(pos, f.start) + f.dst;
+    pos = f.end;
+  }
+  return out + text.slice(pos);
+}
+
+test('단어 꼬리 규칙(합성): 한 글자 머리+한글은 ASCII 단어 중간에서도 매칭, 구간은 머리 글자부터', () => {
+  E.init(synth([cat('a', [['t함수', 't 함수'], ['x 값', 'x값']])]), ['a']);
+  const text = 'print함수';
+  const { findings } = E.scan(text);
+  assert.deepEqual(findings, [{ start: 4, end: 7, src: 't함수', dst: 't 함수', cat: 'a' }]);
+  assert.equal(text.slice(findings[0].start, findings[0].end), 't함수');
+  assert.equal(applyAll(text), 'print 함수'); // 앞 글자 "prin" 보존
+  // 띄운 것을 붙이는 명사 규칙("x 값")은 한 글자 변수에만: 단어 뒤에서는 그대로 둔다
+  assert.equal(applyAll('index 값'), 'index 값');
+  assert.equal(applyAll('x 값'), 'x값');
+  assert.equal(applyAll('t함수'), 't 함수'); // 단독 한 글자도 그대로 검출
+  assert.equal(E.scan('print 함수').findings.length, 0);
+  assert.equal(E.scan('index값').findings.length, 0);
+});
+
+test('단어 꼬리 규칙(합성): 라틴 조각+조사 호응은 단어 끝에서 매칭', () => {
+  E.init(synth([cat('a', [['tor과', 'tor와'], ['git라는', 'git이라는']])]), ['a']);
+  assert.equal(applyAll('iterator과 제너레이터'), 'iterator와 제너레이터');
+  assert.equal(applyAll('digit라는 변수'), 'digit이라는 변수');
+  assert.equal(E.scan('iterator와 제너레이터').findings.length, 0);
+  // 꼬리 경계는 그대로: 조각 뒤에 영숫자가 이어지면 다른 낱말
+  E.init(synth([cat('a', [['x 값', 'x값'], ['Git', '깃']])]), ['a']);
+  assert.equal(E.scan('MyGit').findings.length, 0);
+});
+
+test('단어 꼬리 규칙(합성): 머리를 바꾸거나 뜻에 기대는 규칙은 경계 검사 유지', () => {
+  E.init(synth([cat('a', [
+    ['main함수', 'main() 함수'], // 괄호 추가
+    ['rgb채널', 'RGB 채널'],     // 머리 변경
+    ['AB실험', 'AB 테스트'],     // 여러 글자 머리 + 띄어쓰기(낱말 뜻 의존)
+    ['GPT4.1', 'GPT-4.1', { allowCodeToken: true }],
+    ['K.평균', 'K-평균']         // 한 글자 머리지만 뒤가 한글이 아님
+  ])]), ['a']);
+  for (const text of ['domain함수', 'xrgb채널', 'LAB실험', 'MyGPT4.1', 'TopK.평균']) {
+    assert.equal(E.scan(text).findings.length, 0, text);
+  }
+  assert.equal(applyAll('main함수'), 'main() 함수');
+  assert.equal(applyAll('rgb채널'), 'RGB 채널');
+  assert.equal(applyAll('AB실험'), 'AB 테스트');
+  assert.equal(applyAll('GPT4.1'), 'GPT-4.1');
+  assert.equal(applyAll('K.평균'), 'K-평균');
+});
+
+test('단어 꼬리 규칙(합성): 가드 B(URL)·문맥 예외는 그대로 적용', () => {
+  E.init(synth([cat('a', [['t함수', 't 함수'], ['e 입', 'e입', { rejectAfter: ['력'] }]])]), ['a']);
+  assert.equal(E.scan('https://example.com/print함수').findings.length, 0);
+  assert.equal(E.scan('code 입력').findings.length, 0);
+  assert.equal(applyAll('code 입니다'), 'code입니다');
+});
+
+test('단어 꼬리 규칙 실데이터: print함수·User클래스·index 값·tor과 검출과 교정문', () => {
+  initAll();
+  assert.equal(applyAll('print함수를 호출합니다'), 'print 함수를 호출합니다');
+  assert.equal(applyAll('User클래스를 만듭니다'), 'User 클래스를 만듭니다');
+  assert.equal(applyAll('index 값을 봅니다'), 'index 값을 봅니다');
+  assert.equal(applyAll('connection 메시지'), 'connection 메시지');
+  assert.equal(applyAll('new 한글'), 'new 한글');
+  assert.equal(applyAll('list일 때'), 'list일 때');
+  assert.equal(applyAll('data 입니다'), 'data입니다');
+  assert.equal(applyAll('2022 년'), '2022년');
+  assert.equal(applyAll('iterator과 함께 씁니다'), 'iterator와 함께 씁니다');
+  assert.equal(applyAll('function는 예약어입니다'), 'function은 예약어입니다');
+  const f = E.scan('print함수').findings[0];
+  assert.deepEqual({ start: f.start, end: f.end, src: f.src, dst: f.dst }, { start: 4, end: 7, src: 't함수', dst: 't 함수' });
+  // 더 긴 낱말 규칙이 왼쪽에서 먼저 잡히면 그쪽이 우선, 낱말 중간이면 꼬리 규칙으로
+  assert.equal(applyAll('main함수'), 'main() 함수');
+  assert.equal(applyAll('domain함수'), 'domain 함수');
+});
+
+test('단어 꼬리 규칙 실데이터: 올바른 표기·URL·코드 토큰·한글 문맥은 미검출', () => {
+  initAll();
+  for (const text of [
+    'print 함수를 호출합니다',
+    'User 클래스를 만듭니다',
+    'index값을 봅니다',
+    'iterator와 함께 씁니다',
+    'https://example.com/print함수',
+    'model.fit(index)',
+    'user_index.value',
+    '출력 함수와 사용자 클래스의 값을 봅니다',
+    'types이다',
+    'MyGPT4.1',
+    'BIOS'
+  ]) {
+    assert.deepEqual(srcs(E.scan(text)), [], text);
+  }
+  assert.equal(applyAll('GPT4.1'), 'GPT-4.1');
+  assert.equal(applyAll('types이 있습니다'), 'types가 있습니다');
+});

@@ -384,7 +384,7 @@ function bridgeStateLabel() {
 function buildHeader() {
   const header = el('header', 'header');
   const row = el('div', 'head-row');
-  row.append(el('div', 'title', 'Toytype'));
+  row.append(el('div', 'title', '토인비 편집'));
   const settingsBtn = el('button', 'btn icon-btn ghost');
   settingsBtn.type = 'button';
   settingsBtn.appendChild(settingsIcon());

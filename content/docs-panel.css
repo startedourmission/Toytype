@@ -173,6 +173,16 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 .trd-item.trd-applying { opacity: .78; }
 .trd-item.trd-copy-only { padding-right: 18px; }
 .trd-item.trd-suggestion-item .trd-fix { font-weight: 500; }
+/* 도해 미리보기 — 붙여넣을 그리기 명령을 SVG로 그린 것 */
+.trd-diagram-preview {
+  margin: 6px -56px 0 0;
+  padding: 6px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fff;
+}
+.trd-diagram-preview-svg { display: block; width: 100%; height: auto; max-height: 240px; }
+.trd-diagram-item:hover .trd-diagram-preview { border-color: #8ab4f8; }
 .trd-context-menu {
   position: absolute;
   z-index: 6;
@@ -286,7 +296,7 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 .trd-foot {
   flex: none;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   padding: 8px 12px;
   font-size: 11px;
@@ -296,6 +306,47 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   border-top: 1px solid #e0e0e0;
 }
 .trd-foot-text { flex: 1; min-width: 0; }
+/* 상태 표시줄: 푸터 아래 한 줄. 왼쪽 AI 작업 상태, 오른쪽 선택 글자 수. 넘치면 말줄임(전체는 툴팁) */
+.trd-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #5f6368;
+  background: #f1f3f4;
+  border-top: 1px solid #e0e0e0;
+  white-space: nowrap;
+}
+.trd-statusbar-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.trd-statusbar-text { overflow: hidden; text-overflow: ellipsis; }
+.trd-statusbar-count {
+  flex: none;
+  margin-left: auto;
+  color: #1a73e8;
+  font-variant-numeric: tabular-nums;
+}
+.trd-statusbar-running { color: #1a73e8; }
+.trd-statusbar-success { color: #188038; }
+.trd-statusbar-error { color: #d93025; }
+.trd-statusbar-spinner {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: trd-spin .8s linear infinite;
+}
+@keyframes trd-spin { to { transform: rotate(360deg); } }
 .trd-selection-count {
   color: #1a73e8;
   font-variant-numeric: tabular-nums;
@@ -359,16 +410,20 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   align-items: center;
 }
 .trd-settings-btn,
+.trd-facts-btn,
 .trd-terms-btn,
 .trd-suggestions-btn,
+.trd-diagrams-btn,
 .trd-chars-btn,
 .trd-addons-btn {
   width: 28px;
   height: 28px;
   color: #5f6368;
 }
+.trd-facts-btn.trd-on,
 .trd-terms-btn.trd-on,
 .trd-suggestions-btn.trd-on,
+.trd-diagrams-btn.trd-on,
 .trd-chars-btn.trd-on {
   background: #e8f0fe;
   color: #174ea6;
@@ -412,6 +467,10 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+.trd-facts-head-actions {
+  display: flex;
+  gap: 6px;
 }
 .trd-terms-title {
   font-weight: 700;
@@ -542,22 +601,102 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
 .trd-addons-item:disabled { opacity: .5; cursor: default; }
 .trd-addons-subitem { padding-left: 22px; font-size: 12px; }
 
-.trd-toast {
+.trd-statusbar-notice { color: #188038; }
+
+/* 패널 크기 조절 핸들 — 패널이 우하단에 붙어 있으므로 위쪽·왼쪽 경계만 끈다 */
+.trd-resize-top,
+.trd-resize-left,
+.trd-resize-corner {
   position: absolute;
-  left: 50%;
-  bottom: 52px;
-  transform: translateX(-50%);
-  max-width: 280px;
-  padding: 6px 12px;
-  background: #202124;
-  color: #fff;
-  border-radius: 16px;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .15s ease;
+  z-index: 6;
+  touch-action: none;
 }
-.trd-toast.trd-show { opacity: 1; }
+.trd-resize-top { top: 0; left: 10px; right: 0; height: 6px; cursor: ns-resize; }
+.trd-resize-left { top: 10px; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.trd-resize-corner { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.trd-resize-top:hover,
+.trd-resize-left:hover,
+.trd-resizing .trd-resize-top,
+.trd-resizing .trd-resize-left { background: rgba(26, 115, 232, .25); }
+.trd-resizing { user-select: none; }
+
+/* 용어 통일 표 — 종류 필터와 배지 */
+.trd-terms-filter { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.trd-terms-chip {
+  border: 1px solid #dadce0;
+  border-radius: 12px;
+  background: #fff;
+  color: #3c4043;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.trd-terms-chip:hover { background: #f1f3f4; }
+.trd-terms-chip.trd-on { background: #e8f0fe; border-color: #8ab4f8; color: #174ea6; }
+.trd-terms-note { font-size: 11px; color: #5f6368; margin-bottom: 6px; }
+.trd-terms-kind {
+  display: inline-block;
+  margin-bottom: 3px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  background: #f1f3f4;
+  color: #5f6368;
+}
+.trd-terms-kind-particle { background: #fce8e6; color: #c5221f; }
+.trd-terms-kind-spelling,
+.trd-terms-kind-dictionary { background: #e8f0fe; color: #174ea6; }
+.trd-terms-kind-synonym { background: #fef7e0; color: #b06000; }
+
+/* 도해 탭 — 프롬프트 입력과 생성 버튼 */
+.trd-diagram-composer { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; background: #f8f9fa; }
+.trd-diagram-prompt {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #202124;
+  background: #fff;
+}
+.trd-diagram-prompt:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 1px #1a73e8; }
+.trd-diagram-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.trd-diagram-generate { background: #1a73e8; border-color: #1a73e8; color: #fff; font-weight: 600; }
+.trd-diagram-generate:hover:not(:disabled) { background: #1765cc; }
+.trd-diagram-from-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; }
+.trd-diagram-from-label { font-size: 11px; color: #5f6368; margin-right: 2px; }
+.trd-diagram-mode-btn { font-size: 11px; padding: 2px 7px; }
+
+/* 상태 표시줄 오른쪽 작업 큐 버튼과 목록 */
+.trd-statusbar{position:relative}
+.trd-statusbar-jobs{flex:none;margin-left:auto;height:18px;padding:0 7px;border:1px solid #dadce0;border-radius:9px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:16px;cursor:pointer}
+.trd-statusbar-count+.trd-statusbar-jobs{margin-left:0}
+.trd-statusbar-jobs.trd-active{color:#1a73e8;border-color:#8ab4f8}
+.trd-statusbar-jobs.trd-on{background:#e8f0fe;color:#174ea6}
+.trd-jobs{position:absolute;left:6px;right:6px;bottom:calc(100% + 4px);max-height:300px;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);white-space:normal;z-index:7;color:#202124}
+.trd-jobs-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #f1f3f4}
+.trd-jobs-title{font-weight:700;font-size:12px;margin-right:auto}
+.trd-jobs-conc{display:flex;align-items:center;gap:4px;font-size:11px;color:#5f6368}
+.trd-jobs-btn{border:1px solid #dadce0;border-radius:5px;background:#fff;color:#3c4043;font:inherit;font-size:11px;line-height:16px;padding:0 6px;cursor:pointer}
+.trd-jobs-btn:disabled{opacity:.4;cursor:default}
+.trd-jobs-btn:hover:not(:disabled){background:#f1f3f4}
+.trd-jobs-list{overflow-y:auto}
+.trd-jobs-empty{padding:10px;font-size:11px;color:#80868b}
+.trd-job{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid #f5f6f7}
+.trd-job:first-child{border-top:0}
+.trd-job-main{flex:1;min-width:0}
+.trd-job-name{font-size:11px;font-weight:600}
+.trd-job-detail{font-size:11px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trd-job-actions{flex:none;display:flex;gap:3px}
+.trd-job-running .trd-job-name{color:#1a73e8}
+.trd-job-error .trd-job-name{color:#d93025}
+.trd-job-canceled .trd-job-name,.trd-job-done .trd-job-name{color:#5f6368}
+

@@ -5,7 +5,10 @@
   "scripts": {
     "test": "node --test",
     "setup": "node tools/install_native_host.mjs",
-    "setup:remove": "node tools/install_native_host.mjs --uninstall"
+    "setup:remove": "node tools/install_native_host.mjs --uninstall",
+    "package:store": "node tools/package_store.mjs",
+    "rules:check": "node tools/rules_tool.mjs check",
+    "rules:format": "node tools/rules_tool.mjs format"
   },
   "devDependencies": {
     "@xmldom/xmldom": "^0.9.10"

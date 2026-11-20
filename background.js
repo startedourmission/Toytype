@@ -155,11 +155,18 @@ async function fetchImageAsDataUrl(url) {
   return { ok: true, dataUrl: 'data:' + type + ';base64,' + btoa(bin), bytes: bytes.length };
 }
 
-async function callAiBridge(path, payload) {
+// 작업 큐에서 취소한 요청을 끊기 위한 컨트롤러. 연결이 끊기면 브리지가 실행 중인 CLI도 끝낸다.
+const aiRequestControllers = new Map();
+
+async function callAiBridge(path, payload, requestId) {
   const settings = await readSettings();
   const ai = mergeAiSettings(settings);
   const bridgePayload = buildAiBridgePayload(ai, payload);
   const ctrl = new AbortController();
+  let canceled = false;
+  if (requestId) {
+    aiRequestControllers.set(requestId, () => { canceled = true; ctrl.abort(); });
+  }
   const timer = setTimeout(() => ctrl.abort(), ai.requestTimeoutMs + 5000);
   try {
     const res = await fetch(ai.bridgeUrl + path, {
@@ -180,6 +187,7 @@ async function callAiBridge(path, payload) {
     }
     return json;
   } catch (e) {
+    if (canceled) return { ok: false, error: 'canceled', message: '작업을 취소했습니다' };
     return {
       ok: false,
       error: e && e.name === 'AbortError' ? 'bridge_timeout' : 'bridge_unavailable',
@@ -188,6 +196,7 @@ async function callAiBridge(path, payload) {
     };
   } finally {
     clearTimeout(timer);
+    if (requestId) aiRequestControllers.delete(requestId);
   }
 }
 
@@ -394,6 +403,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'typo:aiBridgeAbort') {
+    const abort = aiRequestControllers.get(String(msg.requestId || ''));
+    if (abort) abort();
+    sendResponse({ ok: true, aborted: !!abort });
+    return;
+  }
+
   if (msg.type === 'typo:aiBridge') {
     const action = msg.action;
     const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
@@ -421,7 +437,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
         return null;
       }
-      return callAiBridge(path, payload).then(sendResponse, error => {
+      return callAiBridge(path, payload, typeof msg.requestId === 'string' ? msg.requestId : '').then(sendResponse, error => {
         sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
       });
     }).catch(error => {

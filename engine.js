@@ -72,6 +72,62 @@
     return [];
   }
 
+  function isHangulSyllable(code) {
+    return code >= 0xac00 && code <= 0xd7a3;
+  }
+
+  // 가드 A 머리 경계 완화 대상인지 규칙 모양으로 판정한다 ("ASCII 단어의 꼬리" 규칙).
+  // 선두 ASCII 영숫자 런 H가 dst에 그대로 남고, 규칙이 손대는 것은 H 뒤의 한글뿐이어야 한다.
+  // 그러면 H 앞에 영숫자가 더 붙어 있어도(print함수의 "t함수") 교정 결과가 같으므로
+  // 단어 중간에서 시작하는 매칭을 허용해도 안전하다. 매칭 구간은 H부터라 앞 글자는 보존된다.
+  //   (1) H가 1글자, 뒤가 [공백]한글 → dst도 H+[공백]한글 : "a함수"→"a 함수", "x 값"→"x값"
+  //       (한 글자 머리는 낱말 전체일 수 없고 임의 식별자의 끝 글자를 뜻한다)
+  //   (2) H가 2글자 이상, 뒤가 공백 없는 한글(조사)뿐 → dst도 H+한글 : "tor과"→"tor와"
+  //       (받침 호응은 단어 끝 발음만으로 정해진다)
+  // H 자체를 바꾸거나("rgb채널"→"RGB 채널") 괄호를 붙이거나("main함수"→"main() 함수")
+  // 낱말 뜻에 기대는 규칙("AB실험"→"AB 테스트")은 해당하지 않아 경계 검사가 유지된다.
+  function isAsciiWordTailRule(src, dst) {
+    let h = 0;
+    while (h < src.length && isAsciiAlnum(src.charCodeAt(h))) h++;
+    if (h === 0 || h === src.length) return false;
+    if (dst.length <= h || !dst.startsWith(src.slice(0, h))) return false;
+    if (h === 1) {
+      if (!startsWithOptSpaceHangul(src, 1) || !startsWithOptSpaceHangul(dst, 1)) return false;
+      const srcSpaced = src.charCodeAt(1) === 32;
+      const dstSpaced = dst.charCodeAt(1) === 32;
+      const tail = src.slice(srcSpaced ? 2 : 1);
+      // 띄운 것을 붙이는 규칙("x 값"→"x값")은 한 글자 변수에만 쓰는 하우스 표기라 단어 꼬리로 넓히지 않는다
+      // ("connection 메시지", "new 한글"은 그대로). 다만 뒤가 조사·서술격이거나 숫자+단위면 단어 뒤에서도 붙인다.
+      if (srcSpaced && !dstSpaced) return isDigit(src.charCodeAt(0)) || WORD_TAIL_GRAMMAR_RE.test(tail);
+      // 붙은 것을 띄우는 규칙("t훅"→"t 훅")은 뒤가 서술격 조사면 넓히지 않는다("list일 때"는 맞는 표기)
+      if (!srcSpaced && dstSpaced) return !WORD_TAIL_COPULA_RE.test(tail);
+      return true;
+    }
+    return allHangulFrom(src, h) && allHangulFrom(dst, h);
+  }
+
+  // 단어 뒤에 붙여 쓰는 조사·서술격 어미의 앞머리
+  const WORD_TAIL_GRAMMAR_RE = /^(입$|입니|이고|이다|이며|이면|이라|이나|처럼|뿐|라도|만|도|와|과|을|를|은|는|이|가|에|의|로|으로|부터|까지|보다|하고)/;
+  // 붙여 쓰는 서술격 조사(이다)의 활용형 앞머리
+  const WORD_TAIL_COPULA_RE = /^(일|인|임|입|이)/;
+
+  function isDigit(code) {
+    return code >= 48 && code <= 57;
+  }
+
+  function startsWithOptSpaceHangul(s, at) {
+    if (s.charCodeAt(at) === 32) at++;
+    return at < s.length && isHangulSyllable(s.charCodeAt(at));
+  }
+
+  function allHangulFrom(s, at) {
+    if (at >= s.length) return false;
+    for (let k = at; k < s.length; k++) {
+      if (!isHangulSyllable(s.charCodeAt(k))) return false;
+    }
+    return true;
+  }
+
   function byLenDescOrdAsc(a, b) {
     return b.len - a.len || a.ord - b.ord;
   }
@@ -103,10 +159,10 @@
         const dst = rule[1];
         if (src.trim() === '') continue; // 빈/공백-only src 무시
         if (src === dst) continue;       // 무변환 규칙 무시 (dst '' 는 삭제 규칙이라 허용)
-        // 선두 공백 삽입형(dst === ' '+src, 예: "것"→" 것", "변수"→" 변수")은 시트의
+        // 선두 공백 삽입형(dst === ' '+src, 예: "것"→" 것", "변수"→" 변수")은 옛 규칙 시트의
         // 순차 치환 매크로다: 일단 전부 띄운 뒤 보정 규칙("이 것"→"이것", "매개 변수"→"매개변수")으로
         // 합성어를 되돌리는 전제라, 단독 점검출로 쓰면 정상 표기(이것·그때·한때·매개변수 등)에서
-        // 전부 발화한다 — 같은 시트의 보정 규칙과 정면 모순. 검출 대상에서 제외한다.
+        // 전부 발화한다 — 같은 사전의 보정 규칙과 정면 모순. 검출 대상에서 제외한다.
         // (붙여쓰기 오류는 "는것"·"할때"·"콜백함수" 같은 명시적 합성 규칙들이 따로 잡는다.)
         if (dst === ' ' + src) continue;
         const entry = {
@@ -115,7 +171,8 @@
           cat: cat.id,
           len: src.length,
           ord: ord++,
-          headAlnum: isAsciiAlnum(src.charCodeAt(0)),
+          // 머리 경계 검사 여부. "ASCII 단어의 꼬리" 모양 규칙은 단어 중간 시작을 허용한다.
+          headAlnum: isAsciiAlnum(src.charCodeAt(0)) && !isAsciiWordTailRule(src, dst),
           tailAlnum: isAsciiAlnum(src.charCodeAt(src.length - 1)),
           rejectBefore: stringList(rule[2] && rule[2].rejectBefore),
           rejectAfter: stringList(rule[2] && rule[2].rejectAfter),
@@ -153,6 +210,7 @@
   // true면 해당 후보 탈락.
   function rejected(text, start, end, entry) {
     // 가드 A: CamelCase 식별자 내부 오검출 방지
+    // (headAlnum은 init에서 "ASCII 단어의 꼬리" 규칙에 한해 꺼진다 — isAsciiWordTailRule)
     if (entry.headAlnum && start > 0 && isAsciiAlnum(text.charCodeAt(start - 1))) return true;
     if (entry.tailAlnum && end < text.length && isAsciiAlnum(text.charCodeAt(end))) return true;
 

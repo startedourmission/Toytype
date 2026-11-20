@@ -8,11 +8,12 @@
 //   [15, id, null, 0, "텍스트"]                          텍스트 삽입
 //   [17, id, null, 시작, 끝, [], [키,값...]]              텍스트 스타일 (12:2 가운데 정렬, 6:글자 pt)
 //   좌표 단위 1pt = 508, 도형 배율 1.0 = 120000
-//   도형종류 3 이미지, 6 사각형, 7 둥근 사각형, 145 꺾인 연결선(1회), 146 꺾인 연결선(2회), 153 직선
+//   도형종류 3 이미지, 6 사각형, 7 둥근 사각형, 8 타원, 145 꺾인 연결선(1회), 146 꺾인 연결선(2회), 153 직선
 //   속성 14 채우기 유무, 15 채우기색, 16 채우기 불투명, 18 선 불투명, 19 선색, 22 선굵기,
-//        26 시작 머리, 29 끝 머리(3 동그란 점, 7 화살촉), 43 선 모양(견본 값 2),
+//        26 시작 머리, 29 끝 머리(3 동그란 점, 5 작은 화살촉, 7 화살촉), 43 선 모양(견본 값 2),
 //        49 이미지 blob id, 8/9 이미지 픽셀 크기, 51/52 시작·끝 연결 [도형id, 연결점], 53 글 여백
-//   연결점: 0 위, 1 왼쪽, 2 아래, 3 오른쪽
+//   연결점: 사각형 0 위, 1 왼쪽, 2 아래, 3 오른쪽
+//           타원 0 위, 1 왼쪽 위, 2 왼쪽, 3 왼쪽 아래, 4 아래, 5 오른쪽 아래, 6 오른쪽, 7 오른쪽 위 (7장 트리 원고 그리기에서 확인)
 //   이미지는 image-clip 형식의 image_urls에 data URL을 넣으면 구글이 업로드한다.
 //
 // 알려진 한계: 줄바꿈이 든 텍스트는 그리기 화면에는 보이지만 저장 동기화가 거부된다.
@@ -27,7 +28,15 @@
   const MIME_DOC_SLICE = 'application/x-vnd.google-docs-document-slice-clip+wrapped';
   const CAPTURE_TYPES = ['text/html', 'text/plain', MIME_DRAWING, MIME_IMAGE, MIME_DOC_SLICE];
   const SITE = { top: 0, left: 1, bottom: 2, right: 3 };
-  const HEAD = { none: 0, dot: 3, arrow: 7 };
+  const ELLIPSE = 8;
+  // 말풍선(설명선) 도형. 구글 그리기 [도형 ▸ 설명선]에서 그려 읽은 값: 사각 106, 둥근 사각 107, 타원 105, 구름 162.
+  // 꼬리 끝은 속성 0·1에 둔다 — 도형 중심에서 꼬리 끝까지의 거리를 너비·높이에 대한 비율 ×100000으로(OOXML adj1·adj2와 같다).
+  const BUBBLE_TYPES = new Set([105, 106, 107, 162]);
+  const ELLIPSE_SITE = { top: 0, topLeft: 1, left: 2, bottomLeft: 3, bottom: 4, bottomRight: 5, right: 6, topRight: 7 };
+  const ELLIPSE_SITE_NAMES = Object.keys(ELLIPSE_SITE);
+  // 타원 연결점 방향(도, 수학 좌표: 오른쪽 0, 위 90)
+  const ELLIPSE_SITE_ANGLE = { top: 90, topLeft: 135, left: 180, bottomLeft: 225, bottom: 270, bottomRight: 315, right: 0, topRight: 45 };
+  const HEAD = { none: 0, dot: 3, small: 5, arrow: 7 };
   const KIND = { straight: 153, elbow: 145, elbow2: 146 };
   const KIND_BY_TYPE = { 153: 'straight', 145: 'elbow', 146: 'elbow2' };
   const RED = '#FF0000';
@@ -39,7 +48,10 @@
     label: { line: RED, weight: 3, fill: '#FFFFFF', round: true, size: 12 },
     annotateLine: { line: RED, weight: 1.5, dash: 2 },
     node: { line: '#000000', weight: 0.75, fill: '#CFE2F3', round: true, size: 12 },
-    diagramLine: { line: '#000000', weight: 1, dash: 0 }
+    diagramLine: { line: '#000000', weight: 1, dash: 0 },
+    // 트리·그래프의 원 노드. 7장 트리 원고의 구글 그리기에서 잰 하우스 스타일(지름 32.8pt, 선 0.53pt, 글자 10pt)
+    circle: { line: '#000000', weight: 0.53, fill: '#FFFFFF', size: 10, diameter: 32.8 },
+    circleLine: { line: '#000000', weight: 0.53 }
   };
   const NODE_FILLS = ['#CFE2F3', '#D9EAD3', '#FFF2CC', '#FCE5CD', '#F4CCCC', '#D9D2E9', '#EFEFEF', '#FFFFFF'];
 
@@ -115,29 +127,45 @@
     for (const n of nodes) if (indeg.get(String(n.id)) === 0) visit(String(n.id), 0);
     for (const n of nodes) if (!layer.has(String(n.id))) visit(String(n.id), 0);
 
+    const isCircle = n => n.shape === 'ellipse';
     const size = new Map();
     for (const n of nodes) {
-      const st = Object.assign({}, STYLE.node, pickStyle(n));
       const text = cleanText(n.text);
+      if (isCircle(n)) {
+        // 짧은 키는 지름이 같은 원, 긴 글자는 가로로 긴 타원
+        const st = Object.assign({}, STYLE.circle, pickStyle(n));
+        const d = STYLE.circle.diameter;
+        size.set(String(n.id), { w: Math.max(d, textWidthPt(text, st.size) + 16), h: d });
+        continue;
+      }
+      const st = Object.assign({}, STYLE.node, pickStyle(n));
       const w = Math.max(80, textWidthPt(text, st.size) + 28);
       const h = Math.max(30, st.size * 1.35 + 14);
       size.set(String(n.id), { w, h });
     }
+    const circleTree = nodes.length > 0 && nodes.filter(isCircle).length * 2 > nodes.length;
 
     // 층 안 위치: 각 노드의 첫 부모(바로 윗층)를 트리 부모로 삼아, 자식을 먼저 놓고
     // 부모를 자식들 가운데에 둔다. 겹치면 그 하위 트리 전체를 오른쪽(LR이면 아래)으로 민다.
-    const GAP_IN = 24;
-    const GAP_LAYER = direction === 'TB' ? 44 : 60;
+    const GAP_IN = circleTree ? 16 : 24;
+    const GAP_LAYER = circleTree ? 30 : direction === 'TB' ? 44 : 60;
     const span = id => (direction === 'TB' ? size.get(id).w : size.get(id).h);
     const depthOf = id => (direction === 'TB' ? size.get(id).h : size.get(id).w);
     const children = new Map(nodes.map(n => [String(n.id), []]));
     const hasTreeParent = new Set();
+    // 이진 트리에서 자식의 왼쪽·오른쪽(side). 외자식도 부모 바로 아래가 아니라 그쪽으로 비껴 놓는다
+    const sideOf = new Map();
     for (const e of edges) {
       const from = String(e.from);
       const to = String(e.to);
       if (hasTreeParent.has(to) || layer.get(to) !== layer.get(from) + 1) continue;
       hasTreeParent.add(to);
       children.get(from).push(to);
+      if (e.side === 'left' || e.side === 'right') sideOf.set(to, e.side);
+    }
+    const sideRank = id => (sideOf.get(id) === 'left' ? 0 : sideOf.get(id) === 'right' ? 2 : 1);
+    for (const kids of children.values()) {
+      if (kids.some(k => sideOf.has(k))) kids.sort((a, b) => sideRank(a) - sideRank(b));
     }
     const along = new Map();
     const nextFree = [];
@@ -151,7 +179,11 @@
       const kids = children.get(id);
       for (const c of kids) place(c);
       let p;
-      if (kids.length) {
+      if (kids.length === 1 && sideOf.has(kids[0])) {
+        const c = kids[0];
+        const off = (span(c) + GAP_IN) / 2;
+        p = along.get(c) + span(c) / 2 + (sideOf.get(c) === 'left' ? off : -off) - span(id) / 2;
+      } else if (kids.length) {
         const first = along.get(kids[0]);
         const last = along.get(kids[kids.length - 1]) + span(kids[kids.length - 1]);
         p = (first + last) / 2 - span(id) / 2;
@@ -194,12 +226,33 @@
     }
 
     const items = [];
-    for (const n of nodes) items.push(Object.assign({}, n, { type: 'node', rect: rects.get(String(n.id)) }));
+    const circleIds = new Set();
+    for (const n of nodes) {
+      const item = Object.assign({}, n, { type: 'node', rect: rects.get(String(n.id)) });
+      if (isCircle(n)) {
+        circleIds.add(String(n.id));
+        item.shapeType = ELLIPSE;
+        item.round = false;
+        for (const k of ['fill', 'line', 'weight', 'size']) if (n[k] === undefined) item[k] = STYLE.circle[k];
+      }
+      delete item.shape;
+      items.push(item);
+    }
     for (const e of edges) {
       const lf = layer.get(String(e.from));
       const lt = layer.get(String(e.to));
       const forward = lt > lf;
       const item = Object.assign({}, e);
+      delete item.side;
+      if (circleIds.has(String(e.from)) && circleIds.has(String(e.to))) {
+        // 원끼리는 원고 그리기처럼 곧은 선, 연결점은 autoSite가 원 둘레 8곳에서 고른다
+        if (!e.kind) item.kind = 'straight';
+        if (e.weight === undefined) item.weight = STYLE.circleLine.weight;
+        if (e.line === undefined) item.line = STYLE.circleLine.line;
+        if (e.head === 'arrow') item.head = 'small';
+        items.push(item);
+        continue;
+      }
       if (forward && !e.fromSite && !e.toSite) {
         item.fromSite = direction === 'TB' ? 'bottom' : 'right';
         item.toSite = direction === 'TB' ? 'top' : 'left';
@@ -261,6 +314,33 @@
 
     const items = mode === 'diagram' ? positionDiagramItems(spec) : (spec.items || []);
     const blobRefs = [];
+    // 말풍선 꼬리가 가리킬 도형 위치(아직 그리지 않은 도형도 가리킬 수 있게 미리 모은다)
+    const rectById = new Map();
+    for (const it of items) {
+      if (it && it.id != null && Array.isArray(it.rect) && it.rect.slice(0, 4).every(v => Number.isFinite(Number(v)))) {
+        rectById.set(String(it.id), it.rect.slice(0, 4).map(Number));
+      }
+    }
+    // 말풍선 중심에서 대상 쪽으로 그은 선이 대상 상자 테두리와 만나는 점(조금 못 미치게)
+    function bubbleTailPoint(it, x, y, w, h) {
+      if (Array.isArray(it.tail) && it.tail.length >= 2 && Number.isFinite(Number(it.tail[0])) && Number.isFinite(Number(it.tail[1]))) {
+        return [Number(it.tail[0]), Number(it.tail[1])];
+      }
+      const r = it.tailTo != null ? rectById.get(String(it.tailTo)) : null;
+      if (!r) return null;
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const tx = r[0] + r[2] / 2;
+      const ty = r[1] + r[3] / 2;
+      const dx = tx - cx;
+      const dy = ty - cy;
+      if (!dx && !dy) return null;
+      // 대상 중심에서 말풍선 쪽으로 나가 대상 테두리를 지나는 지점 + 여백 3pt
+      const tEdge = Math.min(dx ? (r[2] / 2) / Math.abs(dx) : Infinity, dy ? (r[3] / 2) / Math.abs(dy) : Infinity);
+      const len = Math.hypot(dx, dy);
+      const back = tEdge + 3 / (len * ptPerUnit);
+      return [tx - dx * back, ty - dy * back];
+    }
 
     // 기존 그리기 안의 이미지. 받아 둔 픽셀(dataUrl)이 있으면 새 blob id로 직접 넣고,
     // 없으면 원래 blob id만 참조한다(같은 문서에서도 깨질 수 있어 최후 수단).
@@ -303,7 +383,6 @@
       }
       if (![x, y, w, h].every(Number.isFinite)) return;
       const id = nid();
-      shapes.set(String(it.id), { id, x, y, w, h });
       const [ux, uy] = U(x, y);
       let props;
       if (Array.isArray(it.rawProps)) {
@@ -327,6 +406,16 @@
       const shapeType = Number.isInteger(it.shapeType) && it.shapeType !== 3 && !KIND_BY_TYPE[it.shapeType]
         ? it.shapeType
         : (st.round ? 7 : 6);
+      if (BUBBLE_TYPES.has(shapeType)) {
+        const tip = bubbleTailPoint(it, x, y, w, h);
+        if (tip) {
+          const m = propMap(props);
+          m.set(0, Math.round((tip[0] - (x + w / 2)) / w * 100000));
+          m.set(1, Math.round((tip[1] - (y + h / 2)) / h * 100000));
+          props = [].concat(...m.entries());
+        }
+      }
+      shapes.set(String(it.id), { id, x, y, w, h, ellipse: shapeType === ELLIPSE });
       cmds.push([3, id, shapeType, [round4(w * s / BASE), 0, 0, round4(h * s / BASE), Math.round(ux), Math.round(uy)], props, 'p']);
       const L = text.length; // UTF-16 길이 (구글 내부 인덱스와 같다)
       if (text) cmds.push([15, id, null, 0, text]);
@@ -341,6 +430,10 @@
 
     function sitePoint(shape, site) {
       const { x, y, w, h } = shape;
+      if (shape.ellipse) {
+        const rad = ELLIPSE_SITE_ANGLE[site] * Math.PI / 180;
+        return [x + w / 2 + Math.cos(rad) * w / 2, y + h / 2 - Math.sin(rad) * h / 2];
+      }
       if (site === 'top') return [x + w / 2, y];
       if (site === 'bottom') return [x + w / 2, y + h];
       if (site === 'left') return [x, y + h / 2];
@@ -348,10 +441,53 @@
     }
 
     function autoSites(a, b) {
+      if (a.ellipse || b.ellipse) return [autoSite(a, b, true), autoSite(b, a, false)];
       const dx = (b.x + b.w / 2) - (a.x + a.w / 2);
       const dy = (b.y + b.h / 2) - (a.y + a.h / 2);
       if (Math.abs(dx) * a.h >= Math.abs(dy) * a.w) return dx > 0 ? ['right', 'left'] : ['left', 'right'];
       return dy > 0 ? ['bottom', 'top'] : ['top', 'bottom'];
+    }
+
+    // 한쪽 끝의 연결점. 타원은 8방향 중 상대 쪽에 가장 가까운 점을 고르되, 트리처럼 위에서 아래로 내려가는 선은
+    // 견본처럼 부모의 왼쪽·오른쪽 아래에서 나와 자식의 위로 들어가게 한다.
+    function autoSite(self, other, outgoing) {
+      const dx = (other.x + other.w / 2) - (self.x + self.w / 2);
+      const dy = (other.y + other.h / 2) - (self.y + self.h / 2);
+      if (!self.ellipse) {
+        if (Math.abs(dx) * self.h >= Math.abs(dy) * self.w) return dx > 0 ? 'right' : 'left';
+        return dy > 0 ? 'bottom' : 'top';
+      }
+      const fromVertical = Math.atan2(Math.abs(dx), Math.abs(dy)) * 180 / Math.PI;
+      if (outgoing && dy > 0 && fromVertical < 70) {
+        if (Math.abs(dx) < self.w * 0.25) return 'bottom';
+        return dx < 0 ? 'bottomLeft' : 'bottomRight';
+      }
+      if (!outgoing && dy < 0 && fromVertical < 70) {
+        if (fromVertical < 60) return 'top';
+        return dx < 0 ? 'topLeft' : 'topRight';
+      }
+      const ang = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+      let best = 'top';
+      for (const name of ELLIPSE_SITE_NAMES) {
+        const d = Math.abs(((ang - ELLIPSE_SITE_ANGLE[name]) % 360 + 540) % 360 - 180);
+        const bd = Math.abs(((ang - ELLIPSE_SITE_ANGLE[best]) % 360 + 540) % 360 - 180);
+        if (d < bd) best = name;
+      }
+      return best;
+    }
+
+    // 도형 종류에 맞는 연결점 이름인지 확인하고 번호를 돌려준다. 사각형에 대각선 이름이 오면 위·아래로 바꾼다.
+    function siteName(shape, name) {
+      if (!shape || !name) return undefined;
+      if (shape.ellipse) return ELLIPSE_SITE[name] !== undefined ? name : undefined;
+      if (SITE[name] !== undefined) return name;
+      if (/^top/.test(name)) return 'top';
+      if (/^bottom/.test(name)) return 'bottom';
+      return undefined;
+    }
+
+    function siteCode(shape, name) {
+      return shape.ellipse ? ELLIPSE_SITE[name] : SITE[name];
     }
 
     // 끝이 도형에 붙어 있으면 연결점 위치를, 아니면 points 좌표를 쓴다(기존 그리기 고치기).
@@ -363,8 +499,8 @@
       const st = Object.assign({}, base, pickStyle(it));
       const kind = KIND[it.kind] ? it.kind : 'straight';
       const [fs0, ts0] = a && b ? autoSites(a, b) : [undefined, undefined];
-      const fs = SITE[it.fromSite] !== undefined ? it.fromSite : fs0;
-      const ts = SITE[it.toSite] !== undefined ? it.toSite : ts0;
+      const fs = siteName(a, it.fromSite) || fs0 || (a ? autoSite(a, { x: pts[1][0], y: pts[1][1], w: 0, h: 0 }, true) : undefined);
+      const ts = siteName(b, it.toSite) || ts0 || (b ? autoSite(b, { x: pts[0][0], y: pts[0][1], w: 0, h: 0 }, false) : undefined);
       const [x1, y1] = a ? sitePoint(a, fs) : pts[0];
       const [x2, y2] = b ? sitePoint(b, ts) : pts[1];
       const dx = round4((x2 - x1) * s / BASE);
@@ -382,7 +518,7 @@
       if (st.dash) props.push(43, st.dash);
       if (HEAD[startHead]) props.push(26, HEAD[startHead]);
       if (HEAD[endHead]) props.push(29, HEAD[endHead]);
-      props.push(51, a ? [a.id, SITE[fs]] : ['', 0], 52, b ? [b.id, SITE[ts]] : ['', 0]);
+      props.push(51, a ? [a.id, siteCode(a, fs)] : ['', 0], 52, b ? [b.id, siteCode(b, ts)] : ['', 0]);
       cmds.push([3, nid(), KIND[kind], tf, props, 'p']);
     }
 
@@ -640,8 +776,10 @@
     const texts = new Map();
     const sizes = new Map();
     let droppedCount = 0;
-    const siteName = ['top', 'left', 'bottom', 'right'];
-    const headName = v => (v === 3 ? 'dot' : v ? 'arrow' : 'none');
+    const rectSiteName = ['top', 'left', 'bottom', 'right'];
+    const shapeTypeById = new Map();
+    const siteNameOf = (shapeId, code) => (shapeTypeById.get(shapeId) === ELLIPSE ? ELLIPSE_SITE_NAMES : rectSiteName)[code];
+    const headName = v => (v === 3 ? 'dot' : v === 5 ? 'small' : v ? 'arrow' : 'none');
     for (const c of cmds || []) {
       if (!Array.isArray(c)) continue;
       if (c[0] === 15 && typeof c[4] === 'string') {
@@ -657,7 +795,10 @@
       } else if (c[0] === 3 && Array.isArray(c[3])) {
         if (c[2] === 3) images.push(c);
         else if (KIND_BY_TYPE[c[2]]) lines.push(c);
-        else shapes.push(c);
+        else {
+          shapes.push(c);
+          shapeTypeById.set(c[1], c[2]);
+        }
       }
     }
     const items = [];
@@ -718,11 +859,11 @@
       };
       if (Array.isArray(start) && ids.has(start[0])) {
         arrow.from = start[0];
-        arrow.fromSite = siteName[start[1]];
+        arrow.fromSite = siteNameOf(start[0], start[1]);
       }
       if (Array.isArray(end) && ids.has(end[0])) {
         arrow.to = end[0];
-        arrow.toSite = siteName[end[1]];
+        arrow.toSite = siteNameOf(end[0], end[1]);
       }
       if (arrow.from && arrow.from === arrow.to) continue; // 길이 0인 자기 연결선
       if (props.has(0)) arrow.adjust = props.get(0);
@@ -775,8 +916,169 @@
       .replace(/&gt;/g, '>');
   }
 
+  // ---------- 미리보기 ----------
+  // 붙여넣을 페이로드의 그리기 명령을 그대로 해석해 그린다. 스펙이 아니라 명령을 읽으므로
+  // 미리보기와 실제 붙여넣기 결과의 위치·색·연결선이 일치한다. 단위는 pt.
+  function previewModel(payload) {
+    const outer = JSON.parse(payload.custom[MIME_DRAWING]);
+    const cmds = JSON.parse(outer.data).resolved || [];
+    let imageUrls = {};
+    if (payload.custom[MIME_IMAGE]) {
+      try {
+        imageUrls = JSON.parse(JSON.parse(payload.custom[MIME_IMAGE]).data).image_urls || {};
+      } catch (_) {
+        imageUrls = {};
+      }
+    }
+    const shapes = [];
+    const byId = new Map();
+    for (const c of cmds) {
+      if (!Array.isArray(c)) continue;
+      if (c[0] === 3) {
+        const [, id, type, tf, rawProps] = c;
+        const p = propMap(rawProps);
+        const [a, b, cc, d, tx, ty] = (tf || []).map(Number);
+        const x = tx / PT;
+        const y = ty / PT;
+        const weight = Number(p.get(22)) > 0 ? Number(p.get(22)) / PT : 0;
+        const line = p.get(18) === 0 ? null : hexColor(p.get(19), null);
+        if (KIND_BY_TYPE[type]) {
+          // 연결선: 꺾인 선은 회전 행렬([0,dy,dx,0])이면 세로부터 꺾인다
+          const vertical = a === 0 && d === 0 && (b !== 0 || cc !== 0);
+          const dx = (vertical ? cc : a) * BASE / PT;
+          const dy = (vertical ? b : d) * BASE / PT;
+          const adjust = type === 146 && Number.isFinite(Number(p.get(0))) ? Number(p.get(0)) / 100000 : 0.5;
+          shapes.push({
+            kind: 'line', type: KIND_BY_TYPE[type], vertical, adjust,
+            x1: x, y1: y, x2: x + dx, y2: y + dy,
+            line: line || '#000000', weight: weight || 1, dash: Number(p.get(43)) || 0,
+            startHead: Number(p.get(26)) || 0, endHead: Number(p.get(29)) || 0
+          });
+          continue;
+        }
+        let w;
+        let h;
+        let href = null;
+        if (type === 3) {
+          const pw = Number(p.get(8));
+          const ph = Number(p.get(9));
+          w = a * pw / PT;
+          h = d * ph / PT;
+          href = imageUrls[p.get(49)] || null;
+        } else {
+          w = a * BASE / PT;
+          h = d * BASE / PT;
+        }
+        if (![x, y, w, h].every(Number.isFinite)) continue;
+        const shape = {
+          kind: type === 3 ? 'image' : type === ELLIPSE || type === 105 ? 'ellipse' : 'rect',
+          round: type === 7 || type === 107,
+          x, y, w, h, href,
+          fill: p.get(14) === 1 ? hexColor(p.get(15), null) : null,
+          line, weight,
+          text: '', size: 12, color: '#000000', align: 2
+        };
+        shapes.push(shape);
+        byId.set(id, shape);
+      } else if (c[0] === 15 && byId.has(c[1])) {
+        byId.get(c[1]).text += String(c[4] || '');
+      } else if (c[0] === 17 && byId.has(c[1])) {
+        const st = propMap(c[6]);
+        const shape = byId.get(c[1]);
+        if (Number(st.get(6)) > 0) shape.size = Number(st.get(6));
+        if (hexColor(st.get(4), null)) shape.color = hexColor(st.get(4), null);
+        if (st.has(12)) shape.align = Number(st.get(12));
+      }
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of shapes) {
+      const xs = s.kind === 'line' ? [s.x1, s.x2] : [s.x, s.x + s.w];
+      const ys = s.kind === 'line' ? [s.y1, s.y2] : [s.y, s.y + s.h];
+      minX = Math.min(minX, ...xs); maxX = Math.max(maxX, ...xs);
+      minY = Math.min(minY, ...ys); maxY = Math.max(maxY, ...ys);
+    }
+    if (!shapes.length) return { shapes, box: [0, 0, 1, 1] };
+    const pad = 6;
+    return { shapes, box: [minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2] };
+  }
+
+  function linePath(s) {
+    const { x1, y1, x2, y2 } = s;
+    if (s.type === 'straight') return [[x1, y1], [x2, y2]];
+    if (s.type === 'elbow') return s.vertical ? [[x1, y1], [x1, y2], [x2, y2]] : [[x1, y1], [x2, y1], [x2, y2]];
+    if (s.vertical) {
+      const my = y1 + (y2 - y1) * s.adjust;
+      return [[x1, y1], [x1, my], [x2, my], [x2, y2]];
+    }
+    const mx = x1 + (x2 - x1) * s.adjust;
+    return [[x1, y1], [mx, y1], [mx, y2], [x2, y2]];
+  }
+
+  // DOM으로 SVG를 만든다(구글 독스는 Trusted Types라 innerHTML을 쓰지 않는다).
+  function buildPreviewSvg(payload, doc) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const model = previewModel(payload);
+    const mk = (tag, attrs) => {
+      const node = doc.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) node.setAttribute(k, String(v));
+      return node;
+    };
+    const r = n => Math.round(n * 100) / 100;
+    const svg = mk('svg', { viewBox: model.box.map(r).join(' '), preserveAspectRatio: 'xMidYMid meet' });
+    const defs = mk('defs');
+    svg.appendChild(defs);
+    const markers = new Map();
+    function marker(code, color, atStart) {
+      const key = code + color + (atStart ? 's' : 'e');
+      if (markers.has(key)) return 'url(#' + markers.get(key) + ')';
+      const id = 'trdm' + markers.size + Math.random().toString(36).slice(2, 7);
+      const m = mk('marker', { id, viewBox: '0 0 10 10', refX: code === 3 ? 5 : 9, refY: 5, markerWidth: code === 5 ? 4 : 6, markerHeight: code === 5 ? 4 : 6, orient: atStart ? 'auto-start-reverse' : 'auto' });
+      m.appendChild(code === 3
+        ? mk('circle', { cx: 5, cy: 5, r: 4, fill: color })
+        : mk('path', { d: 'M0,0 L10,5 L0,10 z', fill: color }));
+      defs.appendChild(m);
+      markers.set(key, id);
+      return 'url(#' + id + ')';
+    }
+    for (const s of model.shapes) {
+      if (s.kind === 'image') {
+        if (s.href) svg.appendChild(mk('image', { href: s.href, x: r(s.x), y: r(s.y), width: r(s.w), height: r(s.h), preserveAspectRatio: 'none' }));
+        else svg.appendChild(mk('rect', { x: r(s.x), y: r(s.y), width: r(s.w), height: r(s.h), fill: '#f1f3f4', stroke: '#dadce0' }));
+        continue;
+      }
+      if (s.kind === 'line') {
+        const pts = linePath(s).map(([x, y]) => r(x) + ',' + r(y)).join(' ');
+        svg.appendChild(mk('polyline', {
+          points: pts, fill: 'none', stroke: s.line, 'stroke-width': r(s.weight),
+          'stroke-dasharray': s.dash ? r(s.weight * 3) + ' ' + r(s.weight * 2) : null,
+          'marker-start': s.startHead ? marker(s.startHead, s.line, true) : null,
+          'marker-end': s.endHead ? marker(s.endHead, s.line, false) : null
+        }));
+        continue;
+      }
+      const common = { fill: s.fill || 'none', stroke: s.line || 'none', 'stroke-width': s.line ? r(s.weight || 1) : null };
+      svg.appendChild(s.kind === 'ellipse'
+        ? mk('ellipse', Object.assign({ cx: r(s.x + s.w / 2), cy: r(s.y + s.h / 2), rx: r(s.w / 2), ry: r(s.h / 2) }, common))
+        : mk('rect', Object.assign({ x: r(s.x), y: r(s.y), width: r(s.w), height: r(s.h), rx: s.round ? r(Math.min(s.w, s.h) * 0.12) : 0 }, common)));
+      if (s.text) {
+        const anchor = s.align === 0 ? 'start' : s.align === 1 ? 'end' : 'middle';
+        const tx = anchor === 'start' ? s.x + 4 : anchor === 'end' ? s.x + s.w - 4 : s.x + s.w / 2;
+        const t = mk('text', {
+          x: r(tx), y: r(s.y + s.h / 2), 'font-size': s.size, fill: s.color,
+          'text-anchor': anchor, 'dominant-baseline': 'central',
+          'font-family': 'Apple SD Gothic Neo, Malgun Gothic, Noto Sans KR, sans-serif'
+        });
+        t.textContent = s.text;
+        svg.appendChild(t);
+      }
+    }
+    return svg;
+  }
+
   globalThis.ToytypeDrawingClip = {
     buildDrawingPayload,
+    buildPreviewSvg,
+    previewModel,
     writeDrawingClipboard,
     readCopyEventData,
     summarizeDocsCopy,
@@ -788,6 +1090,7 @@
     extractEditorImageUrls,
     isRedrawInstruction,
     NODE_FILLS,
+    BUBBLE_TYPES,
     _test: {
       layoutDiagram,
       defaultImageWidthPt,

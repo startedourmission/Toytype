@@ -6,6 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
 import { Garu } from '../third_party/garu-ko/dist/node.js';
 import { createLocalTermConsistencyEngine } from '../term-consistency.mjs';
@@ -27,7 +28,13 @@ let activePort = DEFAULT_PORT;
 let builtinRulesReferenceCache = null;
 let crc32TableCache = null;
 let garuAnalyzerPromise = null;
-let codexProviderQueue = Promise.resolve();
+// Codex는 동시에 여러 개를 돌릴 수 있되, 한꺼번에 너무 많이 띄우지 않게 상한을 둔다.
+// (확장 쪽 작업 큐도 동시 실행 수를 제한한다. 이 값은 그보다 넉넉한 안전장치)
+const CODEX_MAX_PARALLEL = 4;
+let codexRunning = 0;
+const codexWaiters = [];
+// 요청마다 띄운 하위 프로세스를 모아 두었다가, 확장이 요청을 취소(연결 끊김)하면 함께 끝낸다.
+const requestContext = new AsyncLocalStorage();
 const downloadTokens = new Map();
 
 const PROVIDERS = ['codex', 'claude', 'grok'];
@@ -358,6 +365,12 @@ function runCommand(commandSpec, args, options) {
       env: Object.assign({}, process.env, { NO_COLOR: '1' }),
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    const ctx = requestContext.getStore();
+    if (ctx) {
+      if (ctx.aborted) child.kill('SIGTERM');
+      ctx.children.add(child);
+      child.on('close', () => ctx.children.delete(child));
+    }
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -406,10 +419,18 @@ async function runProvider(provider, prompt, settings, options = {}) {
   return enqueueCodexRun(() => runProviderWithTransientRetries('codex', () => runCodex(prompt, settings, options), options));
 }
 
-function enqueueCodexRun(task) {
-  const run = codexProviderQueue.then(task, task);
-  codexProviderQueue = run.catch(() => {});
-  return run;
+async function enqueueCodexRun(task) {
+  if (codexRunning >= CODEX_MAX_PARALLEL) {
+    await new Promise(resolve => codexWaiters.push(resolve));
+  }
+  codexRunning++;
+  try {
+    return await task();
+  } finally {
+    codexRunning--;
+    const next = codexWaiters.shift();
+    if (next) next();
+  }
 }
 
 async function runProviderWithTransientRetries(provider, runOnce, options = {}) {
@@ -475,7 +496,10 @@ async function runClaude(prompt, settings, options = {}) {
     '-p',
     '--output-format', 'text',
     '--permission-mode', 'dontAsk',
-    '--no-session-persistence'
+    '--no-session-persistence',
+    // 사용자 계정에 붙은 MCP 커넥터를 불러오지 않는다. 안 붙이면 수백 개 도구 정의가 매번 컨텍스트에 실려
+    // 요청 한 번에 50만 토큰이 넘게 들고(약 90배 비용) 느려지며, 모델이 웹 검색을 건너뛰기 쉽다.
+    '--strict-mcp-config'
   ];
   if (options.allowWebTools === true) {
     // --tools는 어떤 도구를 "띄울지"만 정한다. 실제 사용 허가는 --allowedTools가 따로 준다.
@@ -1992,8 +2016,7 @@ function sendDownload(res, url) {
     'content-length': String(stat.size),
     'content-disposition': contentDispositionAttachment(entry.fileName),
     'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
-    'access-control-allow-private-network': 'true'
+    ...corsHeaders(res)
   });
   const stream = fs.createReadStream(entry.outputPath);
   let cleaned = false;
@@ -2744,9 +2767,19 @@ const DIAGRAM_COLOR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'sample_box_colors
 const DIAGRAM_TEXTBOX_PROPS = [44, 0, 165, 0, 166, 1];
 const DIAGRAM_MAX_ITEMS = 60;
 const DIAGRAM_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-const DIAGRAM_SITES = ['top', 'bottom', 'left', 'right'];
-const DIAGRAM_HEADS = ['none', 'dot', 'arrow'];
+const DIAGRAM_SITES = ['top', 'bottom', 'left', 'right', 'topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
+const DIAGRAM_HEADS = ['none', 'dot', 'small', 'arrow'];
+// 원 노드 도해(트리·그래프)를 다시 그릴 때 쓰는 하우스 스타일. 7장 트리 원고의 구글 그리기 55개에서 잰 값이다
+// (원 지름 0.1389배 = 32.8pt, 테두리·선 268 = 0.53pt, 글자 9.846pt, 흰 채우기, 작은 화살촉 5).
+const DIAGRAM_HOUSE_NODE = { diameter: 32.8, weight: 0.53, size: 10, fill: '#FFFFFF', line: '#000000' };
+const DIAGRAM_ELLIPSE = 8;
+const DIAGRAM_MAX_WIDTH_PT = 468; // 본문 폭
 const DIAGRAM_KINDS = ['straight', 'elbow', 'elbow2'];
+const DIAGRAM_DEFAULT_INSTRUCTION = {
+  redraw: '이미지 속 도해를 그대로 다시 그린다.',
+  annotate: '앞뒤 본문이 설명하는 화면 요소를 강조 상자로 표시한다. 본문에서 짧은 설명을 뽑을 수 있으면 설명 상자로 단다.',
+  edit: '내용은 그대로 두고 도형 정렬·간격·크기를 깔끔하게 맞춘다.'
+};
 // AI 비전 모델은 긴 변 1568px 또는 약 115만 화소를 넘는 이미지를 줄여서 본다. 줄어든 이미지에서 잡은 좌표는
 // 원본과 어긋나므로, 한도 안으로 줄인 사본을 보여 주고 그 좌표를 원본 픽셀로 되돌린다.
 const DIAGRAM_VIEW_MAX_EDGE = 1500;
@@ -2759,12 +2792,18 @@ async function generateDiagram(body) {
   const provider = normalizeProvider(body.provider, settings.provider);
   const document = body.document && typeof body.document === 'object' ? body.document : {};
   if (!document.id) document.id = extractDocId(document.url);
-  const instruction = cleanDiagramInstruction(document.selectedText);
-  if (!instruction) throw new HttpError(400, 'document.selectedText is required');
   const image = decodeDiagramImage(body.image);
   // 이미지로 된 도해를 편집 가능한 도형으로 다시 그린다(스크린샷 강조 대신)
   const redraw = !!image && body.mode === 'redraw';
-  const drawing = !image && body.drawing && Array.isArray(body.drawing.items) && body.drawing.items.length
+  const hasDrawing = !image && body.drawing && Array.isArray(body.drawing.items) && body.drawing.items.length > 0;
+  // 메뉴에서 할 일을 고르므로 선택한 글은 추가 지시일 뿐이다. 없으면 모드별 기본 지시를 쓴다.
+  const instruction = cleanDiagramInstruction(document.selectedText)
+    || (redraw ? DIAGRAM_DEFAULT_INSTRUCTION.redraw
+      : image ? DIAGRAM_DEFAULT_INSTRUCTION.annotate
+        : hasDrawing ? DIAGRAM_DEFAULT_INSTRUCTION.edit
+          : '');
+  if (!instruction) throw new HttpError(400, 'document.selectedText is required');
+  const drawing = hasDrawing && body.drawing && Array.isArray(body.drawing.items) && body.drawing.items.length
     ? normalizeDiagramSpec(body.drawing, null)
     : null;
   // 그리기 수정: 그리기 전체를 렌더링한 PNG(참고용). 1px = ptPerPx pt
@@ -2885,43 +2924,155 @@ function ocrTextHeightIn(rect, ocr) {
   return hs.length ? hs[Math.floor(hs.length / 2)] : 0;
 }
 
+// 색이 거의 무채색인지(채도 낮음), 어두운지.
+function colorStats(hex) {
+  const ch = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(...ch);
+  const min = Math.min(...ch);
+  return { chroma: max - min, luma: 0.299 * ch[0] + 0.587 * ch[1] + 0.114 * ch[2] };
+}
+
+// 원 노드 채우기: 칠판·검은 바탕처럼 어두운 색이나 흰색은 흰색으로, 밝은 회색은 견본 회색으로,
+// 뚜렷한 색(강조 노랑 등)만 그대로 둔다.
+function houseNodeFill(sampled) {
+  const hex = snapDiagramColor(sampled);
+  if (!hex) return DIAGRAM_HOUSE_NODE.fill;
+  const { chroma, luma } = colorStats(hex);
+  if (luma < 0.45) return DIAGRAM_HOUSE_NODE.fill;
+  if (chroma < 0.12) return luma > 0.93 ? DIAGRAM_HOUSE_NODE.fill : '#D9D9D9';
+  return hex;
+}
+
+// 선 색: 무채색이면(칠판의 흰 분필 선 포함) 검정, 뚜렷한 색이면 그대로.
+function houseLineColor(value) {
+  const hex = snapDiagramColor(value);
+  if (!hex) return '#000000';
+  return colorStats(hex).chroma < 0.25 ? '#000000' : hex;
+}
+
+function normalizeOcrText(value) {
+  return String(value || '').replace(/[\s()]/g, '').toLowerCase();
+}
+
+// 원 노드 중심을 정한다. AI가 잰 상자보다 OCR이 잡은 글자 중심이 정확하므로, 노드 글자와 같은 OCR 글자가
+// AI 상자 근처에 하나뿐이면 그 중심을 쓴다. 그다음 거의 같은 높이의 노드를 한 줄로 맞춘다.
+function ellipseCenters(nodes, ocr, diameterPx) {
+  const words = [];
+  for (const line of (ocr && Array.isArray(ocr.lines) ? ocr.lines : [])) {
+    const parts = Array.isArray(line.words) && line.words.length ? line.words : [line];
+    for (const w of parts) if (Array.isArray(w.box) && w.box.length === 4) words.push(w);
+  }
+  const used = new Set();
+  const centers = nodes.map(node => {
+    const [x, y, w, h] = node.rect.map(Number);
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const key = normalizeOcrText(node.text);
+    if (key) {
+      const near = words.filter(word => {
+        if (used.has(word) || normalizeOcrText(word.text) !== key) return false;
+        const [bx, by, bw, bh] = word.box;
+        return Math.hypot(bx + bw / 2 - cx, by + bh / 2 - cy) < diameterPx * 0.75;
+      });
+      if (near.length === 1) {
+        used.add(near[0]);
+        const [bx, by, bw, bh] = near[0].box;
+        return [bx + bw / 2, by + bh / 2];
+      }
+    }
+    return [cx, cy];
+  });
+  const order = centers.map((c, i) => i).sort((a, b) => centers[a][1] - centers[b][1]);
+  let row = [];
+  const flush = () => {
+    const mean = row.reduce((sum, i) => sum + centers[i][1], 0) / row.length;
+    for (const i of row) centers[i][1] = mean;
+    row = [];
+  };
+  for (const i of order) {
+    if (row.length && centers[i][1] - centers[row[0]][1] > diameterPx * 0.35) flush();
+    row.push(i);
+  }
+  if (row.length) flush();
+  return centers;
+}
+
 // AI가 이미지 픽셀로 준 도형·선을 그리기 pt 스펙으로 바꾼다. 색은 픽셀에서 잰 값, 글자 크기는 OCR 높이를 우선한다.
+// 원 노드가 둘 이상이면(트리·그래프) 원을 같은 크기의 하우스 스타일로 맞추고 전체를 그 크기에 맞춰 줄인다.
 async function finishRedrawSpec(raw, ctx) {
   const json = raw && typeof raw === 'object' ? raw : {};
   const rawItems = Array.isArray(json.items) ? json.items.slice(0, DIAGRAM_MAX_ITEMS).filter(it => it && typeof it === 'object') : [];
   const isShape = it => (it.type === 'node' || it.type === 'text') && diagramRect(it.rect) && Number(it.rect[2]) > 0 && Number(it.rect[3]) > 0;
+  const isEllipse = it => it.type === 'node' && it.shape === 'ellipse' && isShape(it);
   const shapes = rawItems.filter(isShape);
   const colors = await sampleDiagramColors(ctx.view.path, shapes.map(it => it.rect.map(Number)), ctx.settings);
   const sampled = new Map(shapes.map((it, i) => [it, colors[i] || {}]));
-  const f = redrawPtPerPx(ctx.image.width) / ctx.view.scale; // 보낸 사본 1px → pt
-  const pt = v => Math.round(Number(v) * f * 100) / 100;
+
+  const ellipses = rawItems.filter(isEllipse);
+  const house = ellipses.length >= 2;
+  let f = redrawPtPerPx(ctx.image.width) / ctx.view.scale; // 보낸 사본 1px → pt (크기)
+  let fp = f; // 위치에 쓰는 배율. 원 도해가 본문 폭을 넘으면 원 크기는 두고 간격만 줄인다
+  const ellipseCenter = new Map();
+  if (house) {
+    const diameters = ellipses.map(it => Math.min(Number(it.rect[2]), Number(it.rect[3]))).sort((a, b) => a - b);
+    const diameterPx = diameters[Math.floor(diameters.length / 2)];
+    f = DIAGRAM_HOUSE_NODE.diameter / diameterPx;
+    const centers = ellipseCenters(ellipses, ctx.ocr, diameterPx);
+    ellipses.forEach((it, i) => ellipseCenter.set(it, centers[i]));
+    const xs = rawItems.filter(isShape).flatMap(it => [Number(it.rect[0]), Number(it.rect[0]) + Number(it.rect[2])]);
+    const spanPx = xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+    fp = spanPx * f > DIAGRAM_MAX_WIDTH_PT ? Math.max(f * 0.5, DIAGRAM_MAX_WIDTH_PT / spanPx) : f;
+  }
+  const r2 = v => Math.round(v * 100) / 100;
+  const pt = v => r2(Number(v) * fp);
+  const len = v => r2(Number(v) * f);
+  const ellipseIds = new Set(ellipses.map(it => String(it.id)));
 
   const items = rawItems.map(it => {
     if (isShape(it)) {
       const c = sampled.get(it);
       const rect = it.rect.map(Number);
       const out = { id: it.id, type: 'node', text: it.text };
+      if (ellipseCenter.has(it)) {
+        const [cx, cy] = ellipseCenter.get(it);
+        const d = DIAGRAM_HOUSE_NODE.diameter;
+        out.rect = [pt(cx) - d / 2, pt(cy) - d / 2, d, d].map(r2);
+        out.shapeType = DIAGRAM_ELLIPSE;
+        out.fill = houseNodeFill(c.fill === null ? null : c.fill || it.fill);
+        out.line = DIAGRAM_HOUSE_NODE.line;
+        out.weight = DIAGRAM_HOUSE_NODE.weight;
+        out.size = DIAGRAM_HOUSE_NODE.size;
+        return out;
+      }
       const textPx = ocrTextHeightIn(rect, ctx.ocr) || Number(it.textHeight) || 0;
       if (textPx > 0) out.size = Math.round(textPx * f * 0.95);
+      if (house && out.size) out.size = Math.min(12, Math.max(8, out.size));
       const textColor = snapDiagramColor(c.text) || snapDiagramColor(it.color);
-      if (textColor && textColor !== '#000000') out.color = textColor;
+      if (textColor && textColor !== '#000000' && !(house && colorStats(textColor).chroma < 0.25)) out.color = textColor;
       if (it.type === 'text') {
         // 글상자는 글자가 줄바꿈되지 않게 양옆을 조금 넓힌다
         out.shapeType = 108;
-        out.rect = [pt(rect[0]) - 6, pt(rect[1]) - 3, pt(rect[2]) + 12, pt(rect[3]) + 6].map(v => Math.round(v * 100) / 100);
+        // 위치는 글상자 가운데를 기준으로 옮긴다(간격만 줄일 때 글자 폭은 그대로)
+        const w = len(rect[2]) + 12;
+        const h = len(rect[3]) + 6;
+        out.rect = [pt(rect[0] + rect[2] / 2) - w / 2, pt(rect[1] + rect[3] / 2) - h / 2, w, h].map(r2);
         out.align = it.align === 'left' ? 1 : it.align === 'right' ? 3 : 2;
         return out;
       }
-      out.rect = rect.map(pt);
-      out.shapeType = it.round === false ? 6 : 7;
+      out.rect = [pt(rect[0] + rect[2] / 2) - len(rect[2]) / 2, pt(rect[1] + rect[3] / 2) - len(rect[3]) / 2, len(rect[2]), len(rect[3])].map(r2);
+      out.shapeType = it.shape === 'ellipse' ? DIAGRAM_ELLIPSE : it.round === false ? 6 : 7;
       const fill = c.fill === null ? null : snapDiagramColor(c.fill);
       if (fill !== undefined) out.fill = fill;
       else if (it.fill === null || diagramColor(it.fill)) out.fill = it.fill === null ? null : diagramColor(it.fill);
       else out.fill = null;
+      if (house && out.fill) out.fill = houseNodeFill(out.fill);
       // 테두리가 안 보이면 채우기와 같은 색 선으로 둔다(없는 선을 검정으로 만들지 않게)
       out.line = snapDiagramColor(c.line) || (c.line === null && out.fill ? out.fill : snapDiagramColor(it.line) || '#000000');
+      if (house) out.line = houseLineColor(out.line);
       const weightPx = Number(it.weight);
-      out.weight = Math.min(6, Math.max(0.5, Math.round((weightPx > 0 ? weightPx * f : 1) * 4) / 4));
+      out.weight = house
+        ? DIAGRAM_HOUSE_NODE.weight
+        : Math.min(6, Math.max(0.5, Math.round((weightPx > 0 ? weightPx * f : 1) * 4) / 4));
       return out;
     }
     if (it.type !== 'arrow') return null;
@@ -2934,6 +3085,16 @@ async function finishRedrawSpec(raw, ctx) {
     out.line = snapDiagramColor(it.line) || '#000000';
     out.dash = it.dashed === true || (Number.isInteger(it.dash) && it.dash > 0) ? 2 : 0;
     delete out.adjust;
+    if (house) {
+      out.line = houseLineColor(it.line);
+      out.weight = DIAGRAM_HOUSE_NODE.weight;
+      if (out.head === 'arrow') out.head = 'small';
+      if (out.startHead === 'arrow') out.startHead = 'small';
+      // 원에 붙는 끝의 연결점은 확장이 원 위치로 정한다(견본처럼 부모 아래 대각선 → 자식 위)
+      if (ellipseIds.has(String(it.from))) delete out.fromSite;
+      if (ellipseIds.has(String(it.to))) delete out.toSite;
+      if (ellipseIds.has(String(it.from)) && ellipseIds.has(String(it.to))) out.kind = 'straight';
+    }
     return out;
   }).filter(Boolean);
 
@@ -3097,13 +3258,18 @@ function buildDiagramPrompt(input) {
       'Coordinates are image pixels, origin at the top-left. Measure each shape\'s visible edge, not its text.',
       '',
       'Item types:',
-      '- {"id","type":"node","text","rect":[x,y,w,h],"round":true|false,"weight":<border px>} a box with a visible border or fill. rect is the outer edge of the box. "round": false for square corners. Text is everything written inside the box joined into one line.',
+      '- {"id","type":"node","text","rect":[x,y,w,h],"shape":"box"|"ellipse","round":true|false,"weight":<border px>} a shape with a visible border or fill. rect is the outer edge of the shape. "shape": "ellipse" for circles and ovals (tree and graph nodes are usually circles), otherwise "box". "round": false for square-cornered boxes. Text is everything written inside the shape joined into one line.',
       '- {"id","type":"text","text","rect":[x,y,w,h],"align":"left|center|right"} text with no box around it (captions, edge labels, titles inside the image). rect hugs the text.',
       '- {"type":"arrow","from":"<id>","to":"<id>","fromSite","toSite","kind","head","startHead","weight":<line px>,"line":"#RRGGBB","dashed":true|false} a line or arrow.',
       '  - "from"/"to" are the shapes the line touches. If an end does not touch a shape, omit that id and give "points": [[x1,y1],[x2,y2]] in image pixels for both ends.',
       '  - "fromSite"/"toSite": top|bottom|left|right, the side of the shape where the line starts/ends.',
       '  - "kind": "straight" for a straight line, "elbow" for one bend (L shape), "elbow2" for two bends (Z or U shape).',
       '  - "head": arrowhead at the "to" end: "arrow" or "none". "startHead": arrowhead at the "from" end, usually "none".',
+      '',
+      'Trees and graphs (nodes drawn as circles):',
+      '- Give every circle "shape": "ellipse" and its exact label as "text". Measure each circle\'s center and size carefully; a style pass makes all circles the same size afterward.',
+      '- Give one arrow item per edge, with "from" = parent (upper) node and "to" = child (lower) node, "kind": "straight". Use "head": "arrow" only if the edge visibly ends in an arrowhead.',
+      '- Edge labels (e.g. "<", "> (큼)") are text items. A curved annotation arrow that does not connect two circles is an arrow with "points".',
       '',
       'Rules:',
       '- Include every box, every piece of text, and every line in the image. Do not merge or drop shapes, and do not invent ones that are not there.',
@@ -3199,6 +3365,8 @@ function buildDiagramPrompt(input) {
       '  - callout: {"type":"node","text":"...","shapeType":7,"fill":"#FFFFFF","line":"#FF0000","weight":3,"size":12}, placed OUTSIDE the screenshots in the right margin (x >= right edge of the images + 18), vertically aligned with its target, not overlapping other callouts',
       '  - callout connector: {"type":"arrow","from":"<callout id>","to":"<highlight id>","fromSite":"left","toSite":"right","line":"#FF0000","weight":1.5,"dash":2,"head":"dot"}',
       '  - movement or sequence arrow: {"type":"arrow","from":"<id>","to":"<id>","kind":"elbow2","line":"#FF0000","weight":1.5,"dash":2,"head":"arrow"}',
+      '- Shape vocabulary for "shapeType": 6 rectangle, 7 rounded rectangle, 8 ellipse/circle, 106 rectangular speech bubble, 107 rounded speech bubble, 105 oval speech bubble, 162 cloud (thought) bubble. Pick the shape the instruction names.',
+      '- A speech bubble (말풍선) is a single node with shapeType 105, 106, 107, or 162 and the words inside it — never a text box plus a line, and never a plain rectangle. Default to 107 unless the instruction says otherwise. Give it "tailTo": "<id of the item it speaks about>" so its tail points there (or "tail": [x, y] in pt for a point that is not an item). Place it beside its target, not on top of it, with room for the tail (about 15-30 pt gap). Use a white fill and a black 0.75 pt outline unless the drawing\'s style says otherwise.',
       '- Do not invent facts in node text.',
       '',
       'OCR text positions in the rendered drawing (pt boxes [x,y,w,h]):',
@@ -3218,18 +3386,24 @@ function buildDiagramPrompt(input) {
 
   return common.concat([
     '',
-    'Task: box-and-arrow diagram (mode "diagram").',
+    'Task: diagram from manuscript text (mode "diagram").',
     'The selected manuscript text is the content to visualize. If it also contains an instruction about the diagram, follow it.',
     'Positions are computed automatically from the nodes and arrows; do not give coordinates.',
     '',
+    'First decide what kind of picture a skilled technical-book illustrator would draw for this content, then pick each node shape by meaning:',
+    '- "ellipse" (circle): nodes of trees, binary trees, BSTs, heaps, tries, graphs, state machines, and any node-link structure whose nodes hold a short key or value. Every node of such a structure is an ellipse; never draw tree nodes as boxes. Keep circle text short (a key such as 50, A, root); put longer explanations in the surrounding prose, not inside circles.',
+    '- "box": categories of a classification hierarchy, and storage cells (array slots, memory, records, table rows).',
+    '- "round": steps of a process or pipeline, and abstract concepts linked by flow.',
+    '',
     'Item types:',
-    '- {"id","type":"node","text","fill"} a box. Text max 24 chars. "fill" is optional, one of ' + JSON.stringify(['#CFE2F3', '#D9EAD3', '#FFF2CC', '#FCE5CD', '#F4CCCC', '#D9D2E9', '#EFEFEF', '#FFFFFF']) + '. Use fills to group related nodes, not decoration.',
-    '- {"type":"arrow","from":"<node id>","to":"<node id>","head":"arrow|none"} connection. Use "none" for plain hierarchy/classification lines, "arrow" for flow, sequence, or causality.',
+    '- {"id","type":"node","text","shape":"ellipse|box|round","fill"} Text max 24 chars. "fill" is optional. For boxes and round boxes, one of ' + JSON.stringify(['#CFE2F3', '#D9EAD3', '#FFF2CC', '#FCE5CD', '#F4CCCC', '#D9D2E9', '#EFEFEF', '#FFFFFF']) + ', used to group related nodes, not for decoration. Circles are white by default; use "#FFFF00" only for the node the text is currently pointing at (the one being inserted, deleted, or searched) and "#D9D9D9" for nodes already visited, and only when the text says so.',
+    '- {"type":"arrow","from":"<node id>","to":"<node id>","head":"arrow|none","side":"left|right"} connection. Use "none" for plain classification lines, "arrow" for flow, sequence, causality, and parent-to-child tree edges.',
     '',
     'Rules:',
-    '- "direction": "TB" for hierarchies and classifications, "LR" for processes and pipelines.',
+    '- "direction": "TB" for trees, hierarchies, and classifications, "LR" for processes and pipelines.',
+    '- Trees: one arrow per parent-child edge, from parent to child. List a parent\'s children left to right in arrow order. In a binary tree (BST, heap, AVL, red-black), give every child edge "side": "left" or "right" so a lone child leans to its correct side.',
     '- Use at most 30 nodes. Merge minor details; the diagram must be readable on a book page.',
-    '- Node text is a noun phrase taken from the manuscript wording. Do not invent facts.',
+    '- Node text is taken from the manuscript wording. Do not invent facts or keys that the text does not give.',
     '',
     'Document title: ' + JSON.stringify(input.title),
     '',
@@ -3250,15 +3424,20 @@ function buildDiagramPrompt(input) {
     '',
     'Required JSON shape:',
     JSON.stringify({
-      title: '자료구조 분류',
+      title: '이진 탐색 트리',
       mode: 'diagram',
       direction: 'TB',
       items: [
-        { id: 'root', type: 'node', text: '자료구조' },
-        { id: 'linear', type: 'node', text: '선형 구조', fill: '#D9EAD3' },
-        { type: 'arrow', from: 'root', to: 'linear', head: 'none' }
+        { id: 'n50', type: 'node', shape: 'ellipse', text: '50' },
+        { id: 'n30', type: 'node', shape: 'ellipse', text: '30' },
+        { id: 'n70', type: 'node', shape: 'ellipse', text: '70' },
+        { id: 'n60', type: 'node', shape: 'ellipse', text: '60' },
+        { type: 'arrow', from: 'n50', to: 'n30', head: 'arrow', side: 'left' },
+        { type: 'arrow', from: 'n50', to: 'n70', head: 'arrow', side: 'right' },
+        { type: 'arrow', from: 'n70', to: 'n60', head: 'arrow', side: 'left' }
       ]
-    }, null, 2)
+    }, null, 2),
+    '(A classification would instead use "shape": "box" nodes with "head": "none" lines.)'
   ]).join('\n');
 }
 
@@ -3329,7 +3508,16 @@ function normalizeDiagramSpec(raw, image) {
       if (it.fill === null) item.fill = null;
       else if (diagramColor(it.fill)) item.fill = diagramColor(it.fill);
       if (rect && rect[2] && rect[3]) item.rect = rect;
+      // 글 → 도해: 노드 모양은 의미로 고른다(트리·그래프 노드는 원, 분류·자료 칸은 네모, 처리 단계는 둥근 네모)
+      if (!rect && it.shape === 'ellipse') item.shape = 'ellipse';
+      else if (!rect && it.shape === 'box') item.round = false;
+      else if (!rect && it.shape === 'round') item.round = true;
       if (Number.isInteger(it.shapeType) && it.shapeType > 0 && it.shapeType < 1000) item.shapeType = it.shapeType;
+      // 말풍선 꼬리: 가리킬 도형 id(tailTo) 또는 꼬리 끝 좌표(tail)
+      if (it.tailTo != null && diagramText(it.tailTo, 40)) item.tailTo = diagramText(it.tailTo, 40);
+      if (Array.isArray(it.tail) && it.tail.length >= 2 && Number.isFinite(Number(it.tail[0])) && Number.isFinite(Number(it.tail[1]))) {
+        item.tail = [Number(it.tail[0]), Number(it.tail[1])];
+      }
       copyDiagramLineStyle(it, item);
       if (Number.isFinite(Number(it.size))) item.size = clampNumber(it.size, 12, 7, 36);
       if (diagramColor(it.color)) item.color = diagramColor(it.color);
@@ -3371,6 +3559,7 @@ function normalizeDiagramSpec(raw, image) {
     if (DIAGRAM_KINDS.includes(it.kind)) arrow.kind = it.kind;
     if (DIAGRAM_SITES.includes(it.fromSite)) arrow.fromSite = it.fromSite;
     if (DIAGRAM_SITES.includes(it.toSite)) arrow.toSite = it.toSite;
+    if (it.side === 'left' || it.side === 'right') arrow.side = it.side;
     items.push(arrow);
   }
 
@@ -3455,15 +3644,24 @@ function readRequestBody(req) {
   });
 }
 
+function corsHeaders(res) {
+  const origin = res && res.toytypeAllowOrigin;
+  if (!origin) return {};
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'access-control-allow-private-network': 'true',
+    vary: 'Origin'
+  };
+}
+
 function sendJson(res, status, payload) {
   const data = JSON.stringify(payload);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type',
-    'access-control-allow-private-network': 'true',
-    'content-length': Buffer.byteLength(data)
+    'content-length': Buffer.byteLength(data),
+    ...corsHeaders(res)
   });
   res.end(data);
 }
@@ -3480,8 +3678,19 @@ function sendError(res, error) {
 async function sendLoggedAiJson(res, action, body, handler) {
   const startedAt = Date.now();
   bridgeLog(`${action} start`, aiRequestLogFields(body));
+  const ctx = { aborted: false, children: new Set() };
+  // 응답을 보내기 전에 연결이 끊기면(확장에서 작업 취소) 이 요청이 띄운 CLI를 끝낸다
+  res.on('close', () => {
+    if (res.writableFinished) return;
+    ctx.aborted = true;
+    if (ctx.children.size) bridgeLog(`${action} canceled`, { killed: ctx.children.size });
+    for (const child of ctx.children) {
+      child.kill('SIGTERM');
+      setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 1500);
+    }
+  });
   try {
-    const payload = await handler(body);
+    const payload = await requestContext.run(ctx, () => handler(body));
     bridgeLog(`${action} done`, aiResultLogFields(payload, Date.now() - startedAt));
     sendJson(res, 200, payload);
   } catch (error) {
@@ -3490,7 +3699,28 @@ async function sendLoggedAiJson(res, action, body, handler) {
   }
 }
 
+// 요청 출처 검사. 브리지는 문서 텍스트를 받아 로컬 AI CLI를 실행하므로 아무 웹페이지나 부르면 안 된다.
+//  - Origin이 확장(chrome-extension:// 등)이면 허용하고 그 출처만 CORS로 돌려준다.
+//  - Origin이 없으면(curl, 브리지 제어 스크립트 같은 로컬 도구) 허용한다. 브라우저는 웹페이지의
+//    교차 출처 POST·fetch에 항상 Origin을 붙이므로 웹페이지가 이 경로로 들어올 수는 없다.
+//  - 그 밖의 Origin(http/https 웹페이지, null)은 거절한다.
+//  - Host가 127.0.0.1/localhost가 아니면 거절한다(DNS 리바인딩 차단).
+const EXTENSION_ORIGIN_RE = /^(chrome-extension|safari-web-extension|moz-extension):\/\/[a-z0-9-]+$/i;
+
+function checkRequestOrigin(req) {
+  const host = String(req.headers.host || '').toLowerCase();
+  if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) {
+    throw new HttpError(403, 'host not allowed');
+  }
+  const origin = req.headers.origin;
+  if (origin === undefined) return null;
+  if (EXTENSION_ORIGIN_RE.test(String(origin))) return String(origin);
+  throw new HttpError(403, 'origin not allowed');
+}
+
 async function route(req, res) {
+  res.toytypeAllowOrigin = null;
+  res.toytypeAllowOrigin = checkRequestOrigin(req);
   if (req.method === 'OPTIONS') {
     sendJson(res, 200, { ok: true });
     return;
@@ -3600,12 +3830,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === BRIDGE_FILE) {
 
 export {
   extractJsonObject,
+  generateDiagram,
   extractJsonObjects,
   buildLengthAdjustmentPrompt,
   parseLengthAdjustmentReplacement,
   validateToytypeJson,
   extractDocId,
   mergeSettings,
+  checkRequestOrigin,
   compactToytypeJson,
   buildProofreadPrompt,
   buildLocalTermConsistencyReport,

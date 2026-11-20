@@ -36,7 +36,7 @@
   const AI_DIAGRAM_CONTEXT = 800;
   const DIAGRAM_STORE_KEY = 'toytypeDiagrams';
   const DIAGRAM_MAX_PER_DOC = 12;
-  const DIAGRAM_KIND_LABEL = { diagram: '도해', annotate: '스크린샷 강조', edit: '그리기 수정', redraw: '도해 다시 그리기' };
+  const DIAGRAM_KIND_LABEL = { diagram: '글 → 도해', annotate: '스크린샷 강조', edit: '그리기 수정', redraw: '이미지 → 그리기 도해' };
   const AI_TERMS_TIMEOUT = 180000;
   const SENTENCE_SUGGESTION_CATEGORY_ID = 'ai-sentence-suggestions';
   const SENTENCE_SUGGESTION_CATEGORY_LABEL = 'AI 문장 제안';
@@ -55,14 +55,14 @@
     '.trd-bubble{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
     '.trd-bubble.trd-alert{background:#d93025}.trd-bubble.trd-idle{background:#5f6368}' +
     '.trd-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:10px;overflow:hidden}' +
-    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:17px;line-height:1;vertical-align:top}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}' +
-    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 74px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-item.trd-copy-only{padding-right:18px}.trd-item.trd-suggestion-item .trd-fix{font-weight:500}.trd-apply-btn,.trd-ignore-btn,.trd-suggestion-delete-btn{position:absolute;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-apply-btn,.trd-suggestion-delete-btn{right:10px}.trd-ignore-btn{right:40px;color:#5f6368}.trd-suggestion-delete-btn{color:#5f6368}.trd-apply-btn:disabled,.trd-ignore-btn:disabled,.trd-suggestion-delete-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
+    '.trd-head{display:flex;gap:6px;align-items:center;padding:10px 12px;border-bottom:1px solid #e0e0e0}.trd-btn{flex:none;font-size:12px;padding:4px 9px;cursor:pointer}.trd-icon-btn{width:28px;height:28px;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:17px;line-height:1;vertical-align:top}.trd-svg-icon{width:14px;height:14px;display:block;margin:auto}.trd-close-icon{width:15px;height:15px;display:block;margin:auto}.trd-select{flex:1;min-width:64px;height:28px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;padding:0 5px}.trd-view-toggle{flex:none;display:flex;height:28px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}.trd-view-btn{width:28px;height:26px;border:0;border-right:1px solid #dadce0;background:#fff;color:#5f6368;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-view-btn:last-child{border-right:0}.trd-view-btn.trd-active{background:#e8f0fe;color:#174ea6}.trd-view-icon{width:15px;height:15px;display:block}.trd-file{display:none}.trd-body{flex:1;min-height:0;overflow-y:auto}.trd-resize-top,.trd-resize-left,.trd-resize-corner{position:absolute;z-index:6;touch-action:none}.trd-resize-top{top:0;left:10px;right:0;height:6px;cursor:ns-resize}.trd-resize-left{top:10px;left:0;bottom:0;width:6px;cursor:ew-resize}.trd-resize-corner{top:0;left:0;width:12px;height:12px;cursor:nwse-resize}.trd-resizing{user-select:none}' +
+    '.trd-msg{padding:16px 12px;color:#5f6368}.trd-item{position:relative;padding:8px 74px 9px 18px;border-top:1px solid #f1f3f4;cursor:pointer}.trd-item.trd-selected{background:#e8f0fe;box-shadow:inset 3px 0 0 #1a73e8}.trd-item.trd-copy-only{padding-right:18px}.trd-item.trd-suggestion-item .trd-fix{font-weight:500}.trd-diagram-composer{padding:10px 12px;border-bottom:1px solid #e0e0e0;background:#f8f9fa}.trd-diagram-prompt{display:block;width:100%;min-height:58px;resize:vertical;border:1px solid #dadce0;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;line-height:1.45;color:#202124;background:#fff}.trd-diagram-prompt:focus{outline:none;border-color:#1a73e8;box-shadow:0 0 0 1px #1a73e8}.trd-diagram-actions{display:flex;justify-content:flex-end;margin-top:6px}.trd-diagram-generate{background:#1a73e8;border-color:#1a73e8;color:#fff;font-weight:600}.trd-diagram-generate:hover:not(:disabled){background:#1765cc}.trd-diagram-from-selection{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:8px}.trd-diagram-from-label{font-size:11px;color:#5f6368;margin-right:2px}.trd-diagram-mode-btn{font-size:11px;padding:2px 7px}.trd-diagram-preview{margin:6px -56px 0 0;padding:6px;border:1px solid #e0e0e0;border-radius:6px;background:#fff}.trd-diagram-preview-svg{display:block;width:100%;height:auto;max-height:240px}.trd-apply-btn,.trd-ignore-btn,.trd-suggestion-delete-btn{position:absolute;top:10px;width:24px;height:24px;border:1px solid #dadce0;border-radius:6px;background:#fff;color:#1a73e8;display:flex;align-items:center;justify-content:center;cursor:pointer}.trd-apply-btn,.trd-suggestion-delete-btn{right:10px}.trd-ignore-btn{right:40px;color:#5f6368}.trd-suggestion-delete-btn{color:#5f6368}.trd-apply-btn:disabled,.trd-ignore-btn:disabled,.trd-suggestion-delete-btn:disabled{opacity:.5;cursor:default}.trd-apply-icon{width:14px;height:14px;display:block}' +
     '.trd-cursor-marker{height:0;border-top:2px solid #1a73e8;margin:2px 0;position:relative}.trd-cursor-marker:before{content:"";position:absolute;left:12px;top:-4px;width:6px;height:6px;border-radius:50%;background:#1a73e8}' +
     '.trd-hit{font-weight:700;color:#d93025}.trd-ctx,.trd-fix,.trd-explain{font-size:12px}.trd-line{color:#80868b;margin-left:6px}.trd-explain{margin-top:4px;color:#5f6368}' +
     '.trd-foot{padding:8px 12px;font-size:11px;color:#80868b;border-top:1px solid #e0e0e0}' +
-    '.trd-toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:#202124;color:#fff;padding:6px 12px;border-radius:16px;font-size:12px;opacity:0;transition:opacity .15s}.trd-toast.trd-show{opacity:1}' +
+    '.trd-statusbar-notice{color:#188038}.trd-statusbar{position:relative}.trd-statusbar-jobs{flex:none;margin-left:auto;height:18px;padding:0 7px;border:1px solid #dadce0;border-radius:9px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:16px;cursor:pointer}.trd-statusbar-count+.trd-statusbar-jobs{margin-left:0}.trd-statusbar-jobs.trd-active{color:#1a73e8;border-color:#8ab4f8}.trd-statusbar-jobs.trd-on{background:#e8f0fe;color:#174ea6}.trd-jobs{position:absolute;left:6px;right:6px;bottom:calc(100% + 4px);max-height:300px;display:flex;flex-direction:column;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);white-space:normal;z-index:7;color:#202124}.trd-jobs-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #f1f3f4}.trd-jobs-title{font-weight:700;font-size:12px;margin-right:auto}.trd-jobs-conc{display:flex;align-items:center;gap:4px;font-size:11px;color:#5f6368}.trd-jobs-btn{border:1px solid #dadce0;border-radius:5px;background:#fff;color:#3c4043;font:inherit;font-size:11px;line-height:16px;padding:0 6px;cursor:pointer}.trd-jobs-btn:disabled{opacity:.4;cursor:default}.trd-jobs-btn:hover:not(:disabled){background:#f1f3f4}.trd-jobs-list{overflow-y:auto}.trd-jobs-empty{padding:10px;font-size:11px;color:#80868b}.trd-job{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid #f5f6f7}.trd-job:first-child{border-top:0}.trd-job-main{flex:1;min-width:0}.trd-job-name{font-size:11px;font-weight:600}.trd-job-detail{font-size:11px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trd-job-actions{flex:none;display:flex;gap:3px}.trd-job-running .trd-job-name{color:#1a73e8}.trd-job-error .trd-job-name{color:#d93025}.trd-job-canceled .trd-job-name,.trd-job-done .trd-job-name{color:#5f6368}' +
     '.trd-notice{padding:6px 12px;font-size:12px;background:#fef7e0;color:#b06000}' +
-    '.trd-foot{display:flex;align-items:flex-end;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}.trd-addons-subitem{padding-left:22px;font-size:12px}' +
+    '.trd-foot{display:flex;align-items:center;gap:8px}.trd-foot-text{flex:1;min-width:0}.trd-statusbar{display:flex;align-items:center;gap:8px;padding:3px 12px;font-size:11px;line-height:16px;color:#5f6368;background:#f1f3f4;border-top:1px solid #e0e0e0;white-space:nowrap}.trd-statusbar-status{flex:1;min-width:0;display:flex;align-items:center;gap:5px}.trd-statusbar-text{overflow:hidden;text-overflow:ellipsis}.trd-statusbar-count{flex:none;margin-left:auto;color:#1a73e8}.trd-statusbar-running{color:#1a73e8}.trd-statusbar-error{color:#d93025}.trd-bridge-badge{flex:none;height:20px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid #dadce0;border-radius:10px;background:#fff;color:#5f6368;font:inherit;font-size:10px;line-height:18px;cursor:pointer}.trd-bridge-badge:hover{background:#f1f3f4}.trd-bridge-dot{width:6px;height:6px;border-radius:50%;background:#9aa0a6}.trd-bridge-ok .trd-bridge-dot{background:#188038}.trd-bridge-error .trd-bridge-dot{background:#d93025}.trd-bridge-checking .trd-bridge-dot{background:#fbbc04}.trd-addon-status{font-weight:600;color:#3c4043}.trd-addon-status-error{color:#5f6368}.trd-foot-actions{display:flex;align-items:center;gap:6px;flex:none;height:28px;line-height:0}.trd-settings-btn,.trd-facts-btn,.trd-terms-btn,.trd-suggestions-btn,.trd-diagrams-btn,.trd-addons-btn{width:28px;height:28px;color:#5f6368}.trd-facts-head-actions{display:flex;gap:6px}.trd-facts-btn.trd-on,.trd-terms-btn.trd-on,.trd-suggestions-btn.trd-on,.trd-diagrams-btn.trd-on{background:#e8f0fe;color:#174ea6}.trd-terms-view{padding:10px}.trd-terms-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.trd-terms-title{font-weight:700;color:#202124}.trd-terms-table-wrap{overflow-x:auto;border:1px solid #e0e0e0;border-radius:6px}.trd-terms-table{width:100%;min-width:560px;border-collapse:collapse;font-size:12px}.trd-terms-table th,.trd-terms-table td{padding:7px 8px;border-bottom:1px solid #f1f3f4;text-align:left;vertical-align:top}.trd-terms-table th{background:#f8f9fa;color:#5f6368}.trd-terms-filter{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}.trd-terms-chip{border:1px solid #dadce0;border-radius:12px;background:#fff;color:#3c4043;font:inherit;font-size:11px;line-height:18px;padding:0 8px;cursor:pointer}.trd-terms-chip.trd-on{background:#e8f0fe;border-color:#8ab4f8;color:#174ea6}.trd-terms-note{font-size:11px;color:#5f6368;margin-bottom:6px}.trd-terms-kind{display:inline-block;margin-bottom:3px;padding:0 5px;border-radius:4px;font-size:10px;line-height:16px;background:#f1f3f4;color:#5f6368}.trd-terms-kind-particle{background:#fce8e6;color:#c5221f}.trd-addons-wrap{position:relative;flex:none;width:28px;height:28px;display:flex;align-items:center}.trd-addons-menu{position:absolute;right:0;bottom:34px;min-width:160px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px;z-index:5}.trd-addons-empty{padding:8px 10px;font-size:12px;color:#80868b}.trd-addons-item{display:block;width:100%;text-align:left;border:0;background:#fff;color:#202124;font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer}.trd-addons-item:hover:not(:disabled){background:#f1f3f4}.trd-addons-item:disabled{opacity:.5;cursor:default}.trd-addons-subitem{padding-left:22px;font-size:12px}' +
     '.trd-context-menu{position:absolute;z-index:6;min-width:116px;padding:4px;border:1px solid #dadce0;border-radius:8px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.18)}.trd-context-item{display:block;width:100%;border:0;border-radius:6px;background:#fff;color:#202124;font:inherit;font-size:12px;text-align:left;padding:7px 10px;cursor:pointer}.trd-context-item:hover{background:#f1f3f4}';
 
   const startedAt = Date.now();
@@ -122,7 +122,12 @@
   let ignoredFindingKeys = new Set();
   let ignoredFindingDocId = null;
   let applyingFindingKey = null;
-  let addonBusyActions = new Set();
+  let addonBusyActions = new Map(); // 작업 id → 진행 중인 개수 (AI 작업은 같은 종류를 여러 개 동시에 돌릴 수 있다)
+  // AI 작업 큐. 동시 실행 수를 넘는 요청은 대기했다가 차례로 실행된다.
+  let aiJobs = [];
+  let aiJobSeq = 0;
+  let aiConcurrency = 3;
+  let jobQueueOpen = false;
   let addonStatus = null;
   let addonStatusTimer = null;
   let bridgeStatus = {
@@ -144,7 +149,7 @@
   let factReportDocId = null;
   let autoTermsStartedDocId = null;
   let autoTermsTimer = null;
-  // AI 도해 결과(문장 제안 탭에 표시). 문서별로 chrome.storage.local에 저장한다.
+  // AI 도해 결과(도해 탭에 표시). 문서별로 chrome.storage.local에 저장한다.
   let diagramResults = [];
   let diagramResultsDocId = null;
   // 독스 copy 이벤트에서 마지막으로 읽은 데이터. AI 도해가 선택 영역의 이미지·그리기를 얻을 때 쓴다.
@@ -159,12 +164,17 @@
   let addonsMenuOpen = false; // 푸터 추가기능 메뉴 펼침 상태 (메모리만)
   let charMenuOpen = false; // 푸터 특수문자 프리셋 팔레트 펼침 상태 (메모리만)
   let stylePresetMenuOpen = false; // 추가기능 안 단락 스타일 셋팅 하위 목록 펼침 상태
+  let diagramPromptDraft = ''; // 도해 탭 입력 창 내용 (메모리만, 다시 그려도 유지)
   let suggestionsViewOpen = false; // AI 문장 제안 전용 보기
+  let diagramsViewOpen = false; // AI 도해 결과 전용 보기
+  let termKindFilter = 'all'; // 용어 통일 표 종류 필터 (메모리만)
+  let panelSize = null; // 사용자가 핸들로 바꾼 패널 크기 {w,h} (chrome.storage.local에 저장)
   let findingContextMenu = null;
   let nativeControlInteractionUntil = 0;
   let deferredRenderOptions = null;
   let deferredRenderTimer = null;
   let toastTimer = null;
+  let statusNotice = null; // 상태 표시줄에 잠시 띄우는 안내 {text, error}
   let cooldownTimer = null;
   let settingsTimer = null;
   let pageBridgeReady = false;
@@ -197,6 +207,7 @@
   function syncExternalFeatureState() {
     if (externalFeaturesEnabled()) return;
     suggestionsViewOpen = false;
+    diagramsViewOpen = false;
     if (isSentenceSuggestionSource(activeRulesSource) && builtinRulesJson) {
       useRulesSource('builtin');
     }
@@ -798,6 +809,8 @@
     shadowView = el('div', 'trd-wrap');
     shadowRoot.appendChild(shadowView);
     (document.body || document.documentElement).appendChild(host);
+    loadPanelSize();
+    loadAiConcurrency();
     render();
   }
 
@@ -852,6 +865,16 @@
     return strokedSvg(['M8 7h8', 'M8 12h6', 'M5 4h14v14H8l-3 3z'], 'trd-svg-icon');
   }
 
+  // 도해 아이콘 — 상자 두 개를 잇는 화살표
+  function diagramsIcon() {
+    return strokedSvg(['M3 5h7v6H3z', 'M14 13h7v6h-7z', 'M6.5 11v5h7.5', 'M11 13.5l3 2.5-3 2.5'], 'trd-svg-icon');
+  }
+
+  // 사실 검증 아이콘 — 돋보기 안에 체크
+  function factsIcon() {
+    return strokedSvg(['M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z', 'M20 20l-4-4', 'M8 11l2 2 4-4'], 'trd-svg-icon');
+  }
+
   function termsIcon() {
     return strokedSvg(['M4 6h16', 'M4 12h16', 'M4 18h16', 'M8 6v12', 'M15 6v12'], 'trd-svg-icon');
   }
@@ -883,14 +906,13 @@
       { id: 'export-hwpx', label: 'HWPX 내보내기', run: handleExportHwpxAddon },
       { id: 'extract-images', label: '이미지 추출', run: handleExtractImagesAddon },
       { id: 'extract-toc', label: '목차 추출', run: handleExtractTocAddon },
-      { id: 'style-preset', label: '단락 스타일 셋팅', expandable: true }
+      { id: 'style-preset', label: '단락 스타일 셋팅', expandable: 'style' }
     ];
     if (!externalFeaturesEnabled()) return actions;
     return [
       { id: 'ai-proofread', label: 'AI 교정 생성', run: handleAiProofreadAddon },
       { id: 'ai-verify', label: 'AI 사실 검증', run: handleAiVerifyAddon },
       { id: 'ai-length', label: 'AI 문장 길이 조절', run: handleAiLengthAddon },
-      { id: 'ai-diagram', label: 'AI 도해', run: handleAiDiagramAddon },
       ...actions
     ];
   }
@@ -900,9 +922,13 @@
   }
 
   function setAddonBusy(actionId, busy) {
-    if (busy) addonBusyActions.add(actionId);
+    const n = (addonBusyActions.get(actionId) || 0) + (busy ? 1 : -1);
+    if (n > 0) addonBusyActions.set(actionId, n);
     else addonBusyActions.delete(actionId);
   }
+
+  // 동시에 여러 개 돌릴 수 있는 AI 작업. 이 작업들은 진행 중이어도 버튼을 막지 않는다.
+  const CONCURRENT_AI_ACTIONS = new Set(['ai-proofread', 'ai-verify', 'ai-length', 'ai-diagram']);
 
   function buildAddonsButton() {
     const wrap = el('div', 'trd-addons-wrap');
@@ -920,6 +946,7 @@
       addonsMenuOpen = !addonsMenuOpen;
       charMenuOpen = false;
       suggestionsViewOpen = false;
+      diagramsViewOpen = false;
       termsViewOpen = false;
       factsViewOpen = false;
       render();
@@ -954,6 +981,28 @@
     return btn;
   }
 
+  function buildDiagramsButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-diagrams-btn' + (diagramsViewOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.appendChild(diagramsIcon());
+    btn.setAttribute('aria-label', 'AI 도해');
+    btn.setAttribute('aria-pressed', diagramsViewOpen ? 'true' : 'false');
+    btn.title = 'AI 도해';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const next = !diagramsViewOpen;
+      addonsMenuOpen = false;
+      charMenuOpen = false;
+      termsViewOpen = false;
+      factsViewOpen = false;
+      suggestionsViewOpen = false;
+      diagramsViewOpen = next;
+      render();
+    });
+    return btn;
+  }
+
   function buildTermsButton() {
     const btn = el('button', 'trd-btn trd-icon-btn trd-terms-btn' + (termsViewOpen ? ' trd-on' : ''));
     btn.type = 'button';
@@ -968,6 +1017,7 @@
       addonsMenuOpen = false;
       charMenuOpen = false;
       suggestionsViewOpen = false;
+      diagramsViewOpen = false;
       factsViewOpen = false;
       const docId = getDocId();
       if (termsViewOpen && termReport && termReportDocId === docId) {
@@ -1062,10 +1112,32 @@
     return btn;
   }
 
+  function buildFactsButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-facts-btn' + (factsViewOpen ? ' trd-on' : ''));
+    btn.type = 'button';
+    btn.appendChild(factsIcon());
+    btn.setAttribute('aria-label', 'AI 사실 검증');
+    btn.setAttribute('aria-pressed', factsViewOpen ? 'true' : 'false');
+    btn.title = 'AI 사실 검증';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      addonsMenuOpen = false;
+      charMenuOpen = false;
+      suggestionsViewOpen = false;
+      diagramsViewOpen = false;
+      termsViewOpen = false;
+      factsViewOpen = !factsViewOpen;
+      render();
+    });
+    return btn;
+  }
+
   function buildFooterActions() {
     const wrap = el('div', 'trd-foot-actions');
-    wrap.append(buildSettingsButton(), buildTermsButton(), buildCharPresetButton());
-    if (externalFeaturesEnabled()) wrap.appendChild(buildSuggestionsButton());
+    // 자리가 모자라 AI 기능이 켜져 있으면 설정 대신 사실 검증 버튼을 둔다(설정은 툴바 팝업에서 연다)
+    wrap.append(externalFeaturesEnabled() ? buildFactsButton() : buildSettingsButton(), buildTermsButton(), buildCharPresetButton());
+    if (externalFeaturesEnabled()) wrap.append(buildSuggestionsButton(), buildDiagramsButton());
     wrap.appendChild(buildAddonsButton());
     return wrap;
   }
@@ -1107,10 +1179,12 @@
       item.type = 'button';
       item.setAttribute('role', 'menuitem');
       item.textContent = action.label;
-      item.disabled = applyingFindingKey !== null || isAddonBusy(action.id);
+      item.disabled = applyingFindingKey !== null || (!CONCURRENT_AI_ACTIONS.has(action.id) && isAddonBusy(action.id));
       if (action.expandable) {
-        item.textContent = action.label + (stylePresetMenuOpen ? ' ▾' : ' ▸');
-        item.setAttribute('aria-expanded', stylePresetMenuOpen ? 'true' : 'false');
+        const isStyle = action.expandable === 'style';
+        const open = stylePresetMenuOpen;
+        item.textContent = action.label + (open ? ' ▾' : ' ▸');
+        item.setAttribute('aria-expanded', open ? 'true' : 'false');
         item.addEventListener('click', ev => {
           ev.preventDefault();
           ev.stopPropagation();
@@ -1118,7 +1192,7 @@
           render();
         });
         menu.appendChild(item);
-        if (stylePresetMenuOpen) {
+        if (open) {
           for (const sub of buildStylePresetSubItems()) menu.appendChild(sub);
         }
         continue;
@@ -1156,6 +1230,66 @@
     });
   }
 
+  // 도해 탭의 선택 영역 기반 생성 버튼. 입력 창에 적은 내용은 추가 지시로 함께 보낸다.
+  const DIAGRAM_MENU_ITEMS = [
+    { mode: 'diagram', label: '선택한 글 → 도해', title: '문서에서 선택한 글의 내용을 도해로 그립니다' },
+    { mode: 'redraw', label: '이미지 → 그리기', title: '선택한 이미지 속 도해를 편집할 수 있는 구글 그리기 도형으로 다시 그립니다' },
+    { mode: 'annotate', label: '스크린샷 강조', title: '선택한 스크린샷에 강조 상자와 설명을 얹습니다' },
+    { mode: 'edit', label: '그리기 수정', title: '선택한 구글 그리기를 입력 창의 지시대로 고칩니다 (비워 두면 정렬·간격만 다듬음)' }
+  ];
+
+  function buildDiagramComposer() {
+    const busy = false; // 도해는 여러 개를 동시에 만들 수 있다(작업 큐가 순서를 관리)
+    const box = el('div', 'trd-diagram-composer');
+    const ta = el('textarea', 'trd-diagram-prompt');
+    ta.rows = 3;
+    ta.value = diagramPromptDraft;
+    ta.placeholder = '만들 도해를 설명하세요 (⌘Enter로 생성)\n예: HTTP 요청이 로드밸런서 → 웹 서버 → DB로 가는 흐름';
+    ta.disabled = busy;
+    // 독스 단축키가 입력을 가로채지 않게 키 이벤트를 패널 안에서 끝낸다
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      ta.addEventListener(type, ev => {
+        ev.stopPropagation();
+        if (type === 'keydown' && ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+          ev.preventDefault();
+          handleAiDiagramAddon('prompt', { prompt: ta.value });
+        }
+      });
+    }
+    ta.addEventListener('input', () => { diagramPromptDraft = ta.value; });
+    const primary = el('button', 'trd-btn trd-diagram-generate');
+    primary.type = 'button';
+    primary.textContent = busy ? '생성 중…' : '프롬프트로 생성';
+    primary.disabled = busy;
+    primary.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleAiDiagramAddon('prompt', { prompt: ta.value });
+    });
+    const row = el('div', 'trd-diagram-actions');
+    row.appendChild(primary);
+    const fromSel = el('div', 'trd-diagram-from-selection');
+    const label = el('span', 'trd-diagram-from-label');
+    label.textContent = '선택 영역으로:';
+    fromSel.appendChild(label);
+    for (const option of DIAGRAM_MENU_ITEMS) {
+      const btn = el('button', 'trd-btn trd-diagram-mode-btn');
+      btn.type = 'button';
+      btn.textContent = option.label;
+      btn.title = option.title + ' · 입력 창 내용은 추가 지시로 보냅니다';
+      btn.disabled = busy || applyingFindingKey !== null;
+      // 선택 영역 복사는 클릭의 사용자 활성화 안에서 동기로 일어나야 하므로 바로 부른다
+      btn.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleAiDiagramAddon(option.mode, { prompt: ta.value });
+      });
+      fromSel.appendChild(btn);
+    }
+    box.append(ta, row, fromSel);
+    return box;
+  }
+
   function strokedSvg(paths, className) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
@@ -1191,8 +1325,34 @@
     }
     const prevBody = opts.preserveBodyScroll ? shadowView.querySelector('.trd-body') : null;
     const prevBodyScrollTop = prevBody ? prevBody.scrollTop : 0;
+    // 표(용어·사실 검증)의 좌우 스크롤, 작업 큐 목록 스크롤은 다시 그려도 유지한다
+    const INNER_SCROLL = '.trd-terms-table-wrap, .trd-jobs-list';
+    const innerScroll = Array.from(shadowView.querySelectorAll(INNER_SCROLL)).map(node => [node.scrollLeft, node.scrollTop]);
+    // 도해 입력 창에 입력 중이면 다시 그린 뒤에도 포커스와 커서를 그대로 둔다
+    const active = shadowRoot && shadowRoot.activeElement;
+    const promptFocus = active && active.classList && active.classList.contains('trd-diagram-prompt')
+      ? { start: active.selectionStart, end: active.selectionEnd, scrollTop: active.scrollTop, bodyScroll: (shadowView.querySelector('.trd-body') || {}).scrollTop || 0 }
+      : null;
     shadowView.textContent = '';
     shadowView.appendChild(expanded ? buildPanel() : buildBubble());
+    if (innerScroll.length) {
+      const nodes = shadowView.querySelectorAll(INNER_SCROLL);
+      innerScroll.forEach(([left, top], i) => {
+        if (!nodes[i]) return;
+        nodes[i].scrollLeft = left;
+        nodes[i].scrollTop = top;
+      });
+    }
+    if (promptFocus) {
+      const ta = shadowView.querySelector('.trd-diagram-prompt');
+      if (ta && !ta.disabled) {
+        ta.focus({ preventScroll: true });
+        try { ta.setSelectionRange(promptFocus.start, promptFocus.end); } catch (_) { /* 무시 */ }
+        ta.scrollTop = promptFocus.scrollTop;
+        const nextBody = shadowView.querySelector('.trd-body');
+        if (nextBody && !opts.preserveBodyScroll) nextBody.scrollTop = promptFocus.bodyScroll;
+      }
+    }
     if (opts.preserveBodyScroll) {
       const nextBody = shadowView.querySelector('.trd-body');
       if (nextBody) nextBody.scrollTop = prevBodyScrollTop;
@@ -1263,6 +1423,7 @@
   function shouldFollowCursorInOrderList() {
     return expanded &&
       !suggestionsViewOpen &&
+      !diagramsViewOpen &&
       status === 'ready' &&
       lastReport &&
       lastReport.textSource === 'model' &&
@@ -1313,8 +1474,136 @@
     return b;
   }
 
+  // ---------- 패널 크기 조절 ----------
+  // 패널은 화면 우하단(right/bottom)에 붙어 있으므로 위쪽 경계를 끌면 높이, 왼쪽 경계를 끌면 너비가 바뀐다.
+  const PANEL_SIZE_KEY = 'docsPanelSize';
+  const PANEL_MIN_W = 280;
+  const PANEL_MIN_H = 220;
+  const PANEL_HOST_RIGHT = 24;
+  const PANEL_HOST_BOTTOM = 96;
+
+  function clampPanelSize(size) {
+    if (!size) return null;
+    const maxW = Math.max(PANEL_MIN_W, window.innerWidth - PANEL_HOST_RIGHT - 16);
+    const maxH = Math.max(PANEL_MIN_H, window.innerHeight - PANEL_HOST_BOTTOM - 16);
+    const w = Number(size.w);
+    const h = Number(size.h);
+    return {
+      w: Number.isFinite(w) ? Math.round(Math.min(maxW, Math.max(PANEL_MIN_W, w))) : null,
+      h: Number.isFinite(h) ? Math.round(Math.min(maxH, Math.max(PANEL_MIN_H, h))) : null
+    };
+  }
+
+  function applyPanelSize(panel) {
+    const size = clampPanelSize(panelSize);
+    if (!size) return;
+    if (size.w) panel.style.width = size.w + 'px';
+    if (size.h) {
+      panel.style.height = size.h + 'px';
+      panel.style.maxHeight = 'none';
+    }
+  }
+
+  function loadPanelSize() {
+    try {
+      chrome.storage.local.get(PANEL_SIZE_KEY, items => {
+        if (chrome.runtime.lastError) return;
+        const saved = items && items[PANEL_SIZE_KEY];
+        if (saved && typeof saved === 'object') {
+          panelSize = { w: saved.w, h: saved.h };
+          if (expanded) render({ preserveBodyScroll: true });
+        }
+      });
+    } catch (_) {
+      // 확장 컨텍스트가 무효화된 경우 — 기본 크기로 둔다
+    }
+  }
+
+  function savePanelSize() {
+    try {
+      if (panelSize) chrome.storage.local.set({ [PANEL_SIZE_KEY]: panelSize });
+      else chrome.storage.local.remove(PANEL_SIZE_KEY);
+    } catch (_) {
+      // 저장 실패는 무시 (이번 세션 메모리 값은 유지)
+    }
+  }
+
+  function buildResizeHandle(panel, className, axis) {
+    const handle = el('div', className);
+    handle.title = '끌어서 크기 조절 · 더블클릭하면 기본 크기';
+    handle.addEventListener('pointerdown', ev => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const rect = panel.getBoundingClientRect();
+      const start = { x: ev.clientX, y: ev.clientY, w: rect.width, h: rect.height };
+      let next = null;
+      handle.setPointerCapture(ev.pointerId);
+      panel.classList.add('trd-resizing');
+      const onMove = moveEv => {
+        const raw = {
+          w: axis.includes('x') ? start.w + (start.x - moveEv.clientX) : start.w,
+          h: axis.includes('y') ? start.h + (start.y - moveEv.clientY) : start.h
+        };
+        next = clampPanelSize(raw);
+        if (axis.includes('x')) panel.style.width = next.w + 'px';
+        if (axis.includes('y')) {
+          panel.style.height = next.h + 'px';
+          panel.style.maxHeight = 'none';
+        }
+      };
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        panel.classList.remove('trd-resizing');
+        if (!next) return;
+        // 끌지 않은 축은 저장하지 않아 기본(65vh 한도 자동 높이 등)을 유지한다
+        panelSize = {
+          w: axis.includes('x') ? next.w : (panelSize && panelSize.w) || null,
+          h: axis.includes('y') ? next.h : (panelSize && panelSize.h) || null
+        };
+        savePanelSize();
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+    handle.addEventListener('dblclick', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      panelSize = null;
+      savePanelSize();
+      render({ preserveBodyScroll: true });
+    });
+    return handle;
+  }
+
+  function appendResizeHandles(panel) {
+    panel.append(
+      buildResizeHandle(panel, 'trd-resize-top', 'y'),
+      buildResizeHandle(panel, 'trd-resize-left', 'x'),
+      buildResizeHandle(panel, 'trd-resize-corner', 'xy')
+    );
+  }
+
   function buildPanel() {
     const panel = el('div', 'trd-panel');
+    applyPanelSize(panel);
+    // 작업 큐 팝업은 푸터 위에 뜨므로, 팝업 밖을 누르면 닫고 누른 버튼은 그대로 동작하게 한다
+    panel.addEventListener('pointerdown', ev => {
+      if (!jobQueueOpen) return;
+      const path = ev.composedPath ? ev.composedPath() : [];
+      if (path.some(node => node && node.classList && (node.classList.contains('trd-jobs') || node.classList.contains('trd-statusbar-jobs')))) return;
+      jobQueueOpen = false;
+      const pop = panel.querySelector('.trd-jobs');
+      if (pop) pop.remove();
+      const jobsBtn = panel.querySelector('.trd-statusbar-jobs');
+      if (jobsBtn) {
+        jobsBtn.classList.remove('trd-on');
+        jobsBtn.setAttribute('aria-expanded', 'false');
+      }
+    }, true);
 
     // 헤더
     const head = el('div', 'trd-head');
@@ -1378,6 +1667,8 @@
       appendFactsView(body);
     } else if (suggestionsViewOpen) {
       appendSentenceSuggestionsView(body);
+    } else if (diagramsViewOpen) {
+      appendDiagramsView(body);
     } else if (status === 'error') {
       const msg = el('div', 'trd-msg trd-error');
       msg.textContent = errorCode === 'rules_load_failed'
@@ -1420,35 +1711,15 @@
     }
     panel.appendChild(body);
 
-    // 푸터 (우측에 설정/추가기능 버튼)
+    // 푸터: 브리지 상태 점과 버튼만 둔다. 선택 글자 수와 AI 작업 진행은 아래 상태 표시줄 한 줄에.
     const foot = el('div', 'trd-foot');
-    const footText = el('div', 'trd-foot-text');
-    const countText = selectionCountText();
-    if (countText) {
-      const countLine = el('div', 'trd-selection-count');
-      countLine.textContent = countText;
-      footText.appendChild(countLine);
-    }
-    const addonLines = addonStatusLines();
-    if (addonLines && addonLines.head) {
-      const statusLine = el('div', 'trd-addon-status' + (addonStatus && addonStatus.state ? ' trd-addon-status-' + addonStatus.state : ''));
-      const headLine = el('div', 'trd-addon-status-head');
-      headLine.textContent = addonLines.head;
-      statusLine.appendChild(headLine);
-      if (addonLines.detail) {
-        const detailLine = el('div', 'trd-addon-status-detail');
-        detailLine.textContent = addonLines.detail;
-        statusLine.appendChild(detailLine);
-      }
-      footText.appendChild(statusLine);
-    }
     if (externalFeaturesEnabled()) foot.appendChild(buildBridgeStatusBadge());
-    foot.append(footText, buildFooterActions());
+    foot.append(el('div', 'trd-foot-text'), buildFooterActions());
     panel.appendChild(foot);
+    const statusBar = buildStatusBar();
+    if (statusBar) panel.appendChild(statusBar);
 
-    const toast = el('div', 'trd-toast');
-    toast.id = 'trd-toast';
-    panel.appendChild(toast);
+    appendResizeHandles(panel);
     return panel;
   }
 
@@ -1463,17 +1734,27 @@
 
   function appendSentenceSuggestionsView(body) {
     const rules = sentenceSuggestionRules();
-    const diagrams = diagramResultsForDoc();
-    if (rules.length === 0 && diagrams.length === 0) {
+    if (rules.length === 0) {
       const msg = el('div', 'trd-msg');
       msg.textContent = '문장 제안이 없습니다.';
       body.appendChild(msg);
       return;
     }
-    for (const diagram of diagrams) body.appendChild(buildDiagramResultItem(diagram));
     for (let i = 0; i < rules.length; i++) {
       body.appendChild(buildSentenceSuggestionItem(rules[i], i));
     }
+  }
+
+  function appendDiagramsView(body) {
+    if (externalFeaturesEnabled()) body.appendChild(buildDiagramComposer());
+    const diagrams = diagramResultsForDoc();
+    if (diagrams.length === 0) {
+      const msg = el('div', 'trd-msg');
+      msg.textContent = '아직 만든 도해가 없습니다.';
+      body.appendChild(msg);
+      return;
+    }
+    for (const diagram of diagrams) body.appendChild(buildDiagramResultItem(diagram));
   }
 
   function appendTermsView(body) {
@@ -1510,7 +1791,17 @@
       return;
     }
 
-    const terms = Array.isArray(report.terms) ? report.terms : [];
+    const allTerms = Array.isArray(report.terms) ? report.terms : [];
+    const kindCounts = new Map();
+    for (const term of allTerms) kindCounts.set(term.kind, (kindCounts.get(term.kind) || 0) + 1);
+    if (termKindFilter !== 'all' && !kindCounts.has(termKindFilter)) termKindFilter = 'all';
+    if (kindCounts.size > 1) wrap.appendChild(buildTermKindFilter(allTerms.length, kindCounts));
+    const terms = termKindFilter === 'all' ? allTerms : allTerms.filter(term => term.kind === termKindFilter);
+    for (const note of Array.isArray(report.notes) ? report.notes : []) {
+      const n = el('div', 'trd-terms-note');
+      n.textContent = note;
+      wrap.appendChild(n);
+    }
     if (terms.length === 0) {
       const msg = el('div', 'trd-msg');
       msg.textContent = '혼용된 용어나 조사 오류를 찾지 못했습니다.';
@@ -1545,6 +1836,18 @@
     needs_context: '맥락 필요'
   };
 
+  function buildFactsRunButton() {
+    const btn = el('button', 'trd-btn trd-terms-refresh');
+    btn.type = 'button';
+    btn.textContent = '선택 영역 검증';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleAiVerifyAddon();
+    });
+    return btn;
+  }
+
   function appendFactsView(body) {
     const docId = getDocId();
     const report = factReportDocId === docId ? factReport : null;
@@ -1561,7 +1864,10 @@
       factsViewOpen = false;
       render();
     });
-    head.append(title, closeBtn);
+    const headActions = el('div', 'trd-facts-head-actions');
+    if (report) headActions.appendChild(buildFactsRunButton());
+    headActions.appendChild(closeBtn);
+    head.append(title, headActions);
     wrap.appendChild(head);
 
     if (isAddonBusy('ai-verify') && !report) {
@@ -1573,8 +1879,9 @@
     }
     if (!report) {
       const msg = el('div', 'trd-msg');
-      msg.textContent = '문장을 선택하고 [추가기능] ▸ [AI 사실 검증]을 실행하세요.';
+      msg.textContent = '검증할 문장을 선택하고 [선택 영역 검증]을 누르세요.';
       wrap.appendChild(msg);
+      wrap.appendChild(buildFactsRunButton());
       body.appendChild(wrap);
       return;
     }
@@ -1705,9 +2012,36 @@
     });
   }
 
+  function buildTermKindFilter(total, kindCounts) {
+    const bar = el('div', 'trd-terms-filter');
+    const chips = [['all', '전체', total]];
+    for (const kind of Object.keys(TERM_KIND_LABEL)) {
+      if (kindCounts.has(kind)) chips.push([kind, TERM_KIND_LABEL[kind], kindCounts.get(kind)]);
+    }
+    for (const [kind, label, count] of chips) {
+      const chip = el('button', 'trd-terms-chip' + (termKindFilter === kind ? ' trd-on' : ''));
+      chip.type = 'button';
+      chip.textContent = label + ' ' + count;
+      chip.setAttribute('aria-pressed', termKindFilter === kind ? 'true' : 'false');
+      chip.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        termKindFilter = kind;
+        render({ preserveBodyScroll: true });
+      });
+      bar.appendChild(chip);
+    }
+    return bar;
+  }
+
   function buildTermRow(term) {
     const tr = document.createElement('tr');
     const variants = document.createElement('td');
+    if (term && TERM_KIND_LABEL[term.kind]) {
+      const badge = el('span', 'trd-terms-kind trd-terms-kind-' + term.kind);
+      badge.textContent = TERM_KIND_LABEL[term.kind];
+      variants.appendChild(badge);
+    }
     variants.appendChild(buildVariantList(term && term.variants));
     const recommended = document.createElement('td');
     recommended.textContent = displayText(term && term.recommended || '');
@@ -1799,6 +2133,8 @@
     ln.textContent = kind + ' · ' + formatDiagramTime(diagram.createdAt) + (diagram.imageMissing ? ' · 이미지 없음' : '');
     fix.appendChild(ln);
     item.append(ctx, fix);
+    const preview = buildDiagramPreview(diagram);
+    if (preview) item.appendChild(preview);
     item.title = '누르면 복사 · 그리기 창에서 ⌘V';
     item.addEventListener('click', () => {
       copyDiagramResult(diagram);
@@ -1815,6 +2151,24 @@
     });
     item.appendChild(deleteBtn);
     return item;
+  }
+
+  // 도해 미리보기: 붙여넣을 그리기 명령을 SVG로 그린다. 실패하면 미리보기 없이 목록만 보인다.
+  function buildDiagramPreview(diagram) {
+    const clip = globalThis.ToytypeDrawingClip;
+    if (!clip || typeof clip.buildPreviewSvg !== 'function' || !diagram || !diagram.spec) return null;
+    try {
+      const svg = clip.buildPreviewSvg(clip.buildDrawingPayload(diagram.spec, diagram.image || null), document);
+      svg.setAttribute('class', 'trd-diagram-preview-svg');
+      svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', (diagram.title || '도해') + ' 미리보기');
+      const wrap = el('div', 'trd-diagram-preview');
+      wrap.appendChild(svg);
+      return wrap;
+    } catch (error) {
+      debugLog('[Toytype addons] diagram preview failed', summarizeErrorForConsole(error));
+      return null;
+    }
   }
 
   function formatDiagramTime(ms) {
@@ -2080,30 +2434,51 @@
     });
   }
 
-  async function handleAiDiagramAddon() {
+  const DIAGRAM_MODES = ['redraw', 'diagram', 'annotate', 'edit'];
+  const DIAGRAM_MAX_REDRAW_IMAGES = 12;
+
+  function diagramError(message, detail) {
+    const error = new Error(detail || message);
+    error.userMessage = message;
+    return error;
+  }
+
+  // mode: prompt(프롬프트만으로 도해) | redraw(이미지 → 그리기 도해) | diagram(글 → 도해)
+  //       | annotate(스크린샷 강조) | edit(그리기 수정)
+  // opts.prompt: 도해 탭 입력 창의 지시. 선택 영역 기반 모드에서는 추가 지시로 함께 보낸다.
+  async function handleAiDiagramAddon(mode, opts) {
+    const promptOnly = mode === 'prompt';
+    const kind = promptOnly ? 'diagram' : DIAGRAM_MODES.includes(mode) ? mode : 'diagram';
     const actionId = 'ai-diagram';
-    if (isAddonBusy(actionId)) return;
+    if (!externalFeaturesEnabled()) {
+      showToast('AI 기능이 꺼져 있습니다 · 설정에서 [브릿지 · AI 기능 사용]을 켜세요', { durationMs: 3600 });
+      return;
+    }
+    const typedInstruction = String(opts && opts.prompt || '').trim().slice(0, 2000);
+    if (promptOnly && !typedInstruction) {
+      showToast('만들 도해를 입력 창에 적어 주세요', { durationMs: 2600 });
+      return;
+    }
+    // 첫 await 전에(클릭의 사용자 활성화가 살아 있을 때) 선택 영역 데이터를 잡는다.
+    // 프롬프트만 쓰는 경우는 선택 영역이 필요 없으므로 클립보드를 건드리지 않는다.
+    let captured = { via: 'skipped', imageUrls: [], drawingRenderUrls: [], drawingCommands: null, text: '' };
+    if (!promptOnly) {
+      try {
+        captured = captureDocsSelection();
+      } catch (error) {
+        captured = { via: 'error', imageUrls: [], drawingRenderUrls: [], drawingCommands: null, text: '' };
+      }
+    }
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
     let successToast = '';
     startAiDiagramStatus('선택 영역 읽는 중');
-    // 첫 await 전에(클릭의 사용자 활성화가 살아 있을 때) 선택 영역 데이터를 잡는다
-    let captured;
-    try {
-      captured = captureDocsSelection();
-    } catch (error) {
-      captured = { via: 'error', imageUrls: [], drawingRenderUrls: [], drawingCommands: null, text: '' };
-    }
     try {
       const doc = await readCurrentDocumentTextForAddon();
-      if (doc.source !== 'model') {
-        const error = new Error('Google Docs model text is required for diagrams');
-        error.userMessage = '문서 선택 영역을 읽지 못했습니다';
-        throw error;
-      }
-      let selection = doc.selection || null;
-      if (!selection) {
+      if (doc.source !== 'model') throw diagramError('문서 선택 영역을 읽지 못했습니다', 'Google Docs model text is required for diagrams');
+      let selection = promptOnly ? null : (doc.selection || null);
+      if (!selection && !promptOnly) {
         try {
           selection = await fetchDocsSelection();
           updateCursorOffset(selection);
@@ -2111,102 +2486,125 @@
           selection = null;
         }
       }
-      const range = selectionRange(selection);
-      const selectedText = range && range.end > range.start ? doc.text.slice(range.start, range.end) : '';
-      if (!selectedText.replace(/[\s\u0000-\u001f￼]/g, '')) {
-        const error = new Error('selected text is required');
-        error.userMessage = '도해로 만들 글이나 지시문을 함께 선택하세요';
-        throw error;
-      }
+      const range = selectionRange(selection) || { start: 0, end: 0 };
+      const rangeText = range.end > range.start ? doc.text.slice(range.start, range.end) : '';
+      // 글 → 도해는 선택한 글이 내용이고 입력 창은 추가 지시. 나머지 모드는 입력 창이 곧 지시
+      // (비워 두면 선택한 글, 그것도 없으면 브리지의 모드별 기본 지시).
+      const selectedText = promptOnly ? typedInstruction
+        : kind === 'diagram' ? (rangeText && typedInstruction ? rangeText + '\n\n[도해 지시] ' + typedInstruction : rangeText || typedInstruction)
+          : typedInstruction || rangeText;
+      const hasText = !!selectedText.replace(/[\s\u0000-\u001f￼]/g, '');
+      if (kind === 'diagram' && !hasText) throw diagramError('도해로 만들 글을 선택하거나 입력 창에 적어 주세요', 'selected text is required');
 
-      const source = capturedMatchesSelection(captured, selectedText) ? captured : null;
+      const source = capturedMatchesSelection(captured, rangeText) ? captured : null;
       console.info('[Toytype addons] AI diagram selection source', {
+        kind,
         via: captured.via,
         used: !!source,
         imageUrls: captured.imageUrls.length,
         drawingCommands: captured.drawingCommands ? captured.drawingCommands.length : 0,
         drawingRenderUrls: captured.drawingRenderUrls ? captured.drawingRenderUrls.length : 0
       });
-      let image = null;
+      const imageUrls = source ? source.imageUrls : [];
+      const hasDrawing = !!(source && ((source.drawingCommands && source.drawingCommands.length) || (source.drawingRenderUrls && source.drawingRenderUrls.length)));
+
       let drawing = null;
-      if (source && source.drawingCommands && globalThis.ToytypeDrawingClip) {
-        const spec = globalThis.ToytypeDrawingClip.drawingCommandsToSpec(source.drawingCommands);
-        if (spec.items.some(it => it.type === 'node')) drawing = spec;
-      }
-      if (!drawing && source && source.drawingRenderUrls && source.drawingRenderUrls.length) {
-        updateAiDiagramStatus('선택한 그리기 읽는 중');
-        drawing = await loadInlineDrawing(source.drawingRenderUrls[0], doc.docId);
-      }
-      if (!drawing && source && source.imageUrls.length) {
-        updateAiDiagramStatus('선택한 이미지 받는 중');
-        const res = await fetchImageDataUrl(source.imageUrls[0]);
-        if (!res || !res.ok || !res.dataUrl) {
-          const error = new Error('image fetch failed: ' + (res && (res.error || res.status)));
-          error.userMessage = '선택한 이미지를 받지 못했습니다';
-          throw error;
+      if (kind === 'edit') {
+        if (source && source.drawingCommands && globalThis.ToytypeDrawingClip) {
+          const spec = globalThis.ToytypeDrawingClip.drawingCommandsToSpec(source.drawingCommands);
+          if (spec.items.some(it => it.type === 'node')) drawing = spec;
         }
-        const size = await imageSizeFromDataUrl(res.dataUrl);
-        image = { dataUrl: res.dataUrl, width: size.width, height: size.height };
+        if (!drawing && source && source.drawingRenderUrls && source.drawingRenderUrls.length) {
+          updateAiDiagramStatus('선택한 그리기 읽는 중');
+          drawing = await loadInlineDrawing(source.drawingRenderUrls[0], doc.docId);
+        }
+        if (!drawing) throw diagramError('고칠 구글 그리기를 선택하세요', 'no drawing in selection');
+      }
+      if ((kind === 'redraw' || kind === 'annotate') && !imageUrls.length) {
+        throw diagramError(kind === 'redraw' && hasDrawing
+          ? '이미 구글 그리기입니다 · [그리기 수정]을 쓰세요'
+          : '이미지를 선택하세요', 'no image in selection');
       }
 
-      // 이미지 + "그리기로 다시 그려줘" 같은 지시 → 이미지 속 도해를 편집 가능한 도형으로 다시 그린다
-      const redraw = !!image && globalThis.ToytypeDrawingClip.isRedrawInstruction(selectedText);
-      const kind = drawing ? 'edit' : redraw ? 'redraw' : image ? 'annotate' : 'diagram';
-      updateAiDiagramStatus({
-        edit: 'AI 그리기 수정 중',
-        redraw: 'AI 도해 다시 그리는 중',
-        annotate: 'AI 스크린샷 강조 생성 중',
-        diagram: 'AI 도해 생성 중'
-      }[kind]);
-      const res = await sendAiBridge('diagram', {
-        timeoutMs: AI_DIAGRAM_TIMEOUT,
-        mode: redraw ? 'redraw' : undefined,
-        image,
-        // 이미지 blob id와 도형의 원래 속성(rawProps)은 AI에 보내지 않고, 응답을 받은 뒤 id로 다시 붙인다
-        drawing: drawing ? {
-          items: drawing.items.map(it => {
-            if (it.type === 'image') return { id: it.id, type: 'image', rect: it.rect };
-            const { rawProps, ...rest } = it;
-            return rest;
-          }),
-          bounds: drawing.bounds,
-          reference: drawing.reference || null
-        } : null,
-        document: {
-          id: doc.docId,
-          title: doc.title,
-          url: location.href,
-          textSource: doc.source,
-          selectionStart: range.start,
-          selectionEnd: range.end,
-          selectedText,
-          contextBefore: doc.text.slice(Math.max(0, range.start - AI_DIAGRAM_CONTEXT), range.start),
-          contextAfter: doc.text.slice(range.end, range.end + AI_DIAGRAM_CONTEXT)
-        }
-      });
-      if (!res || !res.ok || !res.spec) {
-        throw aiBridgeError(res, 'AI 도해 생성 실패');
-      }
+      // 이미지 → 그리기 도해는 선택 범위의 이미지를 모두 차례로 바꾼다. 나머지는 첫 번째 대상 하나만.
+      const targets = kind === 'redraw' ? imageUrls.slice(0, DIAGRAM_MAX_REDRAW_IMAGES)
+        : kind === 'annotate' ? imageUrls.slice(0, 1)
+          : [null];
+      const phase = { edit: 'AI 그리기 수정 중', redraw: 'AI 도해 다시 그리는 중', annotate: 'AI 스크린샷 강조 생성 중', diagram: 'AI 도해 생성 중' }[kind];
       if (diagramResultsDocId !== doc.docId) await loadDiagramResults();
-      const result = {
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        createdAt: Date.now(),
-        title: res.spec.title,
-        kind,
-        instruction: selectedText.replace(/\s+/g, ' ').trim().slice(0, 200),
-        spec: drawing ? restoreDrawingOriginals(res.spec, drawing) : res.spec,
-        // 다시 그린 도해에는 원래 이미지가 들어가지 않으므로 저장하지 않는다
-        image: redraw ? null : image
-      };
-      diagramResults = [result].concat(diagramResults).slice(0, DIAGRAM_MAX_PER_DOC);
-      diagramResultsDocId = doc.docId;
-      await saveDiagramResults();
-      suggestionsViewOpen = true;
-      termsViewOpen = false;
-      factsViewOpen = false;
-      finalStatus = DIAGRAM_KIND_LABEL[kind] + ' 완료 · 문장 제안 탭에서 눌러 복사';
-      if (kind === 'diagram' && captured.via !== 'copy') finalStatus += ' · 선택 영역의 이미지·그리기를 읽지 못해 글로만 만듦';
-      successToast = 'AI 도해 생성 완료 · 문장 제안 탭에서 눌러 복사';
+      const instruction = (typedInstruction || (hasText ? selectedText : '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+      let done = 0;
+      const failures = [];
+      for (let i = 0; i < targets.length; i++) {
+        const label = targets.length > 1 ? ' (' + (i + 1) + '/' + targets.length + ')' : '';
+        try {
+          let image = null;
+          if (targets[i]) {
+            updateAiDiagramStatus('선택한 이미지 받는 중' + label);
+            const res = await fetchImageDataUrl(targets[i]);
+            if (!res || !res.ok || !res.dataUrl) throw diagramError('선택한 이미지를 받지 못했습니다', 'image fetch failed: ' + (res && (res.error || res.status)));
+            const size = await imageSizeFromDataUrl(res.dataUrl);
+            image = { dataUrl: res.dataUrl, width: size.width, height: size.height };
+          }
+          updateAiDiagramStatus(phase + label);
+          const res = await sendAiBridge('diagram', {
+            timeoutMs: AI_DIAGRAM_TIMEOUT,
+            mode: kind,
+            image,
+            // 이미지 blob id와 도형의 원래 속성(rawProps)은 AI에 보내지 않고, 응답을 받은 뒤 id로 다시 붙인다
+            drawing: drawing ? {
+              items: drawing.items.map(it => {
+                if (it.type === 'image') return { id: it.id, type: 'image', rect: it.rect };
+                const { rawProps, ...rest } = it;
+                return rest;
+              }),
+              bounds: drawing.bounds,
+              reference: drawing.reference || null
+            } : null,
+            document: {
+              id: doc.docId,
+              title: doc.title,
+              url: location.href,
+              textSource: doc.source,
+              selectionStart: range.start,
+              selectionEnd: range.end,
+              selectedText: hasText ? selectedText : '',
+              // 프롬프트만으로 만들 때는 문서 내용을 맥락으로 보내지 않는다
+              contextBefore: promptOnly ? '' : doc.text.slice(Math.max(0, range.start - AI_DIAGRAM_CONTEXT), range.start),
+              contextAfter: promptOnly ? '' : doc.text.slice(range.end, range.end + AI_DIAGRAM_CONTEXT)
+            }
+          });
+          if (!res || !res.ok || !res.spec) throw aiBridgeError(res, 'AI 도해 생성 실패');
+          const result = {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            createdAt: Date.now(),
+            title: res.spec.title,
+            kind,
+            instruction: instruction || (DIAGRAM_KIND_LABEL[kind] + label),
+            spec: drawing ? restoreDrawingOriginals(res.spec, drawing) : res.spec,
+            // 다시 그린 도해에는 원래 이미지가 들어가지 않으므로 저장하지 않는다
+            image: kind === 'annotate' ? image : null
+          };
+          diagramResults = [result].concat(diagramResults).slice(0, DIAGRAM_MAX_PER_DOC);
+          diagramResultsDocId = doc.docId;
+          await saveDiagramResults();
+          done++;
+        } catch (error) {
+          if (targets.length === 1) throw error;
+          const summary = summarizeErrorForConsole(error);
+          if (error && error.response !== undefined) summary.response = summarizeAiBridgeResponse(error.response);
+          console.error('[Toytype addons] AI diagram failed for image ' + (i + 1), summary);
+          failures.push(i + 1);
+        }
+      }
+      if (!done) throw diagramError('AI 도해 생성 실패', 'every image failed');
+      // 다른 탭(사실 검증·용어 표 등)을 읽고 있으면 강제로 넘기지 않는다. 상태 표시줄 안내로 알린다.
+      if (!suggestionsViewOpen && !termsViewOpen && !factsViewOpen) diagramsViewOpen = true;
+      finalStatus = (promptOnly ? '프롬프트 도해' : DIAGRAM_KIND_LABEL[kind]) + ' 완료' + (targets.length > 1 ? ' ' + done + '/' + targets.length + '개' : '') + ' · 도해 탭에서 복사';
+      if (failures.length) finalStatus += ' · 실패: ' + failures.join(', ') + '번째 이미지';
+      if (kind === 'redraw' && imageUrls.length > DIAGRAM_MAX_REDRAW_IMAGES) finalStatus += ' · 앞 ' + DIAGRAM_MAX_REDRAW_IMAGES + '개만 처리';
+      successToast = 'AI 도해 생성 완료 · 도해 탭에서 눌러 복사';
+      if (promptOnly) diagramPromptDraft = '';
     } catch (error) {
       const summary = summarizeErrorForConsole(error);
       if (error && error.userMessage) summary.userMessage = error.userMessage;
@@ -2429,6 +2827,7 @@
       if (listMode === mode) return;
       listMode = mode;
       suggestionsViewOpen = false;
+      diagramsViewOpen = false;
       render();
     });
     return btn;
@@ -2490,6 +2889,7 @@
       return;
     }
     suggestionsViewOpen = false;
+    diagramsViewOpen = false;
     termsViewOpen = false;
     factsViewOpen = false;
     showToast(activeRulesSource === 'builtin' ? 'rules.json 기준으로 검사' : 'JSON 기준으로 검사');
@@ -2623,7 +3023,7 @@
   function selectionCountText() {
     if (!selectionCount) return '';
     return '선택 ' + selectionCount.chars.toLocaleString() + '자' +
-      ' · 공백 제외 ' + selectionCount.charsNoSpace.toLocaleString() + '자' +
+      ' (공백 제외 ' + selectionCount.charsNoSpace.toLocaleString() + ')' +
       ' · ' + selectionCount.words.toLocaleString() + '단어';
   }
 
@@ -3253,7 +3653,6 @@
 
   async function handleAiProofreadAddon() {
     const actionId = 'ai-proofread';
-    if (isAddonBusy(actionId)) return;
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
@@ -3337,6 +3736,7 @@
         if (isSentenceSuggestionSource(activeRulesSource)) useRulesSource('builtin');
         suggestionsViewOpen = true;
         termsViewOpen = false;
+        diagramsViewOpen = false;
       } else {
         useRulesSource(generatedRulesSourceValue(res.fileName));
       }
@@ -3365,6 +3765,7 @@
     if (openView) {
       termsViewOpen = true;
       suggestionsViewOpen = false;
+      diagramsViewOpen = false;
     }
     let finalStatus = '';
     let errorToast = '';
@@ -3428,6 +3829,16 @@
     };
   }
 
+  const TERM_KIND_LABEL = {
+    dictionary: '사전',
+    spelling: '철자',
+    case: '대소문자',
+    spacing: '띄어쓰기',
+    script: '한·영',
+    synonym: '약어·번역어',
+    particle: '조사'
+  };
+
   function normalizeTermItemForView(item) {
     if (!item || typeof item !== 'object') return null;
     const variants = Array.isArray(item.variants)
@@ -3436,8 +3847,12 @@
           count: Math.max(0, Math.round(Number(variant && variant.count) || 0))
         })).filter(variant => variant.text)
       : [];
-    if (variants.length < 2) return null;
+    // 조사 오류 행(kind: particle)은 표기가 하나뿐이어도 보여 준다
+    const kind = TERM_KIND_LABEL[item.kind] ? item.kind : 'dictionary';
+    if (variants.length < 2 && kind !== 'particle') return null;
+    if (variants.length === 0) return null;
     return {
+      kind,
       concept: String(item.concept || '').trim(),
       recommended: String(item.recommended || '').trim(),
       variants,
@@ -3450,7 +3865,6 @@
   // 드래그한 문장만 사실 검증한다. 문서는 건드리지 않고 결과를 패널 표로만 보여준다.
   async function handleAiVerifyAddon() {
     const actionId = 'ai-verify';
-    if (isAddonBusy(actionId)) return;
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
@@ -3507,6 +3921,7 @@
       factsViewOpen = true;
       termsViewOpen = false;
       suggestionsViewOpen = false;
+      diagramsViewOpen = false;
       addonsMenuOpen = false;
 
       const flagged = factReport.claims.filter(c => c.status === 'contradicted').length;
@@ -3558,7 +3973,6 @@
 
   async function handleAiLengthAddon() {
     const actionId = 'ai-length';
-    if (isAddonBusy(actionId)) return;
     setAddonBusy(actionId, true);
     let finalStatus = '';
     let errorToast = '';
@@ -3643,6 +4057,7 @@
     }
   }
 
+  // 그리기 수정 지시 입력. 취소면 null, 빈 입력이면 ''(정렬·간격만 다듬기).
   function promptAiLengthTargetChars(currentChars) {
     const current = Math.max(1, Math.round(Number(currentChars) || 0));
     let raw = null;
@@ -4292,7 +4707,8 @@
   function startAddonStatusTicker() {
     stopAddonStatusTicker();
     addonStatusTimer = setInterval(() => {
-      if (!addonStatus || addonStatus.state !== 'running') {
+      const jobRunning = aiJobs.some(job => job.state === 'running');
+      if (!jobRunning && (!addonStatus || addonStatus.state !== 'running')) {
         stopAddonStatusTicker();
         return;
       }
@@ -4302,6 +4718,8 @@
 
   function stopAddonStatusTicker() {
     if (!addonStatusTimer) return;
+    // 다른 AI 작업이 아직 돌고 있으면 경과 시간 표시를 위해 계속 돈다
+    if (aiJobs.some(job => job.state === 'running') && addonStatus && addonStatus.state !== 'running') return;
     clearInterval(addonStatusTimer);
     addonStatusTimer = null;
   }
@@ -4320,6 +4738,60 @@
       : (addonStatus.message || (state === 'error' ? '오류 발생' : ''));
     const detail = stripStatusHeadEcho(raw, label + suffix);
     return { head, detail };
+  }
+
+  // 상태 표시줄 한 줄 문구. 진행 중이면 지금 단계와 경과 시간, 끝나면 결과를 보여 준다.
+  function addonStatusBarText() {
+    const lines = addonStatusLines();
+    if (!lines || !lines.head) return '';
+    if (!lines.detail) return lines.head;
+    const state = addonStatus.state;
+    if (state === 'running') return lines.detail + ' · ' + lines.head.slice(lines.head.lastIndexOf(' · ') + 3);
+    // 끝난 뒤에는 결과 문구만(완료 문구에 이미 무엇이 끝났는지 들어 있다). 실패는 무엇이 실패했는지 앞에 붙인다.
+    if (state === 'error') return (addonStatus.label || 'AI 작업') + ' 실패 · ' + lines.detail;
+    return lines.detail;
+  }
+
+  // 상태 표시줄용 짧은 글자 수(전체는 툴팁)
+  function selectionCountShortText() {
+    if (!selectionCount) return '';
+    return selectionCount.chars.toLocaleString() + '자 · ' + selectionCount.words.toLocaleString() + '단어';
+  }
+
+  function buildStatusBar() {
+    const notice = statusNotice;
+    const jobsText = aiJobsSummaryText();
+    const statusText = notice ? notice.text : (jobsText || addonStatusBarText());
+    const countText = selectionCountText();
+    const showJobs = externalFeaturesEnabled();
+    if (!statusText && !countText && !showJobs) return null;
+    const bar = el('div', 'trd-statusbar');
+    if (statusText) {
+      const state = notice ? (notice.error ? 'error' : 'notice') : jobsText ? 'running' : (addonStatus && addonStatus.state ? addonStatus.state : '');
+      const status = el('div', 'trd-statusbar-status' + (state ? ' trd-statusbar-' + state : ''));
+      if (state === 'running') {
+        // 패널은 1초마다 다시 그려지므로 회전 위상을 시계에 맞춰 끊기지 않게 한다
+        const spinner = el('span', 'trd-statusbar-spinner');
+        spinner.style.animationDelay = '-' + (Date.now() % 800) + 'ms';
+        status.appendChild(spinner);
+      }
+      const text = el('span', 'trd-statusbar-text');
+      text.textContent = statusText;
+      status.appendChild(text);
+      status.title = statusText;
+      bar.appendChild(status);
+    }
+    if (countText) {
+      const count = el('div', 'trd-statusbar-count');
+      count.textContent = statusText ? selectionCountShortText() : countText;
+      count.title = countText;
+      bar.appendChild(count);
+    }
+    if (showJobs) {
+      bar.appendChild(buildJobQueueButton());
+      if (jobQueueOpen) bar.appendChild(buildJobQueuePanel());
+    }
+    return bar;
   }
 
   // '<라벨> 완료 · JSON 업로드됨' 처럼 상세 앞머리가 요약과 겹치면 잘라낸다.
@@ -4402,16 +4874,253 @@
   // MV3에서는 확장 host_permissions가 적용되지 않아 페이지 출처 기준 접근 제어(CORS/PNA)로
   // 차단된다("Fetch API cannot load ... due to access control checks"). 긴 AI 요청이라도
   // 백그라운드의 진행 중 fetch가 서비스워커를 살려 두므로 백그라운드 경유가 유일한 정상 경로다.
+  // ---------- AI 작업 큐 ----------
+  const AI_JOB_LABEL = {
+    proofread: 'AI 교정',
+    verifyFacts: 'AI 사실 검증',
+    adjustLength: 'AI 문장 길이 조절',
+    diagram: 'AI 도해',
+    question: 'AI 문장 삽입'
+  };
+  const AI_JOB_HISTORY = 20;
+  const AI_CONCURRENCY_KEY = 'aiJobConcurrency';
+
   function sendAiBridge(action, payload) {
-    return sendAiBridgeViaBackground(action, payload);
+    if (!AI_JOB_LABEL[action]) return sendAiBridgeViaBackground(action, payload);
+    return new Promise(resolve => {
+      const job = {
+        id: 'job' + (++aiJobSeq) + '-' + Date.now().toString(36),
+        action,
+        payload,
+        label: AI_JOB_LABEL[action],
+        detail: aiJobDetail(action, payload),
+        state: 'queued',
+        createdAt: Date.now(),
+        startedAt: 0,
+        finishedAt: 0,
+        message: '',
+        resolve
+      };
+      aiJobs.push(job);
+      pumpAiJobs();
+      refreshJobViews();
+    });
   }
 
-  function sendAiBridgeViaBackground(action, payload) {
+  function aiJobDetail(action, payload) {
+    const doc = payload && payload.document || {};
+    const text = String(doc.selectedText || '').replace(/\s+/g, ' ').trim();
+    if (action === 'proofread') return '문서 전체';
+    if (action === 'diagram') {
+      const mode = DIAGRAM_KIND_LABEL[payload && payload.mode] || '도해';
+      return text ? mode + ' · ' + text.slice(0, 40) : mode;
+    }
+    return text ? text.slice(0, 48) : '';
+  }
+
+  function aiJobsActive() {
+    return aiJobs.filter(job => job.state === 'queued' || job.state === 'running');
+  }
+
+  function pumpAiJobs() {
+    let running = aiJobs.filter(job => job.state === 'running').length;
+    for (const job of aiJobs) {
+      if (running >= aiConcurrency) break;
+      if (job.state !== 'queued') continue;
+      running++;
+      startAiJob(job);
+    }
+  }
+
+  function startAiJob(job) {
+    job.state = 'running';
+    job.startedAt = Date.now();
+    startAddonStatusTicker();
+    sendAiBridgeViaBackground(job.action, job.payload, job.id).then(res => {
+      if (job.state !== 'running') return; // 이미 취소됨
+      finishAiJob(job, res && res.ok ? 'done' : 'error', res && res.ok ? '' : (res && (res.message || res.error)) || '실패', res);
+    });
+  }
+
+  function finishAiJob(job, state, message, res) {
+    job.state = state;
+    job.finishedAt = Date.now();
+    job.message = String(message || '');
+    job.payload = null; // 문서 텍스트를 오래 들고 있지 않는다
+    const resolve = job.resolve;
+    job.resolve = null;
+    const finished = aiJobs.filter(j => j.state !== 'queued' && j.state !== 'running');
+    if (finished.length > AI_JOB_HISTORY) {
+      const drop = new Set(finished.slice(0, finished.length - AI_JOB_HISTORY));
+      aiJobs = aiJobs.filter(j => !drop.has(j));
+    }
+    pumpAiJobs();
+    if (resolve) resolve(res || { ok: false, error: state === 'canceled' ? 'canceled' : 'failed', message: job.message });
+    refreshJobViews();
+  }
+
+  function cancelAiJob(job) {
+    if (!job || (job.state !== 'queued' && job.state !== 'running')) return;
+    const wasRunning = job.state === 'running';
+    finishAiJob(job, 'canceled', '취소함', { ok: false, error: 'canceled', message: '작업을 취소했습니다' });
+    if (wasRunning) {
+      try {
+        chrome.runtime.sendMessage({ type: 'typo:aiBridgeAbort', requestId: job.id }, () => { void chrome.runtime.lastError; });
+      } catch (_) { /* 확장 컨텍스트가 없어도 결과는 이미 버렸다 */ }
+    }
+  }
+
+  function moveAiJob(job, delta) {
+    const queued = aiJobs.filter(j => j.state === 'queued');
+    const i = queued.indexOf(job);
+    const target = queued[i + delta];
+    if (i < 0 || !target) return;
+    const a = aiJobs.indexOf(job);
+    const b = aiJobs.indexOf(target);
+    aiJobs[a] = target;
+    aiJobs[b] = job;
+    refreshJobViews();
+  }
+
+  function setAiConcurrency(n) {
+    aiConcurrency = Math.min(6, Math.max(1, Math.round(n)));
+    try { chrome.storage.local.set({ [AI_CONCURRENCY_KEY]: aiConcurrency }); } catch (_) { /* 메모리 값만 유지 */ }
+    pumpAiJobs();
+    refreshJobViews();
+  }
+
+  function loadAiConcurrency() {
+    try {
+      chrome.storage.local.get(AI_CONCURRENCY_KEY, items => {
+        if (chrome.runtime.lastError) return;
+        const n = Number(items && items[AI_CONCURRENCY_KEY]);
+        if (n >= 1 && n <= 6) aiConcurrency = Math.round(n);
+      });
+    } catch (_) { /* 기본값 사용 */ }
+  }
+
+  function refreshJobViews() {
+    if (!expanded) return;
+    render({ preserveBodyScroll: true });
+  }
+
+  function aiJobsSummaryText() {
+    const active = aiJobsActive();
+    if (!active.length) return '';
+    const running = active.filter(j => j.state === 'running').length;
+    const queued = active.length - running;
+    if (running <= 1 && queued === 0) return ''; // 하나뿐이면 원래 상태 문구가 더 자세하다
+    return 'AI 작업 ' + running + '개 진행 중' + (queued ? ' · ' + queued + '개 대기' : '');
+  }
+
+  function buildJobQueueButton() {
+    const active = aiJobsActive().length;
+    const btn = el('button', 'trd-statusbar-jobs' + (jobQueueOpen ? ' trd-on' : '') + (active ? ' trd-active' : ''));
+    btn.type = 'button';
+    btn.textContent = active ? '작업 ' + active : '작업';
+    btn.title = '작업 큐 보기 · 순서 바꾸기 · 취소';
+    btn.setAttribute('aria-expanded', jobQueueOpen ? 'true' : 'false');
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      jobQueueOpen = !jobQueueOpen;
+      render({ preserveBodyScroll: true });
+    });
+    return btn;
+  }
+
+  const AI_JOB_STATE_LABEL = { queued: '대기', running: '실행 중', done: '완료', error: '실패', canceled: '취소됨' };
+
+  function buildJobQueuePanel() {
+    const panel = el('div', 'trd-jobs');
+    const head = el('div', 'trd-jobs-head');
+    const title = el('span', 'trd-jobs-title');
+    title.textContent = 'AI 작업 큐';
+    const conc = el('div', 'trd-jobs-conc');
+    const concLabel = el('span');
+    concLabel.textContent = '동시 실행 ' + aiConcurrency;
+    const minus = el('button', 'trd-jobs-btn');
+    minus.type = 'button';
+    minus.textContent = '−';
+    minus.title = '동시 실행 수 줄이기';
+    minus.disabled = aiConcurrency <= 1;
+    minus.addEventListener('click', ev => { ev.stopPropagation(); setAiConcurrency(aiConcurrency - 1); });
+    const plus = el('button', 'trd-jobs-btn');
+    plus.type = 'button';
+    plus.textContent = '+';
+    plus.title = '동시 실행 수 늘리기';
+    plus.disabled = aiConcurrency >= 6;
+    plus.addEventListener('click', ev => { ev.stopPropagation(); setAiConcurrency(aiConcurrency + 1); });
+    conc.append(minus, concLabel, plus);
+    const clear = el('button', 'trd-jobs-btn trd-jobs-clear');
+    clear.type = 'button';
+    clear.textContent = '끝난 항목 지우기';
+    clear.disabled = !aiJobs.some(j => j.state !== 'queued' && j.state !== 'running');
+    clear.addEventListener('click', ev => {
+      ev.stopPropagation();
+      aiJobs = aiJobs.filter(j => j.state === 'queued' || j.state === 'running');
+      refreshJobViews();
+    });
+    head.append(title, conc, clear);
+    panel.appendChild(head);
+    if (!aiJobs.length) {
+      const empty = el('div', 'trd-jobs-empty');
+      empty.textContent = 'AI 작업이 없습니다. 실행한 AI 교정·사실 검증·문장 길이 조절·도해가 여기에 쌓입니다.';
+      panel.appendChild(empty);
+      return panel;
+    }
+    const list = el('div', 'trd-jobs-list');
+    const queued = aiJobs.filter(j => j.state === 'queued');
+    // 진행 중·대기 먼저(실행 순서대로), 그다음 최근에 끝난 것
+    const order = aiJobs.filter(j => j.state === 'running')
+      .concat(queued)
+      .concat(aiJobs.filter(j => j.state !== 'queued' && j.state !== 'running').reverse());
+    for (const job of order) {
+      const row = el('div', 'trd-job trd-job-' + job.state);
+      const main = el('div', 'trd-job-main');
+      const name = el('div', 'trd-job-name');
+      const now = job.state === 'running' ? Date.now() : (job.finishedAt || Date.now());
+      const elapsed = job.startedAt ? ' · ' + formatElapsed(now - job.startedAt) : '';
+      name.textContent = job.label + ' · ' + AI_JOB_STATE_LABEL[job.state] + (job.state === 'queued' ? ' ' + (queued.indexOf(job) + 1) + '번째' : elapsed);
+      const detail = el('div', 'trd-job-detail');
+      detail.textContent = job.state === 'error' && job.message ? job.message : job.detail;
+      detail.title = job.detail + (job.message ? '\n' + job.message : '');
+      main.append(name, detail);
+      row.appendChild(main);
+      const actions = el('div', 'trd-job-actions');
+      const addBtn = (text, title, fn, disabled) => {
+        const b = el('button', 'trd-jobs-btn');
+        b.type = 'button';
+        b.textContent = text;
+        b.title = title;
+        b.disabled = !!disabled;
+        b.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); fn(); });
+        actions.appendChild(b);
+      };
+      if (job.state === 'queued') {
+        const qi = queued.indexOf(job);
+        addBtn('↑', '먼저 실행', () => moveAiJob(job, -1), qi === 0);
+        addBtn('↓', '나중에 실행', () => moveAiJob(job, 1), qi === queued.length - 1);
+      }
+      if (job.state === 'queued' || job.state === 'running') {
+        addBtn('취소', job.state === 'running' ? '실행 중인 AI를 멈추고 결과를 버립니다' : '대기열에서 뺍니다', () => cancelAiJob(job));
+      } else {
+        addBtn('✕', '목록에서 지우기', () => { aiJobs = aiJobs.filter(j => j !== job); refreshJobViews(); });
+      }
+      row.appendChild(actions);
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+    return panel;
+  }
+
+  function sendAiBridgeViaBackground(action, payload, requestId) {
     return new Promise(resolve => {
       try {
         chrome.runtime.sendMessage({
           type: 'typo:aiBridge',
           action,
+          requestId: requestId || '',
           payload: payload || {}
         }, res => {
           if (chrome.runtime.lastError) {
@@ -4738,7 +5447,9 @@
   function aiBridgeError(res, fallbackMessage) {
     const code = res && (res.error || res.message);
     let userMessage = fallbackMessage;
-    if (code === 'bridge_unavailable') {
+    if (code === 'canceled') {
+      userMessage = '작업 큐에서 취소했습니다';
+    } else if (code === 'bridge_unavailable') {
       userMessage = '로컬 브리지가 꺼져 있습니다 · 터미널에서 브리지를 실행하세요';
     } else if (code === 'external_features_disabled') {
       userMessage = '브릿지/외부 기능이 꺼져 있습니다 · 설정에서 켜세요';
@@ -6180,17 +6891,45 @@
     });
   }
 
+  // 짧은 안내는 떠 있는 토스트 대신 패널 아래 상태 표시줄에 잠시 보여 준다.
+  // 이름은 호출부가 많아 그대로 둔다. 안내가 사라지면 진행 중·완료된 작업 상태로 돌아간다.
   function showToast(text, options) {
-    if (!shadowRoot) return;
-    const toast = shadowRoot.getElementById('trd-toast');
-    if (!toast) return;
     const opts = options && typeof options === 'object' ? options : {};
-    toast.textContent = text;
-    toast.classList.add('trd-show');
+    const message = String(text || '').trim();
     clearTimeout(toastTimer);
+    if (!message) {
+      statusNotice = null;
+      refreshStatusBar();
+      return;
+    }
+    const durationMs = Number.isFinite(Number(opts.durationMs)) ? Math.max(500, Number(opts.durationMs)) : 2000;
+    statusNotice = {
+      text: message,
+      error: opts.error === true || /실패|못했|없습니다|찾지 못|오류|꺼져/.test(message)
+    };
+    refreshStatusBar();
     if (opts.persist === true) return;
-    const durationMs = Number.isFinite(Number(opts.durationMs)) ? Math.max(500, Number(opts.durationMs)) : 1500;
-    toastTimer = setTimeout(() => toast.classList.remove('trd-show'), durationMs);
+    // 상태 표시줄은 한 줄이라 토스트보다 조금 더 오래 둔다
+    toastTimer = setTimeout(() => {
+      statusNotice = null;
+      refreshStatusBar();
+    }, durationMs + 1000);
+  }
+
+  // 패널 전체를 다시 그리지 않고 상태 표시줄만 바꾼다(입력 중인 창의 포커스를 지키기 위해).
+  function refreshStatusBar() {
+    if (!shadowView) return;
+    const panel = shadowView.querySelector('.trd-panel');
+    if (!panel) return;
+    const old = panel.querySelector('.trd-statusbar');
+    const next = buildStatusBar();
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next) {
+      const foot = panel.querySelector('.trd-foot');
+      if (foot) foot.after(next);
+      else panel.appendChild(next);
+    }
   }
 
   // ---------- 상태 전환 ----------

@@ -210,3 +210,165 @@ test('a redrawn text item becomes a borderless text box with its measured color'
   const node = out.find(c => c[0] === 3 && c[2] === 7);
   assert.equal(node[4][node[4].indexOf(15) + 1], '#434343');
 });
+
+test('tree of ellipse nodes attaches edges like the chapter 7 drawings (parent lower corner → child top)', () => {
+  const D = 32.8;
+  const node = (id, text, cx, cy) => ({ id, type: 'node', text, rect: [cx - D / 2, cy - D / 2, D, D], shapeType: 8, fill: '#FFFFFF', line: '#000000', weight: 0.53, size: 10 });
+  const cmds = commandsOf(clip.buildDrawingPayload({
+    mode: 'diagram',
+    items: [
+      node('r', '7', 100, 20), node('a', '5', 50, 70), node('b', '13', 150, 70), node('c', '12', 220, 100), node('d', '1', 100, 70),
+      { type: 'arrow', from: 'r', to: 'a', head: 'small' },
+      { type: 'arrow', from: 'r', to: 'b', head: 'small' },
+      { type: 'arrow', from: 'b', to: 'c', head: 'none' },
+      { type: 'arrow', from: 'r', to: 'd', head: 'none' }
+    ]
+  }));
+  const shapes = cmds.filter(c => c[0] === 3 && c[2] === 8);
+  assert.equal(shapes.length, 5);
+  const idOf = text => cmds.find(c => c[0] === 15 && c[4] === text)[1];
+  const lines = cmds.filter(c => c[0] === 3 && c[2] === 153);
+  const ends = l => { const p = l[4]; return [p[p.indexOf(51) + 1], p[p.indexOf(52) + 1], p.includes(29) ? p[p.indexOf(29) + 1] : 0]; };
+  assert.deepEqual(ends(lines[0]), [[idOf('7'), 3], [idOf('5'), 0], 5]); // 왼쪽 아래 → 위, 작은 화살촉
+  assert.deepEqual(ends(lines[1]), [[idOf('7'), 5], [idOf('13'), 0], 5]); // 오른쪽 아래 → 위
+  assert.deepEqual(ends(lines[2]), [[idOf('13'), 5], [idOf('12'), 1], 0]); // 비스듬히 내려가면 자식 왼쪽 위
+  assert.deepEqual(ends(lines[3]), [[idOf('7'), 4], [idOf('1'), 0], 0]); // 바로 아래 자식은 아래 → 위
+
+  // 선의 시작점이 원 둘레의 왼쪽 아래(225도)에 있다
+  const [, , , , tx, ty] = lines[0][3];
+  const r = D / 2;
+  assert.ok(Math.abs(tx / 508 - (20 + 100 - r * Math.SQRT1_2)) < 0.01);
+  assert.ok(Math.abs(ty / 508 - (20 + 20 + r * Math.SQRT1_2)) < 0.01);
+});
+
+test('reading a drawing names ellipse connection sites and the small arrowhead', () => {
+  const spec = clip.drawingCommandsToSpec([
+    [3, 'p', 8, [0.1389, 0, 0, 0.1389, 91711, 57084], [14, 1, 22, 268, 15, '#FFFFFF', 19, '#000000'], 'p'],
+    [3, 'c', 8, [0.1389, 0, 0, 0.1389, 57301, 84533], [14, 1, 22, 268, 15, '#FFFFFF', 19, '#000000'], 'p'],
+    [3, 'e', 153, [-0.2376, 0, 0, 0.1102, 94152, 71311], [14, 0, 22, 268, 51, ['p', 3], 52, ['c', 0], 19, '#000000', 29, 5], 'p']
+  ]);
+  const edge = spec.items.find(it => it.type === 'arrow');
+  assert.equal(edge.fromSite, 'bottomLeft');
+  assert.equal(edge.toSite, 'top');
+  assert.equal(edge.head, 'small');
+  const out = commandsOf(clip.buildDrawingPayload(spec)).find(c => c[0] === 3 && c[2] === 153)[4];
+  assert.equal(out[out.indexOf(29) + 1], 5);
+  assert.deepEqual(out[out.indexOf(51) + 1][1], 3);
+});
+
+test('text diagram draws tree nodes as house-style circles and leans a lone child to its side', () => {
+  const items = clip._test.layoutDiagram({
+    mode: 'diagram',
+    direction: 'TB',
+    items: [
+      { id: 'n50', type: 'node', shape: 'ellipse', text: '50' },
+      { id: 'n30', type: 'node', shape: 'ellipse', text: '30' },
+      { id: 'n70', type: 'node', shape: 'ellipse', text: '70' },
+      { id: 'n60', type: 'node', shape: 'ellipse', text: '60' },
+      { type: 'arrow', from: 'n50', to: 'n70', head: 'arrow', side: 'right' },
+      { type: 'arrow', from: 'n50', to: 'n30', head: 'arrow', side: 'left' },
+      { type: 'arrow', from: 'n70', to: 'n60', head: 'arrow', side: 'left' }
+    ]
+  });
+  const node = id => items.find(it => it.id === id);
+  const cx = id => node(id).rect[0] + node(id).rect[2] / 2;
+  for (const id of ['n50', 'n30', 'n70', 'n60']) {
+    assert.equal(node(id).shapeType, 8);
+    assert.equal(node(id).rect[2], 32.8);
+    assert.equal(node(id).rect[3], 32.8);
+    assert.equal(node(id).fill, '#FFFFFF');
+    assert.equal(node(id).weight, 0.53);
+  }
+  // 왼쪽 자식이 먼저, 외자식 60은 70의 왼쪽 아래
+  assert.ok(cx('n30') < cx('n50') && cx('n50') < cx('n70'));
+  assert.ok(cx('n60') < cx('n70'));
+  const edges = items.filter(it => it.type === 'arrow');
+  for (const e of edges) {
+    assert.equal(e.kind, 'straight');
+    assert.equal(e.head, 'small');
+    assert.equal(e.side, undefined);
+    assert.equal(e.fromSite, undefined);
+  }
+  const cmds = commandsOf(clip.buildDrawingPayload({ mode: 'diagram', direction: 'TB', items: [
+    { id: 'a', type: 'node', shape: 'ellipse', text: '1' },
+    { id: 'b', type: 'node', shape: 'ellipse', text: '2' },
+    { type: 'arrow', from: 'a', to: 'b', head: 'arrow', side: 'left' }
+  ] }));
+  assert.equal(cmds.filter(c => c[0] === 3 && c[2] === 8).length, 2);
+  const line = cmds.find(c => c[0] === 3 && c[2] === 153)[4];
+  assert.equal(line[line.indexOf(29) + 1], 5);
+  assert.equal(line[line.indexOf(51) + 1][1], 3); // 왼쪽 아래 연결점
+});
+
+test('speech bubble keeps its callout shape type and points its tail at the target', () => {
+  const cmds = commandsOf(clip.buildDrawingPayload({
+    mode: 'diagram',
+    items: [
+      { id: 'n50', type: 'node', text: '50', shapeType: 8, rect: [100, 100, 32.8, 32.8] },
+      { id: 'b1', type: 'node', text: '루트 노드', shapeType: 107, fill: '#FFFFFF', line: '#000000', weight: 0.75, rect: [180, 40, 80, 30], tailTo: 'n50' },
+      { id: 'b2', type: 'node', text: '여기', shapeType: 162, rect: [0, 0, 40, 20], tail: [20, 60] }
+    ]
+  }));
+  const shape = id => cmds.filter(c => c[0] === 3 && [107, 162].includes(c[2]));
+  const [b1, b2] = shape();
+  assert.equal(b1[2], 107);
+  const props = c => { const m = new Map(); for (let i = 0; i + 1 < c[4].length; i += 2) m.set(c[4][i], c[4][i + 1]); return m; };
+  const p1 = props(b1);
+  // 말풍선(중심 220,55)에서 왼쪽 아래 50 노드(중심 116.4,116.4) 쪽: 꼬리 끝은 왼쪽 아래, 노드 테두리 근처
+  assert.ok(p1.get(0) < -100000 && p1.get(0) > -130000, String(p1.get(0)));
+  assert.ok(p1.get(1) > 100000 && p1.get(1) < 200000, String(p1.get(1)));
+  assert.equal(b2[2], 162);
+  const p2 = props(b2);
+  assert.equal(p2.get(0), 0);
+  assert.equal(p2.get(1), 250000);
+});
+
+test('preview model reads back shapes, text and connectors from the payload', () => {
+  const payload = clip.buildDrawingPayload({
+    mode: 'diagram',
+    items: [
+      { id: 'a', type: 'node', text: '요청' },
+      { id: 'b', type: 'node', text: '서버' },
+      { id: 'c', type: 'node', text: '응답' },
+      { id: 'e1', type: 'arrow', from: 'a', to: 'b' },
+      { id: 'e2', type: 'arrow', from: 'a', to: 'c' }
+    ]
+  });
+  const model = clip.previewModel(payload);
+  const boxes = model.shapes.filter(s => s.kind === 'rect');
+  const lines = model.shapes.filter(s => s.kind === 'line');
+  assert.deepEqual(boxes.map(b => b.text).sort(), ['서버', '요청', '응답']);
+  assert.equal(lines.length, 2);
+  const a = boxes.find(b => b.text === '요청');
+  const b = boxes.find(x => x.text === '서버');
+  for (const line of lines) {
+    // 선은 부모 아래 가운데에서 출발해 자식 윗변에 닿는다
+    assert.ok(Math.abs(line.x1 - (a.x + a.w / 2)) < 0.1);
+    assert.ok(Math.abs(line.y1 - (a.y + a.h)) < 0.1);
+    assert.equal(line.endHead, 7);
+  }
+  const toB = lines.find(l => Math.abs(l.x2 - (b.x + b.w / 2)) < 0.1);
+  assert.ok(toB && Math.abs(toB.y2 - b.y) < 0.1);
+  assert.ok(model.box[2] > 0 && model.box[3] > 0);
+});
+
+test('preview svg is built with DOM calls only', () => {
+  const made = [];
+  const fakeDoc = {
+    createElementNS(ns, tag) {
+      const node = { tag, attrs: {}, children: [], textContent: '',
+        setAttribute(k, v) { this.attrs[k] = v; },
+        appendChild(c) { this.children.push(c); return c; } };
+      made.push(node);
+      return node;
+    }
+  };
+  const payload = clip.buildDrawingPayload({
+    mode: 'annotate',
+    items: [{ id: 'b1', type: 'box', rect: [10, 10, 50, 20] }]
+  }, { dataUrl: 'data:image/png;base64,AAAA', width: 200, height: 100 });
+  const svg = clip.buildPreviewSvg(payload, fakeDoc);
+  assert.equal(svg.tag, 'svg');
+  assert.ok(made.some(n => n.tag === 'image' && n.attrs.href === 'data:image/png;base64,AAAA'));
+  assert.ok(made.some(n => n.tag === 'rect' && n.attrs.stroke === '#FF0000'));
+});

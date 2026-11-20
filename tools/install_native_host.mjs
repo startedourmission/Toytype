@@ -13,7 +13,13 @@ const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST_NAME = 'com.toytype.bridge_host';
 const HOST_SCRIPT = path.join(TOOL_DIR, 'toytype_native_host.mjs');
 const LAUNCHER_PATH = path.join(TOOL_DIR, 'toytype_native_host.sh');
-const EXTENSION_ID = 'gaampopggbpabdfceaappkbkknaikfph';
+// 개발용(압축해제 로드, manifest key 고정) ID와 웹 스토어 배포본 ID. 스토어 ID는 대시보드에 항목을 만든 뒤 채운다.
+// 다른 ID를 임시로 더하려면: node tools/install_native_host.mjs --extension-id <id>
+const DEV_EXTENSION_ID = 'gaampopggbpabdfceaappkbkknaikfph';
+const STORE_EXTENSION_ID = '';
+const extraIdIndex = process.argv.indexOf('--extension-id');
+const EXTENSION_IDS = [DEV_EXTENSION_ID, STORE_EXTENSION_ID, extraIdIndex > 0 ? process.argv[extraIdIndex + 1] : '']
+  .filter((id, i, all) => /^[a-p]{32}$/.test(id || '') && all.indexOf(id) === i);
 
 // Chrome 계열마다 호스트 매니페스트를 읽는 위치가 다르다.
 const TARGET_DIRS = [
@@ -53,7 +59,7 @@ function install() {
     description: 'Toytype local AI bridge launcher',
     path: LAUNCHER_PATH,
     type: 'stdio',
-    allowed_origins: ['chrome-extension://' + EXTENSION_ID + '/']
+    allowed_origins: EXTENSION_IDS.map(id => 'chrome-extension://' + id + '/')
   };
 
   const installed = [];
@@ -77,7 +83,7 @@ function install() {
   console.log('  런처: ' + LAUNCHER_PATH);
   for (const line of installed) console.log('  ' + line);
   console.log('');
-  console.log('확장 ID: ' + EXTENSION_ID);
+  console.log('확장 ID: ' + EXTENSION_IDS.join(', '));
   console.log('다음: Chrome에서 확장을 새로고침한 뒤, 툴바 팝업에서 [연결]을 누르세요.');
 }
 

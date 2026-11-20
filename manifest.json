@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Toytype",
+  "name": "토인비 편집",
   "version": "1.0.0",
   "description": "내장 규칙으로 웹페이지와 구글 독스 원고의 오탈자를 찾고, 구글 독스에서는 문서 위치 선택을 지원합니다.",
   "minimum_chrome_version": "114",
@@ -17,7 +17,7 @@
     "128": "icons/icon-128.png"
   },
   "action": {
-    "default_title": "Toytype",
+    "default_title": "토인비 편집",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
