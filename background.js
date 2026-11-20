@@ -1,6 +1,7 @@
 import { GaruBase } from './third_party/garu-ko/dist/core.js';
 import initGaruWasm, { GaruWasm } from './third_party/garu-ko/pkg/garu_wasm.js';
 import { createLocalTermConsistencyEngine } from './term-consistency.mjs';
+import { createAiJobStore, publicJobRecord, AI_JOB_STORE_KEY } from './ai-job-store.mjs';
 
 // Toytype — background service worker
 // 역할: 탭 배지 갱신 + rules.json 로드·배포 + 로컬 AI 브리지 프록시.
@@ -157,6 +158,75 @@ async function fetchImageAsDataUrl(url) {
 
 // 작업 큐에서 취소한 요청을 끊기 위한 컨트롤러. 연결이 끊기면 브리지가 실행 중인 CLI도 끝낸다.
 const aiRequestControllers = new Map();
+
+// AI 작업 기록: 페이지를 새로고침해도 작업과 결과를 이어받게 session 저장소에 둔다.
+const aiJobStore = createAiJobStore({
+  read: () => chrome.storage.session.get(AI_JOB_STORE_KEY).then(items => items && items[AI_JOB_STORE_KEY]),
+  write: records => chrome.storage.session.set({ [AI_JOB_STORE_KEY]: records }),
+  isLive: id => aiRequestControllers.has(id)
+});
+// 새로고침한 페이지가 실행 중인 작업의 끝을 기다리는 응답 콜백
+const aiJobWaiters = new Map();
+
+function notifyAiJobWaiters(id, rec) {
+  const waiters = aiJobWaiters.get(id);
+  if (!waiters) return;
+  aiJobWaiters.delete(id);
+  const out = rec ? Object.assign(publicJobRecord(rec), { result: rec.result || null }) : null;
+  for (const send of waiters) {
+    try { send({ ok: true, job: out }); } catch (_) { /* 기다리던 탭이 닫힘 */ }
+  }
+}
+
+async function runTrackedAiJob(path, payload, requestId, job) {
+  if (requestId && job && job.docId) {
+    await aiJobStore.start(requestId, Object.assign({}, job, { payload })).catch(() => {});
+  }
+  const res = await callAiBridge(path, payload, requestId);
+  if (requestId && job && job.docId) {
+    const rec = await aiJobStore.finish(requestId, res).catch(() => null);
+    notifyAiJobWaiters(requestId, rec ? Object.assign({}, rec, { result: res && res.ok ? res : null }) : null);
+  }
+  return res;
+}
+
+function handleAiJobMessage(msg, sendResponse) {
+  const docId = String(msg.docId || '');
+  const fail = error => sendResponse({ ok: false, error: 'ai_job_store_failed', message: error && error.message ? error.message : String(error) });
+  if (msg.type === 'typo:aiJobsSyncQueue') {
+    aiJobStore.syncQueue(docId, msg.jobs).then(() => sendResponse({ ok: true }), fail);
+    return true;
+  }
+  if (msg.type === 'typo:aiJobsList') {
+    aiJobStore.list(docId).then(list => sendResponse({ ok: true, jobs: list.map(publicJobRecord) }), fail);
+    return true;
+  }
+  if (msg.type === 'typo:aiJobAwait') {
+    const id = String(msg.id || '');
+    aiJobStore.get(id).then(rec => {
+      if (!rec || rec.state !== 'running' || !aiRequestControllers.has(id)) {
+        sendResponse({ ok: true, job: rec ? Object.assign(publicJobRecord(rec), { result: rec.acked ? null : rec.result || null }) : null });
+        return;
+      }
+      if (!aiJobWaiters.has(id)) aiJobWaiters.set(id, []);
+      aiJobWaiters.get(id).push(sendResponse);
+    }, fail);
+    return true;
+  }
+  if (msg.type === 'typo:aiJobAck') {
+    aiJobStore.ack(String(msg.id || '')).then(() => sendResponse({ ok: true }), fail);
+    return true;
+  }
+  if (msg.type === 'typo:aiJobRemove') {
+    aiJobStore.remove(Array.isArray(msg.ids) ? msg.ids.map(String) : [String(msg.id || '')]).then(() => sendResponse({ ok: true }), fail);
+    return true;
+  }
+  if (msg.type === 'typo:aiJobPayload') {
+    aiJobStore.get(String(msg.id || '')).then(rec => sendResponse({ ok: !!(rec && rec.payload), payload: rec ? rec.payload : null, meta: rec ? rec.meta : null }), fail);
+    return true;
+  }
+  return undefined;
+}
 
 async function callAiBridge(path, payload, requestId) {
   const settings = await readSettings();
@@ -410,6 +480,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (typeof msg.type === 'string' && msg.type.startsWith('typo:aiJob')) {
+    return handleAiJobMessage(msg, sendResponse);
+  }
+
   if (msg.type === 'typo:aiBridge') {
     const action = msg.action;
     const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
@@ -437,7 +511,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
         return null;
       }
-      return callAiBridge(path, payload, typeof msg.requestId === 'string' ? msg.requestId : '').then(sendResponse, error => {
+      const job = msg.job && typeof msg.job === 'object' ? msg.job : null;
+      return runTrackedAiJob(path, payload, typeof msg.requestId === 'string' ? msg.requestId : '', job).then(sendResponse, error => {
         sendResponse({ ok: false, error: 'bridge_internal', message: error && error.message ? error.message : String(error) });
       });
     }).catch(error => {

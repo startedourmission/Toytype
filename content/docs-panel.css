@@ -163,6 +163,9 @@ details.trd-cat > summary:hover { background: #f8f9fa; }
   padding: 8px 74px 9px 18px;
   border-top: 1px solid #f5f6f7;
   cursor: pointer;
+  /* 화면 밖 항목은 배치·그리기를 건너뛴다(지적이 수백 개인 긴 원고) */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
 }
 .trd-item:hover { background: #f8f9fa; }
 .trd-item.trd-selected {

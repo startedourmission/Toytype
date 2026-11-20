@@ -17,6 +17,7 @@ const INCLUDE = [
   'background.js',
   'engine.js',
   'term-consistency.mjs',
+  'ai-job-store.mjs',
   'rules.json',
   'popup.html', 'popup.css', 'popup.js',
   'options.html', 'options.css', 'options.js',
