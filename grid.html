@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>토인비 편집 · 격자 보기</title>
+<link rel="stylesheet" href="grid.css">
+</head>
+<body>
+<header class="g-bar">
+  <div class="g-brand"><span class="g-logo">토</span><span class="g-title">격자 보기</span><span class="g-sub" id="g-sub"></span></div>
+  <div class="g-progress"><div class="g-progress-fill" id="g-progress-fill"></div></div>
+</header>
+<div class="g-main">
+  <main class="g-grid" id="g-grid"></main>
+  <aside class="g-chat">
+    <div class="g-chat-head">
+      <div class="g-chat-title">에이전트</div>
+      <label class="g-opt" title="동시에 일하는 AI 에이전트 수">인원
+        <select id="g-conc"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
+      </label>
+      <label class="g-opt" title="켜면 에이전트가 고친 곳을 문서에 바로 반영합니다. 끄면 제안만 받고 직접 승인합니다.">
+        <input type="checkbox" id="g-auto"> 바로 적용
+      </label>
+      <button type="button" class="g-btn" id="g-stop" disabled>멈춤</button>
+    </div>
+    <div class="g-log" id="g-log"></div>
+    <div class="g-presets" id="g-presets"></div>
+    <form class="g-compose" id="g-compose">
+      <textarea id="g-input" rows="3" placeholder="에이전트에게 지시하세요 · 예) 합니다체로 통일해 줘 (⌘Enter 보내기)"></textarea>
+      <button type="submit" class="g-btn g-primary" id="g-send">보내기</button>
+    </form>
+  </aside>
+</div>
+<script src="content/doc-tools.js"></script>
+<script src="grid.js"></script>
+</body>
+</html>

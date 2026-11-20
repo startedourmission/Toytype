@@ -2,12 +2,41 @@ import { GaruBase } from './third_party/garu-ko/dist/core.js';
 import initGaruWasm, { GaruWasm } from './third_party/garu-ko/pkg/garu_wasm.js';
 import { createLocalTermConsistencyEngine } from './term-consistency.mjs';
 import { createAiJobStore, publicJobRecord, AI_JOB_STORE_KEY } from './ai-job-store.mjs';
+import { handleDriveMessage } from './drive-service.mjs';
 
 // Toytype — background service worker
 // 역할: 탭 배지 갱신 + rules.json 로드·배포 + 로컬 AI 브리지 프록시.
 'use strict';
 
 chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+
+// 격자 보기(확장 페이지)가 구글 문서를 칸 안에 띄울 수 있게, 우리 확장이 연 하위 프레임에 한해서만
+// 프레임 차단 헤더(X-Frame-Options, CSP frame-ancestors)를 걷어 낸다. 일반 웹페이지의 프레임에는 적용되지 않는다.
+const GRID_FRAME_RULE_ID = 1701;
+const gridFrameReports = [];
+function installGridFrameRule() {
+  if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateSessionRules) return;
+  chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [GRID_FRAME_RULE_ID],
+    addRules: [{
+      id: GRID_FRAME_RULE_ID,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'x-frame-options', operation: 'remove' },
+          { header: 'content-security-policy', operation: 'remove' }
+        ]
+      },
+      condition: {
+        regexFilter: '^https://docs\\.google\\.com/document/',
+        resourceTypes: ['sub_frame'],
+        initiatorDomains: [chrome.runtime.id]
+      }
+    }]
+  }).catch(error => console.warn('[Toytype grid] frame rule failed', error));
+}
+installGridFrameRule();
 
 // SW 재기동 시 사라지는 모듈 레벨 캐시 — 재fetch가 정상 동작이다.
 let rulesCache = null;
@@ -376,6 +405,7 @@ function aiBridgePath(action) {
     health: '/health',
     test: '/ai/test',
     proofread: '/ai/proofread',
+    proofreadChunk: '/ai/proofread-chunk',
     terms: '/ai/terms',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',
@@ -478,6 +508,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (abort) abort();
     sendResponse({ ok: true, aborted: !!abort });
     return;
+  }
+
+  if (msg.type === 'typo:gridFrameReport') {
+    gridFrameReports.unshift(Object.assign({ at: Date.now(), frameUrl: String(sender && sender.url || '').slice(0, 120) }, msg.report || {}));
+    gridFrameReports.length = Math.min(gridFrameReports.length, 20);
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.type === 'typo:driveGridFrameReports') {
+    sendResponse({ ok: true, reports: gridFrameReports });
+    return;
+  }
+
+  if (msg.type === 'typo:devReload') {
+    // 스토어판(update_url 있음)에서는 무시한다
+    if (!('update_url' in chrome.runtime.getManifest())) setTimeout(() => chrome.runtime.reload(), 100);
+    sendResponse({ ok: true });
+    return;
+  }
+
+  if (typeof msg.type === 'string' && msg.type.startsWith('typo:drive')) {
+    // 드라이브·문서 화면의 콘텐트 스크립트만 문서 export를 요청할 수 있다
+    const from = String(sender && (sender.url || (sender.tab && sender.tab.url)) || '');
+    const ownPage = sender && sender.id === chrome.runtime.id && from.startsWith(chrome.runtime.getURL(''));
+    if (!ownPage && !/^https:\/\/(drive|docs)\.google\.com\//.test(from)) {
+      sendResponse({ ok: false, error: 'forbidden_sender' });
+      return;
+    }
+    return handleDriveMessage(msg, sendResponse, sender);
   }
 
   if (typeof msg.type === 'string' && msg.type.startsWith('typo:aiJob')) {

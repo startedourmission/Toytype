@@ -247,6 +247,15 @@
   }
 
   async function extractImagesFromDocx(arrayBuffer) {
+    const { files, skippedImageCount } = await extractImageFilesFromDocx(arrayBuffer);
+    if (!files.length) {
+      return { fileName: '', bytes: null, imageCount: 0, skippedImageCount };
+    }
+    return { fileName: '', bytes: createStoredZip(files), imageCount: files.length, skippedImageCount };
+  }
+
+  // 본문에 나오는 순서대로 번호를 붙인 이미지 파일 목록 (드라이브에서 여러 문서를 한 ZIP으로 묶을 때 쓴다)
+  async function extractImageFilesFromDocx(arrayBuffer) {
     if (!looksLikeZip(arrayBuffer)) throw new Error('docx export is not a zip');
     const pkg = await readZipPackage(arrayBuffer);
     const targets = docxImageTargetsInOrder(pkg.files);
@@ -266,15 +275,12 @@
       }
       images.push({ sourcePath: target, data: item.data });
     }
-    if (!images.length) {
-      return { fileName: '', bytes: null, imageCount: 0, skippedImageCount };
-    }
     const width = Math.max(3, String(images.length).length);
     const files = images.map((image, index) => ({
       name: String(index + 1).padStart(width, '0') + '.' + imageExt('', image.sourcePath, image.data),
       data: image.data
     }));
-    return { fileName: '', bytes: createStoredZip(files), imageCount: images.length, skippedImageCount };
+    return { files, skippedImageCount };
   }
 
   function docxImageTargetsInOrder(files) {
@@ -2871,6 +2877,9 @@ ${styleXml(STYLE_FOOTNOTE, '각주', 'Footnote', PARA_FOOTNOTE, CHAR_FOOTNOTE, S
     exportGoogleDoc,
     extractGoogleDocImages,
     downloadBytes,
+    extractImageFilesFromDocx,
+    createStoredZip,
+    safeFileName,
     _internal: {
       extractImagesFromDocx,
       buildHwpx,

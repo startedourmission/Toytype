@@ -18,9 +18,11 @@ const INCLUDE = [
   'engine.js',
   'term-consistency.mjs',
   'ai-job-store.mjs',
+  'drive-service.mjs',
   'rules.json',
   'popup.html', 'popup.css', 'popup.js',
   'options.html', 'options.css', 'options.js',
+  'grid.html', 'grid.css', 'grid.js',
   'content',
   'icons',
   'third_party'

@@ -2761,6 +2761,125 @@ async function generateLengthAdjustment(body) {
   };
 }
 
+// ---------- 구간 교정 (격자 보기) ----------
+// 문서를 절 단위 구간으로 나눠 보내면 구간마다 지적을 바로 돌려준다. 규칙 파일은 만들지 않는다.
+// 격자 보기는 이 응답이 올 때마다 해당 구간까지 커서를 옮기고 지적을 칠한다.
+const PROOFREAD_CHUNK_MAX_CHARS = 12000;
+const PROOFREAD_CHUNK_MAX_FINDINGS = 40;
+
+export function buildProofreadChunkPrompt(document) {
+  const text = String(document.text || '').slice(0, PROOFREAD_CHUNK_MAX_CHARS);
+  const instruction = String(document.instruction || '').trim().slice(0, 2000);
+  return [
+    'You are a Korean IT-book copy editor working on ONE section of a manuscript, as one of several editing agents.',
+    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}]}. No markdown.',
+    instruction
+      ? 'The editor-in-chief asked (follow this; it overrides the default focus below, but never touch code, identifiers, URLs): <<<' + instruction + '>>>'
+      : 'Task: general proofreading of this section.',
+    ...chunkHistoryLines(document.history),
+    '- note: one short Korean sentence telling the editor-in-chief what you did in this section (e.g. "존댓말 3곳을 통일했습니다"). If nothing to change, say so briefly.',
+    untrustedManuscriptDataInstructions(),
+    projectSpecificRuleInstructions(),
+    manuscriptNotationInstructions(),
+    '',
+    'Rules:',
+    '- source must be copied exactly from the section text (same spacing and punctuation) and be short: the smallest phrase that pins the location, normally 4-40 characters.',
+    '- replacement is the corrected text for that exact source.',
+    '- reason: one short Korean sentence.',
+    '- category: one of 비문, 윤문, 맞춤법, 용어, 사실, 기타.',
+    '- Simple spelling and spacing are already handled by a deterministic rule engine. Focus on 비문, awkward phrasing, unclear sentences, wrong technical statements, inconsistent terms.',
+    '- Skip code, identifiers, URLs, file paths, and command lines.',
+    '- Do not rewrite whole paragraphs. If nothing needs fixing, return {"findings":[]}.',
+    `- At most ${PROOFREAD_CHUNK_MAX_FINDINGS} findings, most important first.`,
+    '',
+    'Section metadata:',
+    JSON.stringify({ title: document.title || '', section: (Number(document.chunkIndex) || 0) + 1, sections: Number(document.chunkCount) || 1 }),
+    '',
+    '<<<TOYTYPE_DOCUMENT_TEXT',
+    text,
+    'TOYTYPE_DOCUMENT_TEXT'
+  ].join('\n');
+}
+
+// 같은 격자 세션의 앞선 지시와 결과 요약. 새로 시작한 에이전트도 대화 흐름을 이어 가게 한다.
+function chunkHistoryLines(history) {
+  const turns = Array.isArray(history) ? history.slice(-6) : [];
+  if (!turns.length) return [];
+  const safe = turns.map(t => ({
+    instruction: String(t && t.instruction || '').slice(0, 400),
+    result: String(t && t.result || '').slice(0, 300),
+    notes: (Array.isArray(t && t.notes) ? t.notes : []).slice(0, 4).map(n => String(n).slice(0, 200)),
+    changes: (Array.isArray(t && t.changes) ? t.changes : []).slice(0, 15).map(c => String(c).slice(0, 160))
+  }));
+  return [
+    'Earlier in this editing session (most recent last). Use it to interpret references like "아까처럼" or "방금 고친 것"; do not redo edits marked [적용]:',
+    '<<<TOYTYPE_SESSION_HISTORY',
+    JSON.stringify(safe),
+    'TOYTYPE_SESSION_HISTORY'
+  ];
+}
+
+export function parseProofreadChunkFindings(response, text) {
+  const source = String(text || '');
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(String(response || ''));
+  } catch (_) {
+    parsed = null;
+  }
+  const list = parsed && Array.isArray(parsed.findings) ? parsed.findings : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const src = String(item && item.source || '');
+    const dst = String(item && item.replacement || '');
+    if (!src || src === dst || !source.includes(src)) continue; // 원문에 없는 문구는 버린다
+    const key = src + '\u0001' + dst;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      source: src,
+      replacement: dst,
+      reason: String(item && item.reason || '').slice(0, 300),
+      category: String(item && item.category || '기타').slice(0, 20),
+      offset: source.indexOf(src)
+    });
+    if (out.length >= PROOFREAD_CHUNK_MAX_FINDINGS) break;
+  }
+  return out.sort((a, b) => a.offset - b.offset);
+}
+
+// 에이전트가 이 구간에서 한 일을 한 문장으로 보고한 것(격자 보기 채팅창에 뜬다)
+export function parseProofreadChunkNote(response) {
+  try {
+    const parsed = extractJsonObject(String(response || ''));
+    return parsed && typeof parsed.note === 'string' ? parsed.note.trim().slice(0, 300) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function generateProofreadChunk(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  const text = String(document.text || '');
+  if (!text.trim()) throw new HttpError(400, 'document.text is required');
+  const run = await runProvider(provider, buildProofreadChunkPrompt(document), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  }
+  return {
+    ok: true,
+    provider,
+    note: parseProofreadChunkNote(run.response),
+    findings: parseProofreadChunkFindings(run.response, text.slice(0, PROOFREAD_CHUNK_MAX_CHARS)),
+    elapsedMs: run.elapsedMs
+  };
+}
+
 const DIAGRAM_OCR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'ocr_text_boxes.swift');
 const DIAGRAM_COLOR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'sample_box_colors.swift');
 // 글상자(그리기의 [텍스트 상자]) 원래 속성: 테두리·채우기 없음
@@ -3750,6 +3869,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/terms' || url.pathname === '/ai/terms') {
     await sendLoggedAiJson(res, 'Local terms', body, generateTermConsistency);
+    return;
+  }
+  if (url.pathname === '/ai/proofread-chunk') {
+    await sendLoggedAiJson(res, 'AI proofread chunk', body, generateProofreadChunk);
     return;
   }
   if (url.pathname === '/ai/question') {

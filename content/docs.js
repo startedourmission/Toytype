@@ -2,7 +2,16 @@
 // 검사는 본문을 수정하지 않는다. 사용자가 항목을 클릭하면 Google Docs 위치 선택과 교정어 복사만 시도한다.
 // 항목의 적용 버튼은 사용자가 직접 누를 때만 Google Docs 내부 찾기/바꾸기로 문서를 수정한다.
 'use strict';
+
 (() => {
+  // 목차 파서는 드라이브 버블과 같이 쓰는 content/doc-tools.js에 있다
+  const {
+    normalizeTocLine,
+    isFenceLine,
+    isBadTocText,
+    parseMarkdownExportHeadings,
+    formatExtractedToc
+  } = globalThis.ToytypeDocTools;
   const DEFAULT_SETTINGS = {
     schemaVersion: 1,
     docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
@@ -802,7 +811,7 @@
     if (stale) stale.remove(); // 이전 컨텍스트 잔재 — 호스트 div는 1개만
     host = document.createElement('div');
     host.id = 'typo-radar-root';
-    host.style.cssText = 'position:fixed;right:24px;bottom:96px;z-index:2147483646;';
+    host.style.cssText = 'position:fixed;right:24px;bottom:96px;z-index:2147483646;' + (GRID_FRAME ? 'display:none;' : '');
     shadowRoot = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
     style.textContent = await loadPanelCss();
@@ -5856,39 +5865,9 @@
       .finally(() => clearTimeout(timer));
   }
 
-  function parseMarkdownExportHeadings(markdown) {
-    const lines = String(markdown || '').split('\n');
-    const headings = [];
-    let inFence = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (isFenceLine(line)) {
-        inFence = !inFence;
-        continue;
-      }
-      if (inFence) continue;
-      const m = line.match(/^(#{1,6})\s+(\S.*)$/);
-      if (!m) continue;
-      const level = m[1].length;
-      if (level > 5) continue;
-      const text = cleanMarkdownHeadingText(m[2]);
-      if (!text || isBadTocText(text)) continue;
-      headings.push({ level, text, raw: line, line: i + 1 });
-    }
-    return { headings, lineCount: lines.length, source: 'md-export' };
-  }
 
-  function cleanMarkdownHeadingText(text) {
-    let s = String(text || '').trim();
-    s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1'); // 링크는 표시 텍스트만
-    // 강조 마커 제거 — \*처럼 이스케이프된 리터럴은 건드리지 않는다
-    s = s.replace(/(?<!\\)\*\*(.+?)\*\*/g, '$1');
-    s = s.replace(/(?<!\\)\*([^*]+)\*/g, '$1');
-    s = s.replace(/(?<!\\)~~(.+?)~~/g, '$1');
-    s = s.replace(/(?<!\\)`([^`]+)`/g, '$1');
-    s = s.replace(/\\([!-/:-@[-`{-~])/g, '$1'); // export가 이스케이프한 특수문자 복원
-    return normalizeTocLine(s);
-  }
+
+
 
   function extractTocFromDomOutline() {
     const selectors = [
@@ -6089,34 +6068,15 @@
     return { headings, lineCount: lines.length, source: 'text' };
   }
 
-  function normalizeTocLine(line) {
-    const s = String(line || '')
-      .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!s || s.length > 90) return '';
-    if (/^[.\-_=*•·\s]+$/.test(s)) return '';
-    if (/^https?:\/\//i.test(s)) return '';
-    return s;
-  }
 
-  function isFenceLine(line) {
-    return /^(```|~~~)/.test(line || '');
-  }
+
+
 
   function isMarkdownHeadingLine(line) {
     return /^#{1,6}\s+\S/.test(line || '');
   }
 
-  function isBadTocText(line) {
-    const s = String(line || '').trim();
-    if (!s) return true;
-    if (/^<\/?[^>]+>$/.test(s)) return true;
-    if (/^[{}[\]();,./\\|`~@$%^&*_+=-]+$/.test(s)) return true;
-    if (/^(양식|예시|예제|샘플|템플릿|출력|입력)$/.test(s)) return true;
-    if (/^(회의록 요약|1분 꿀팁)$/.test(s)) return true;
-    return false;
-  }
+
 
   function detectExplicitTocLevel(line) {
     if (/^(PART|Part|파트|부)\s*[0-9IVXLC가-힣]*[ .:：-]?\s*\S+/.test(line)) return 1;
@@ -6179,24 +6139,9 @@
     return String(line || '').trim();
   }
 
-  function formatExtractedToc(title, result) {
-    const lines = [];
-    if (!result.headings.length) {
-      lines.push('목차를 찾지 못했습니다.');
-      return lines.join('\n');
-    }
-    for (const h of result.headings) {
-      const rawLevel = Math.max(1, Number(h.level) || 1);
-      if (rawLevel > 5) continue;
-      const level = Math.min(5, rawLevel);
-      lines.push(tocIndentPrefix(level) + h.text);
-    }
-    return lines.join('\n');
-  }
 
-  function tocIndentPrefix(level) {
-    return level <= 1 ? '' : '_'.repeat(level - 1);
-  }
+
+
 
   function handleRulesJsonUpload(file) {
     file.text().then(text => {
@@ -7251,7 +7196,7 @@
     }
     await injectPanel();
     await loadCachedGeneratedRulesList();
-    injectPageBridgeScript();
+    if (!GRID_FRAME) injectPageBridgeScript();
     refreshGeneratedRulesListQuiet();
     return enqueueScan(true);
   }
@@ -7296,7 +7241,198 @@
 
   // ---------- 초기화 ----------
 
+  // 프레임 안: 우리 격자 보기가 띄운 문서 칸에서만 동작한다(구글이 자체로 띄운 프레임에서는 쉰다)
+  const IN_FRAME = window.top !== window;
+  const GRID_FRAME = IN_FRAME && window.parent === window.top && (() => {
+    try {
+      const anc = location.ancestorOrigins;
+      return !!anc && anc.length > 0 && anc[anc.length - 1] === 'chrome-extension://' + chrome.runtime.id;
+    } catch (_) {
+      return false;
+    }
+  })();
+
+  function reportGridFrame() {
+    if (!GRID_FRAME) return;
+    const report = {
+      docId: getDocId(),
+      title: document.title,
+      hasEditor: !!document.querySelector('.kix-appview-editor'),
+      signInLink: !!document.querySelector('a[href*="ServiceLogin"], a[href*="accounts.google.com/signin"]'),
+      pages: measureEditorPages(),
+      bridgeReady: !!pageBridgeReady,
+      sinceLoadMs: Math.round(performance.now())
+    };
+    try { chrome.runtime.sendMessage({ type: 'typo:gridFrameReport', report }, () => { void chrome.runtime.lastError; }); } catch (_) { /* 무시 */ }
+    try { window.parent.postMessage({ kind: 'toytype-grid-frame', report }, 'chrome-extension://' + chrome.runtime.id); } catch (_) { /* 무시 */ }
+  }
+
+  // ---------- 격자 보기 요청 처리 ----------
+  // 격자 페이지(부모 프레임, 우리 확장 출처)만 이 문서에 본문 읽기·위치 선택·문구 바꾸기를 요청할 수 있다.
+  // 바꾸기는 패널의 [적용]과 같은 내부 텍스트 액션을 쓰므로 실행 취소(⌘Z)와 버전 기록에 그대로 남는다.
+  const GRID_ORIGIN = 'chrome-extension://' + chrome.runtime.id;
+  let gridApplyChain = Promise.resolve();
+  let pageBridgeInjectedForGrid = false;
+
+  function nearestIndexOf(text, needle, hint) {
+    if (!needle) return -1;
+    let best = -1;
+    let bestDist = Infinity;
+    let i = text.indexOf(needle);
+    while (i !== -1) {
+      const d = Math.abs(i - (Number(hint) || 0));
+      if (d < bestDist) { best = i; bestDist = d; }
+      i = text.indexOf(needle, i + 1);
+    }
+    return best;
+  }
+
+  // ---------- 에이전트 커서 ----------
+  // 구글 문서의 공동 작업자 커서와 같은 모양(세로 막대 + 이름표)을 본문과 함께 스크롤되는 컨테이너에 그린다.
+  // 위치는 그 자리를 실제로 선택한 뒤 내 커서(.kix-cursor 중 이름이 빈 것)가 놓인 좌표를 빌린다.
+  const agentCursors = new Map();
+
+  function ownDocsCursor() {
+    return Array.from(document.querySelectorAll('.kix-cursor')).find(node => {
+      const name = node.querySelector('.kix-cursor-name');
+      return !name || !name.textContent.trim();
+    }) || null;
+  }
+
+  const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+  async function placeAgentCursor(agent, start) {
+    if (!agent || !agent.id) return false;
+    await selectDocsModelRange(start, start).catch(() => null);
+    await nextFrame();
+    const own = ownDocsCursor();
+    const caretOwn = own && own.querySelector('.kix-cursor-caret');
+    if (!own || !own.parentElement || !caretOwn) return false;
+    let cur = agentCursors.get(agent.id);
+    const fresh = !cur || !cur.isConnected;
+    if (fresh) {
+      cur = document.createElement('div');
+      cur.className = 'toytype-agent-cursor';
+      // 구글 문서 커서는 transform: translate(x, y)로 자리를 잡는다 — 같은 방식으로 따라가며 미끄러지듯 옮긴다
+      cur.style.cssText = 'position:absolute;left:0;top:0;z-index:5;pointer-events:none;transition:transform .35s cubic-bezier(.2,.8,.2,1);';
+      const caret = document.createElement('div');
+      caret.style.cssText = 'width:2px;border-radius:1px;';
+      const flag = document.createElement('div');
+      flag.style.cssText = 'position:absolute;left:0;bottom:100%;margin-bottom:1px;padding:1px 5px;border-radius:3px 3px 3px 0;color:#fff;font:600 11px/15px "Google Sans",Roboto,Arial,sans-serif;white-space:nowrap;';
+      cur.append(flag, caret);
+      agentCursors.set(agent.id, cur);
+    }
+    const [flag, caret] = cur.children;
+    const color = String(agent.color || '#1a73e8');
+    caret.style.background = color;
+    caret.style.height = Math.max(14, parseFloat(caretOwn.style.height) || caretOwn.offsetHeight || 18) + 'px';
+    flag.style.background = color;
+    flag.textContent = String(agent.label || '에이전트');
+    if (cur.parentElement !== own.parentElement) own.parentElement.appendChild(cur);
+    const pos = String(own.style.transform || '').match(/translate\(\s*([-\d.]+)px\s*,\s*([-\d.]+)px\s*\)/);
+    if (pos) cur.style.transform = 'translate(' + pos[1] + 'px, ' + pos[2] + 'px)';
+    else cur.style.transform = 'translate(' + own.offsetLeft + 'px, ' + own.offsetTop + 'px)';
+    // 새 구간을 맡을 때마다 새 커서가 나타나는 것처럼 보이게 한다
+    if (fresh && cur.animate) cur.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
+    return true;
+  }
+
+  function removeAgentCursor(id) {
+    const cur = agentCursors.get(id);
+    agentCursors.delete(id);
+    if (!cur) return;
+    if (cur.animate) cur.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300 }).onfinish = () => cur.remove();
+    else cur.remove();
+  }
+
+  async function gridApplyEdit(args) {
+    const src = String(args.src || '');
+    const dst = String(args.dst || '');
+    if (!src) throw new Error('empty source');
+    const model = await fetchModelText(getDocId());
+    const start = nearestIndexOf(model.text, src, args.hint);
+    if (start === -1) return { ok: false, error: 'not_found' };
+    if (args.agent) await placeAgentCursor(args.agent, start).catch(() => false);
+    await selectDocsModelRange(start, start + src.length).catch(() => null);
+    const result = await applyResolvedFindingFromContent({
+      index: -1,
+      finding: { src, dst, start, end: start + src.length, cat: 'ai-grid' },
+      selector: 'grid'
+    }, {
+      confirmMutation: true,
+      useInternalTextAction: true,
+      useFindReplaceFallback: false,
+      requirePrimeFindMatch: true,
+      actionWaitMs: 3000,
+      primeWaitMs: 5000,
+      mutationWaitMs: 8000,
+      directActionWaitMs: 250,
+      deferVerification: false,
+      rescan: false,
+      knownBeforeText: model.text
+    });
+    const verified = !!(result && result.verified === true);
+    return { ok: verified, error: verified ? '' : 'not_verified', start };
+  }
+
+  async function handleGridRpc(op, args) {
+    if (op === 'ping') {
+      // 패널 초기화(페이지 브리지 주입)가 끝나야 문서 모델을 다룰 수 있다
+      return { ok: !!pageBridgeReady, pages: measureEditorPages() };
+    }
+    if (op === 'getText') {
+      const model = await fetchModelText(getDocId());
+      return { ok: true, text: model.text };
+    }
+    if (op === 'select') {
+      await selectDocsModelRange(Number(args.start) || 0, Number(args.end) || Number(args.start) || 0);
+      return { ok: true };
+    }
+    if (op === 'agentCursor') {
+      const ok = await placeAgentCursor(args.agent, Number(args.start) || 0);
+      return { ok };
+    }
+    if (op === 'agentCursorRemove') {
+      removeAgentCursor(String(args.id || ''));
+      return { ok: true };
+    }
+    if (op === 'locate') {
+      const model = await fetchModelText(getDocId());
+      const start = nearestIndexOf(model.text, String(args.src || ''), args.hint);
+      if (start === -1) return { ok: false, error: 'not_found' };
+      await selectDocsModelRange(start, start + String(args.src).length);
+      return { ok: true, start };
+    }
+    if (op === 'applyEdit') {
+      // 문서 모델 조작은 한 번에 하나씩
+      const run = gridApplyChain.then(() => gridApplyEdit(args));
+      gridApplyChain = run.catch(() => {});
+      return run;
+    }
+    return { ok: false, error: 'unknown_op' };
+  }
+
+  if (GRID_FRAME) {
+    window.addEventListener('message', event => {
+      if (event.origin !== GRID_ORIGIN || event.source !== window.parent) return;
+      const data = event.data;
+      if (!data || data.kind !== 'toytype-grid-rpc') return;
+      handleGridRpc(String(data.op || ''), data.args || {}).catch(error => ({
+        ok: false, error: error && error.message ? error.message : String(error)
+      })).then(res => {
+        window.parent.postMessage({ kind: 'toytype-grid-rpc-result', id: data.id, res }, GRID_ORIGIN);
+      });
+    });
+  }
+
   async function init() {
+    if (IN_FRAME && !GRID_FRAME) return;
+    if (GRID_FRAME) {
+      // 격자 칸은 패널을 쓰지 않으므로 문서 모델에 닿는 페이지 브리지부터 바로 붙인다
+      injectPageBridgeScript();
+      pageBridgeInjectedForGrid = true;
+      setTimeout(reportGridFrame, 6000);
+    }
     settings = await readSettings();
     syncExternalFeatureState();
     if (isOriginDisabled()) {
@@ -7331,7 +7467,105 @@
     refreshGeneratedRulesListQuiet();
     // document_idle + 3000ms 후 1회 자동 스캔. 이후 자동 폴링 없음.
     const delay = Math.max(0, 3000 - (Date.now() - startedAt));
-    setTimeout(() => { enqueueScan(true); }, delay);
+    setTimeout(() => {
+      enqueueScan(true).then(() => consumeDriveJump());
+    }, delay);
+    startPageCountSampler();
+  }
+
+  // ---------- 쪽수 기록 ----------
+  // 구글 문서는 쪽 수를 서버에서 바로 얻을 수 없다. 편집기는 쪽을 가상화해 화면 근처만 그리지만
+  // 스크롤 높이는 전체 배치를 반영하므로 (전체 높이 − 첫 쪽 위 여백) ÷ 쪽 간격으로 센다.
+  // 값이 1.5초 동안 그대로일 때(배치가 끝났을 때)만 기록하고, 드라이브 버블이 이 값을 바로 쓴다.
+  let pageMeasureLast = null;
+  let pageMeasureStableSince = 0;
+  let pageMeasureRecorded = null;
+
+  function measureEditorPages() {
+    const editor = document.querySelector('.kix-appview-editor');
+    const nodes = Array.from(document.querySelectorAll('.kix-page-paginated'));
+    if (!editor || !nodes.length) return null; // 쪽 없음(pageless) 모드
+    const tops = nodes.map(n => parseFloat(n.style.top)).filter(Number.isFinite).sort((a, b) => a - b);
+    const height = parseFloat(nodes[0].style.height) || nodes[0].offsetHeight;
+    if (!tops.length || !height) return null;
+    let pitch = 0;
+    for (let i = 1; i < tops.length; i++) {
+      const d = tops[i] - tops[i - 1];
+      if (d > height * 0.9 && (!pitch || d < pitch)) pitch = d;
+    }
+    if (!pitch) {
+      // 쪽이 하나만 그려져 있으면 한 쪽짜리 문서인지만 판단한다
+      return editor.scrollHeight < tops[0] + height * 1.9 ? 1 : null;
+    }
+    const firstTop = tops[0] % pitch;
+    const n = Math.round((editor.scrollHeight - firstTop) / pitch);
+    return n >= 1 ? n : null;
+  }
+
+  function samplePageCount() {
+    if (document.hidden) return;
+    const docId = getDocId();
+    const n = measureEditorPages();
+    if (!docId || !n) return;
+    if (n !== pageMeasureLast) {
+      pageMeasureLast = n;
+      pageMeasureStableSince = Date.now();
+      return;
+    }
+    if (Date.now() - pageMeasureStableSince < 1500) return;
+    const key = docId + ':' + n + ':' + location.search;
+    if (pageMeasureRecorded === key) return;
+    pageMeasureRecorded = key;
+    try {
+      // 탭 매개변수가 없으면 첫 탭을 보고 있는 것이다
+      const tab = new URLSearchParams(location.search).get('tab') || 't.0';
+      chrome.runtime.sendMessage({ type: 'typo:driveRecordPages', docId, pages: n, tab }, () => { void chrome.runtime.lastError; });
+    } catch (_) { /* 확장 컨텍스트 무효화 */ }
+  }
+
+  function startPageCountSampler() {
+    setInterval(samplePageCount, 1000);
+  }
+
+  // 드라이브 버블에서 지적을 눌러 이 문서를 열었으면 패널을 펴고 그 지적을 선택한다.
+  async function consumeDriveJump() {
+    const docId = getDocId();
+    if (!docId) return;
+    const res = await new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'typo:driveTakeJump', docId }, r => {
+          void chrome.runtime.lastError;
+          resolve(r || null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+    const target = res && res.ok ? res.target : null;
+    if (!target || !target.src) return;
+    if (target.kind === 'ai') {
+      // 격자 보기의 AI 지적은 규칙 지적 목록에 없으므로 문구를 찾아 선택하고 제안을 상태 표시줄에 띄운다
+      await selectFactClaimInDoc({ sourceText: target.src });
+      showToast('AI 제안: ' + target.src + ' ➝ ' + (target.dst || '') + (target.reason ? ' · ' + target.reason : ''), { durationMs: 8000 });
+      return;
+    }
+    expanded = true;
+    listMode = 'order';
+    suggestionsViewOpen = false;
+    diagramsViewOpen = false;
+    termsViewOpen = false;
+    factsViewOpen = false;
+    render();
+    handleFindingClick({
+      src: String(target.src),
+      dst: String(target.dst || ''),
+      cat: String(target.cat || ''),
+      contextBefore: String(target.contextBefore || ''),
+      contextAfter: String(target.contextAfter || ''),
+      start: Number(target.start) || 0,
+      end: (Number(target.start) || 0) + String(target.src).length,
+      selectable: true
+    });
   }
 
   // ---------- 리스너 (스크립트 최상위에서 동기 등록) ----------

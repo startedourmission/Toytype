@@ -44,6 +44,7 @@ function loadDocsInternal() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('../content/doc-tools.js', import.meta.url), 'utf8'), sandbox, { filename: 'content/doc-tools.js' });
   vm.runInContext(src, sandbox, { filename: 'content/docs.js' });
   const internal = sandbox.ToytypeDocsInternal;
   assert.ok(internal, 'ToytypeDocsInternal 훅이 노출되어야 한다');
