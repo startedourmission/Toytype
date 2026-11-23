@@ -145,17 +145,94 @@
     open.type = 'button';
     open.title = '문서를 새 탭으로 엽니다';
     open.addEventListener('click', () => send({ type: 'typo:driveOpenDoc', docId: doc.id, authuser: session.authuser }));
+    // 간결 모드(rm=minimal)는 메뉴·댓글 패널이 빠져 댓글 해결 같은 기능을 못 쓴다 — 칸마다 일반 편집기로 바꿀 수 있다
+    const full = el('button', 'g-btn g-card-open g-card-full', '전체 편집기');
+    full.type = 'button';
+    full.title = '이 칸을 메뉴·댓글까지 다 있는 일반 편집기로 엽니다(다시 누르면 간결 모드)';
+    full.setAttribute('aria-pressed', 'false');
+    full.addEventListener('click', () => setFullEditor(card, !card.full));
+    const reload = el('button', 'g-btn g-card-open', '↻');
+    reload.type = 'button';
+    reload.title = '이 칸만 다시 불러옵니다(원본에서 고친 내용이 안 보일 때)';
+    reload.addEventListener('click', () => reloadCard(card, false));
     const dot = el('span', 'g-ready-dot');
     dot.title = '에이전트 연결 준비 중';
-    head.append(pick, dot, name, badge, meta, open);
+    head.append(pick, dot, name, badge, meta, full, reload, open);
     const wrap = el('div', 'g-frame-wrap');
     const frame = el('iframe', 'g-frame');
     frame.src = docUrl(doc.id, true);
     frame.setAttribute('allow', 'clipboard-read; clipboard-write');
     wrap.append(frame);
-    root.append(head, wrap);
-    Object.assign(card, { root, pick, badge, meta, frame, dot });
+    // 오른쪽 모서리: 열 너비, 아래 모서리: 칸 높이 (두 번 누르면 원래대로)
+    const sizeCol = el('div', 'g-size g-size-col');
+    sizeCol.title = '끌어서 열 너비 조절 · 두 번 누르면 원래대로';
+    const sizeRow = el('div', 'g-size g-size-row');
+    sizeRow.title = '끌어서 칸 높이 조절 · 두 번 누르면 원래대로';
+    root.append(head, wrap, sizeCol, sizeRow);
+    sizeCol.addEventListener('pointerdown', ev => startColDrag(ev, card));
+    sizeCol.addEventListener('dblclick', () => { ui.colFr = {}; layout(); saveUi(); });
+    sizeRow.addEventListener('pointerdown', ev => startRowDrag(ev, card));
+    sizeRow.addEventListener('dblclick', () => { ui.rowH = 0; layout(); saveUi(); });
+    Object.assign(card, { root, pick, badge, meta, frame, dot, fullBtn: full });
     return card;
+  }
+
+  // ---------- 원본 탭과 맞추기 ----------
+  // 격자 칸(iframe 속 편집기)이 같은 문서를 연 일반 탭의 수정을 놓치는 일이 있다.
+  // 원본 탭이 열려 있으면 몇 초마다 두 편집기 본문의 요약값을 대조하고,
+  // 원본이 멈춘 뒤에도 계속 어긋나면 그 칸만 다시 불러온다.
+  const SYNC_INTERVAL_MS = 5000;
+  const STALE_GRACE_MS = 8000;
+  let syncRunning = false;
+
+  function reloadCard(card, auto) {
+    card.ready = false;
+    card.sync = null;
+    card.root.classList.remove('g-ready', 'g-failed');
+    card.dot.title = '다시 불러오는 중';
+    card.frame.src = docUrl(card.doc.id, !card.full);
+    card.readyPromise = waitReady(card);
+    if (auto) systemMsg('「' + (card.doc.name || card.doc.id) + '」 칸이 원본 탭과 달라 다시 불러왔습니다', false, false);
+  }
+
+  function setFullEditor(card, on, quiet) {
+    card.full = !!on;
+    card.fullBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    card.fullBtn.textContent = on ? '간결 모드' : '전체 편집기';
+    card.fullBtn.title = on ? '메뉴를 숨기고 본문만 넓게 봅니다' : '이 칸을 메뉴·댓글까지 다 있는 일반 편집기로 엽니다(다시 누르면 간결 모드)';
+    card.root.classList.toggle('g-full', !!on);
+    reloadCard(card, false);
+    if (!quiet) saveLog();
+  }
+
+  async function syncCard(card) {
+    if (!card.ready || card.root.classList.contains('g-working')) return;
+    const origin = await send({ type: 'typo:gridOriginDigest', docId: card.doc.id });
+    if (!origin.ok) { card.sync = null; return; }
+    const mine = await rpc(card, 'digest', {}, 8000);
+    if (!mine.ok || !card.ready || busy) return;
+    const now = Date.now();
+    const prev = card.sync;
+    if (mine.digest === origin.digest) { card.sync = null; return; }
+    // 원본이 아직 바뀌는 중이면(사용자가 치는 중) 기다린다 — 원본이 그대로인데도 계속 다를 때만 다시 불러온다
+    if (!prev || prev.origin !== origin.digest || prev.frame !== mine.digest) {
+      card.sync = { origin: origin.digest, frame: mine.digest, since: now };
+      return;
+    }
+    if (now - prev.since >= STALE_GRACE_MS) {
+      trace('stale', card.doc.name + ' reload');
+      reloadCard(card, true);
+    }
+  }
+
+  async function syncAll() {
+    if (syncRunning || busy || document.visibilityState !== 'visible') return;
+    syncRunning = true;
+    try {
+      for (const card of cards) await syncCard(card).catch(() => {});
+    } finally {
+      syncRunning = false;
+    }
   }
 
   function updateMeta(card) {
@@ -177,54 +254,99 @@
   }
 
   // ---------- 채팅 ----------
+  // 채팅창 내용은 logEntries에 데이터로 쌓고 local 저장소에 남겨, 탭을 새로고침해도 그대로 다시 그린다.
+  const LOG_MAX_ENTRIES = 300;
+  let logEntries = [];
+  let logSaveTimer = 0;
+
+  function saveLog() {
+    if (!sessionId) return;
+    clearTimeout(logSaveTimer);
+    logSaveTimer = setTimeout(flushLog, 400);
+  }
+
+  function flushLog() {
+    clearTimeout(logSaveTimer);
+    if (!sessionId || !session) return;
+    try {
+      const entries = logEntries.slice(-LOG_MAX_ENTRIES).map(e => e.t !== 'agent' ? e : {
+        t: 'agent', agent: e.agent, who: e.who, text: e.pending ? '(새로고침으로 중단됨)' : e.text, docId: e.docId,
+        edits: (e.edits || []).map(x => ({
+          src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint,
+          state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : 'proposed'
+        }))
+      });
+      const options = { auto: $('g-auto').checked, conc: $('g-conc').value, unchecked: cards.filter(c => !c.pick.checked).map(c => c.doc.id), full: cards.filter(c => c.full).map(c => c.doc.id) };
+      chrome.storage.local.set({
+        ['grid:' + sessionId + ':log']: { entries, options },
+        ['grid:' + sessionId]: Object.assign(session, { touchedAt: Date.now() })
+      }).then(() => trace('logSaved', entries.length), e => trace('logSaveFailed', e && e.message));
+    } catch (e) {
+      trace('logSaveFailed', e && e.message);
+    }
+  }
+
+  function pushEntry(entry, persist) {
+    if (persist === false) return entry;
+    logEntries.push(entry);
+    if (logEntries.length > LOG_MAX_ENTRIES * 2) logEntries = logEntries.slice(-LOG_MAX_ENTRIES);
+    saveLog();
+    return entry;
+  }
 
   function scrollLog() {
     const log = $('g-log');
     log.scrollTop = log.scrollHeight;
   }
 
-  function systemMsg(text, error) {
+  // persist=false: 잠깐 보이는 안내(대기 중·멈추는 중 등)는 기록하지 않는다
+  function systemMsg(text, error, persist) {
+    pushEntry({ t: 'system', text, error: !!error }, persist);
     const m = el('div', 'g-msg g-msg-system' + (error ? ' g-err' : ''), text);
     $('g-log').appendChild(m);
     scrollLog();
     return m;
   }
 
-  function userMsg(text) {
+  function userMsg(text, persist) {
+    pushEntry({ t: 'user', text }, persist);
     $('g-log').appendChild(el('div', 'g-msg g-msg-user', text));
     scrollLog();
   }
 
-  function agentMsg(agent, who) {
+  function agentMsg(agent, who, restored) {
+    const entry = restored || pushEntry({ t: 'agent', agent, who, text: '', pending: true, docId: '', edits: [] });
     const m = el('div', 'g-msg g-msg-agent');
     m.style.setProperty('--agent', AGENT_COLORS[agent % AGENT_COLORS.length]);
-    const avatar = el('div', 'g-avatar', String(agent + 1));
-    const bubble = el('div', 'g-bubble');
-    bubble.appendChild(el('div', 'g-bubble-who', who));
+    // who: "에이전트 N · 문서 · i/n · 구간 첫 줄" → 머리줄(이름·위치)과 인용 한 줄로 나눠 보여 준다
+    const parts = String(who || '').split(' · ');
+    const head = el('div', 'g-agent-head');
+    head.append(el('span', 'g-avatar', String(agent + 1)), el('span', 'g-agent-name', parts[0] || ''), el('span', 'g-agent-where', parts.slice(1, 3).join(' · ')));
+    m.appendChild(head);
+    if (parts.length > 3) m.appendChild(el('div', 'g-agent-quote', parts.slice(3).join(' · ')));
     const text = el('div', 'g-bubble-text');
     const typing = el('span', 'g-typing');
     typing.append(el('i'), el('i'), el('i'));
     text.appendChild(typing);
-    bubble.appendChild(text);
-    m.append(avatar, bubble);
+    m.appendChild(text);
     $('g-log').appendChild(m);
     scrollLog();
-    return { root: m, bubble, text };
+    return { root: m, bubble: m, text, entry };
   }
 
   function buildEditItem(card, edit, auto) {
     const item = el('div', 'g-edit');
     const diff = el('div', 'g-edit-diff');
-    diff.append(el('del', '', edit.src), document.createTextNode(' → '), el('ins', '', edit.dst || '(삭제)'));
+    diff.append(el('del', '', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', edit.dst || '(삭제)'));
     item.appendChild(diff);
     if (edit.reason) item.appendChild(el('div', 'g-edit-why', (edit.category ? '[' + edit.category + '] ' : '') + edit.reason));
     const row = el('div', 'g-edit-row');
     const state = el('span', 'g-edit-state', auto ? '적용 대기' : '');
-    const show = el('button', 'g-btn', '위치');
+    const show = el('button', 'g-link', '위치');
     show.type = 'button';
     show.title = '문서에서 이 문구를 선택합니다';
     show.addEventListener('click', () => rpc(card, 'locate', { src: edit.state === 'applied' ? edit.dst : edit.src, hint: edit.hint }));
-    const apply = el('button', 'g-btn', '적용');
+    const apply = el('button', 'g-link', '적용');
     apply.type = 'button';
     apply.addEventListener('click', () => queueApply(card, edit));
     row.append(state, show, apply);
@@ -248,6 +370,7 @@
       edit.state = 'applying';
       edit.stateEl.textContent = '적용 중…';
       const res = await rpc(card, 'applyEdit', { src: edit.src, dst: edit.dst, hint: edit.hint, agent: agentCursor || null }, 45000);
+      saveLog();
       if (res.ok) {
         edit.state = 'applied';
         edit.item.classList.add('g-applied');
@@ -260,6 +383,7 @@
         edit.applyBtn.disabled = false;
         edit.stateEl.textContent = res.error === 'not_found' ? '문서에서 찾지 못함(이미 바뀜?)' : '적용 실패 · 다시 시도';
       }
+      saveLog();
     });
     card.applyChain = run.catch(() => {});
     return run;
@@ -306,7 +430,7 @@
   function setBusy(on) {
     busy = on;
     $('g-send').disabled = on;
-    $('g-stop').disabled = !on;
+    $('g-stop').hidden = !on;
     $('g-conc').disabled = on;
     for (const chip of document.querySelectorAll('.g-chip')) chip.disabled = on;
   }
@@ -328,7 +452,7 @@
     const auto = $('g-auto').checked;
     const agents = Number($('g-conc').value) || 3;
     const notReady = targets.filter(c => !c.ready);
-    if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)');
+    if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)', false, false);
     await Promise.all(notReady.map(c => c.readyPromise));
 
     // 문서 본문을 칸 안의 편집기에서 직접 읽는다(적용할 때 쓰는 위치와 같은 기준)
@@ -377,6 +501,67 @@
     setBusy(false);
   }
 
+  function renderEdits(msg, card, edits, auto) {
+    const list = el('div', 'g-edits');
+    for (const edit of edits) list.appendChild(buildEditItem(card, edit, auto));
+    msg.bubble.appendChild(list);
+    if (!auto && edits.filter(e => e.state !== 'applied').length > 1) {
+      const actions = el('div', 'g-msg-actions');
+      const all = el('button', 'g-link', '모두 적용');
+      all.type = 'button';
+      all.addEventListener('click', () => {
+        all.disabled = true;
+        for (const edit of edits) queueApply(card, edit);
+      });
+      actions.appendChild(all);
+      msg.bubble.appendChild(actions);
+    }
+  }
+
+  // 저장해 둔 채팅창을 다시 그린다. 적용된 제안은 적용됨으로, 진행 중이던 것은 제안으로 돌아온다.
+  function restoreLog(saved) {
+    for (const e of saved.entries || []) {
+      if (e.t === 'system') systemMsg(e.text, e.error);
+      else if (e.t === 'user') userMsg(e.text);
+      else if (e.t === 'agent') {
+        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [] };
+        logEntries.push(entry);
+        const msg = agentMsg(entry.agent, entry.who, entry);
+        msg.text.textContent = entry.text;
+        const card = cards.find(c => c.doc.id === e.docId);
+        const edits = (e.edits || []).map(x => Object.assign({}, x));
+        entry.edits = edits;
+        if (card && edits.length) {
+          const states = edits.map(x => x.state);
+          renderEdits(msg, card, edits, false);
+          edits.forEach((edit, i) => {
+            if (states[i] === 'applied') {
+              edit.state = 'applied';
+              edit.item.classList.add('g-applied');
+              edit.stateEl.textContent = '✓ 적용됨';
+              edit.applyBtn.disabled = true;
+              card.counts.applied++;
+            } else if (states[i] === 'failed') {
+              edit.state = 'failed';
+              edit.item.classList.add('g-failed');
+              edit.stateEl.textContent = '적용 실패 · 다시 시도';
+            }
+          });
+          card.counts.proposed += edits.length;
+          updateMeta(card);
+        }
+      }
+    }
+  }
+
+  function applyOptions(o) {
+    o = o || {};
+    if (typeof o.auto === 'boolean') $('g-auto').checked = o.auto;
+    if (o.conc) $('g-conc').value = String(o.conc);
+    for (const c of cards) if ((o.unchecked || []).includes(c.doc.id)) c.pick.checked = false;
+    for (const c of cards) if ((o.full || []).includes(c.doc.id)) setFullEditor(c, true, true);
+  }
+
   async function runChunk(task, agent, instruction, auto) {
     const { card, chunk, idx, count } = task;
     const name = '에이전트 ' + (agent + 1);
@@ -407,14 +592,20 @@
     });
     liveRequests.delete(requestId);
     msg.text.textContent = '';
+    msg.entry.pending = false;
+    msg.entry.docId = card.doc.id;
     task.cursor = cursor;
     if (!res || !res.ok) {
       rpc(card, 'agentCursorRemove', { id: cursor.id }, 3000);
       if (res && res.error === 'external_features_disabled') {
         msg.root.remove();
+        logEntries = logEntries.filter(e => e !== msg.entry);
+        saveLog();
         return 'disabled';
       }
       msg.text.textContent = stopRequested ? '멈췄습니다.' : '이 구간은 처리하지 못했습니다. (' + (res && (res.message || res.error) || '오류') + ')';
+      msg.entry.text = msg.text.textContent;
+      saveLog();
       return 0;
     }
     const edits = (res.findings || []).map(f => ({
@@ -423,10 +614,11 @@
     }));
     task.note = res.note || '';
     msg.text.textContent = res.note || (edits.length ? '고칠 곳 ' + edits.length + '개를 찾았습니다.' : '고칠 곳이 없습니다.');
+    msg.entry.text = msg.text.textContent;
+    msg.entry.edits = edits;
+    saveLog();
     if (edits.length) {
-      const list = el('div', 'g-edits');
-      for (const edit of edits) list.appendChild(buildEditItem(card, edit, auto));
-      msg.bubble.appendChild(list);
+      renderEdits(msg, card, edits, auto);
       card.counts.proposed += edits.length;
       updateMeta(card);
       if (auto) {
@@ -436,16 +628,6 @@
         task.recorded = edits;
         scrollLog();
         return edits.length;
-      } else if (edits.length > 1) {
-        const actions = el('div', 'g-msg-actions');
-        const all = el('button', 'g-btn', '모두 적용');
-        all.type = 'button';
-        all.addEventListener('click', () => {
-          all.disabled = true;
-          for (const edit of edits) queueApply(card, edit);
-        });
-        actions.appendChild(all);
-        msg.bubble.appendChild(actions);
       }
     }
     task.recorded = edits;
@@ -475,37 +657,243 @@
       changes
     });
     history = history.slice(-HISTORY_TURNS);
-    if (sessionId) chrome.storage.session.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
+    if (sessionId) chrome.storage.local.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
   }
 
   function stopAll() {
     stopRequested = true;
     for (const id of liveRequests) send({ type: 'typo:aiBridgeAbort', requestId: id });
-    systemMsg('멈추는 중…');
+    systemMsg('멈추는 중…', false, false);
   }
 
   // ---------- 시작 ----------
 
+  // ---------- 이전 대화 고르기 ----------
+  // 저장된 격자 세션(문서 묶음 + 채팅창 + 대화 기록)을 골라 그 상태로 다시 연다.
+  function relTime(at) {
+    const d = Math.max(0, Date.now() - (Number(at) || 0));
+    if (d < 60000) return '방금';
+    if (d < 3600000) return Math.floor(d / 60000) + '분 전';
+    if (d < 86400000) return Math.floor(d / 3600000) + '시간 전';
+    return Math.floor(d / 86400000) + '일 전';
+  }
+
+  async function listSessions() {
+    const all = await chrome.storage.local.get(null);
+    const out = [];
+    for (const [k, v] of Object.entries(all)) {
+      if (!/^grid:[\w-]+$/.test(k) || !v || !Array.isArray(v.docs)) continue;
+      const id = k.slice(5);
+      const log = all[k + ':log'];
+      const hist = all[k + ':history'];
+      const users = log && Array.isArray(log.entries) ? log.entries.filter(e => e.t === 'user') : [];
+      const last = users.length ? users[users.length - 1].text : Array.isArray(hist) && hist.length ? hist[hist.length - 1].instruction : '';
+      out.push({ id, docs: v.docs, at: Number(v.touchedAt || v.createdAt) || 0, turns: users.length || (Array.isArray(hist) ? hist.length : 0), last: String(last || '') });
+    }
+    return out.sort((a, b) => b.at - a.at);
+  }
+
+  function gotoSession(id) {
+    location.hash = id;
+    location.reload();
+  }
+
+  async function newConversation() {
+    if (!session || busy) return;
+    const id = crypto.randomUUID();
+    await chrome.storage.local.set({ ['grid:' + id]: { docs: session.docs, authuser: session.authuser, createdAt: Date.now(), touchedAt: Date.now() } });
+    gotoSession(id);
+  }
+
+  function closeHistory() {
+    $('g-pop').hidden = true;
+    $('g-history').setAttribute('aria-expanded', 'false');
+  }
+
+  async function openHistory() {
+    const pop = $('g-pop');
+    pop.textContent = '';
+    const fresh = el('button', 'g-pop-new', '+ 이 문서들로 새 대화 시작');
+    fresh.type = 'button';
+    fresh.disabled = busy;
+    fresh.addEventListener('click', newConversation);
+    pop.appendChild(fresh);
+    pop.appendChild(el('div', 'g-pop-label', '이전 대화'));
+    const list = await listSessions();
+    if (!list.length) pop.appendChild(el('div', 'g-pop-empty', '저장된 대화가 없습니다'));
+    for (const it of list) {
+      const row = el('div', 'g-sess' + (it.id === sessionId ? ' g-current' : ''));
+      row.tabIndex = 0;
+      const names = it.docs.map(d => d.name || d.id);
+      row.append(
+        el('span', 'g-sess-title', names.slice(0, 2).join(', ') + (names.length > 2 ? ' 외 ' + (names.length - 2) + '개' : '')),
+        it.last ? el('span', 'g-sess-last', '“' + it.last.replace(/\s+/g, ' ').slice(0, 80) + '”') : el('span', 'g-sess-last', '지시 없음'),
+        el('span', 'g-sess-meta', relTime(it.at) + ' · 지시 ' + it.turns + '번' + (it.id === sessionId ? ' · 지금 대화' : ''))
+      );
+      if (it.id !== sessionId) {
+        const go = () => { if (!busy || !session) gotoSession(it.id); };
+        row.addEventListener('click', go);
+        row.addEventListener('keydown', ev => { if (ev.key === 'Enter') go(); });
+        const del = el('button', 'g-sess-del', '×');
+        del.type = 'button';
+        del.title = '이 대화 기록 지우기';
+        del.addEventListener('click', async ev => {
+          ev.stopPropagation();
+          await chrome.storage.local.remove(['grid:' + it.id, 'grid:' + it.id + ':history', 'grid:' + it.id + ':log']);
+          row.remove();
+        });
+        row.appendChild(del);
+      }
+      pop.appendChild(row);
+    }
+    pop.hidden = false;
+    $('g-history').setAttribute('aria-expanded', 'true');
+  }
+
+  function initHistoryPicker() {
+    const btn = $('g-history');
+    btn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      if ($('g-pop').hidden) openHistory();
+      else closeHistory();
+    });
+    document.addEventListener('click', ev => { if (!$('g-pop').contains(ev.target)) closeHistory(); });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeHistory(); });
+  }
+
+  // ---------- 크기 조절 ----------
+  // 채팅창 너비, 열 수, 열마다 너비 비율, 칸 높이를 끌어서 바꾸고 다음에 열 때도 그대로 쓴다.
+  const UI_KEY = 'gridLayout';
+  let ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0 };
+  let uiSaveTimer = 0;
+
+  function saveUi() {
+    clearTimeout(uiSaveTimer);
+    uiSaveTimer = setTimeout(() => chrome.storage.local.set({ [UI_KEY]: ui }).catch(() => {}), 300);
+  }
+
+  function colCount() {
+    const n = cards.length;
+    if (ui.cols >= 1) return Math.min(ui.cols, Math.max(1, n));
+    return n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  }
+
+  function colFractions(cols) {
+    const fr = ui.colFr[cols];
+    return Array.isArray(fr) && fr.length === cols ? fr : Array(cols).fill(1);
+  }
+
   function layout() {
     const n = cards.length;
-    const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+    const cols = colCount();
     const rows = Math.ceil(n / cols);
-    document.documentElement.style.setProperty('--cols', String(cols));
-    // 두 줄까지는 화면을 꽉 채우고, 그보다 많으면 칸 높이를 고정하고 스크롤한다
-    document.documentElement.style.setProperty('--card-h', rows <= 2 ? 'calc((100% - ' + (rows - 1) * 10 + 'px) / ' + rows + ')' : '46vh');
+    const root = document.documentElement.style;
+    root.setProperty('--cols', String(cols));
+    root.setProperty('--grid-cols', colFractions(cols).map(f => 'minmax(0, ' + f.toFixed(3) + 'fr)').join(' '));
+    // 두 줄까지는 화면을 꽉 채우고, 그보다 많으면 칸 높이를 고정하고 스크롤한다 — 직접 정한 높이가 있으면 그것을 쓴다
+    root.setProperty('--card-h', ui.rowH ? ui.rowH + 'px' : rows <= 2 ? 'calc((100% - ' + (rows - 1) * 6 + 'px) / ' + rows + ')' : '46vh');
+    if (ui.chatW) root.setProperty('--chat-w', ui.chatW + 'px');
+    else root.removeProperty('--chat-w');
+    cards.forEach((c, i) => c.root.classList.toggle('g-last-col', i % cols === cols - 1 || i === n - 1));
+    const reset = $('g-reset');
+    if (reset) reset.disabled = !(ui.chatW || ui.cols || ui.rowH || Object.keys(ui.colFr || {}).length);
+  }
+
+  // 끄는 동안 문서 iframe이 마우스를 가로채지 않게 화면 전체를 덮는다
+  function dragSession(cursor, onMove, onEnd) {
+    const shield = el('div', 'g-drag-shield');
+    shield.style.cursor = cursor;
+    document.body.appendChild(shield);
+    document.body.classList.add('g-dragging');
+    const move = ev => onMove(ev);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      shield.remove();
+      document.body.classList.remove('g-dragging');
+      if (onEnd) onEnd();
+      saveUi();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  function startColDrag(ev, card) {
+    ev.preventDefault();
+    const cols = colCount();
+    const idx = cards.indexOf(card) % cols;
+    if (idx >= cols - 1) return;
+    const left = cards[idx].root.getBoundingClientRect();
+    const right = cards[idx + 1].root.getBoundingClientRect();
+    const pair = left.width + right.width;
+    const fr = colFractions(cols).slice();
+    const frPair = fr[idx] + fr[idx + 1];
+    const x0 = ev.clientX;
+    dragSession('col-resize', e => {
+      const w = Math.max(220, Math.min(pair - 220, left.width + e.clientX - x0));
+      fr[idx] = frPair * w / pair;
+      fr[idx + 1] = frPair - fr[idx];
+      ui.colFr = Object.assign({}, ui.colFr, { [cols]: fr });
+      layout();
+    });
+  }
+
+  function startRowDrag(ev, card) {
+    ev.preventDefault();
+    const h0 = card.root.getBoundingClientRect().height;
+    const y0 = ev.clientY;
+    dragSession('row-resize', e => {
+      ui.rowH = Math.round(Math.max(180, Math.min(window.innerHeight * 1.5, h0 + e.clientY - y0)));
+      layout();
+    });
+  }
+
+  function startChatDrag(ev) {
+    ev.preventDefault();
+    const w0 = $('g-chat').getBoundingClientRect().width;
+    const x0 = ev.clientX;
+    dragSession('col-resize', e => {
+      ui.chatW = Math.round(Math.max(260, Math.min(window.innerWidth * 0.6, w0 - (e.clientX - x0))));
+      layout();
+    });
+  }
+
+  async function initLayoutControls() {
+    const saved = (await chrome.storage.local.get(UI_KEY).catch(() => ({})))[UI_KEY];
+    if (saved && typeof saved === 'object') ui = Object.assign(ui, saved, { colFr: Object.assign({}, saved.colFr) });
+    const sel = $('g-cols');
+    sel.value = String(ui.cols || 0);
+    sel.addEventListener('change', () => {
+      ui.cols = Number(sel.value) || 0;
+      layout();
+      saveUi();
+    });
+    $('g-reset').addEventListener('click', () => {
+      ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0 };
+      sel.value = '0';
+      layout();
+      saveUi();
+    });
+    const split = $('g-split');
+    split.addEventListener('pointerdown', startChatDrag);
+    split.addEventListener('dblclick', () => { ui.chatW = 0; layout(); saveUi(); });
+    layout();
   }
 
   async function start() {
     const id = location.hash.slice(1);
     sessionId = id;
-    const stored = id ? await chrome.storage.session.get(['grid:' + id, 'grid:' + id + ':history']) : {};
+    const keys = ['grid:' + id, 'grid:' + id + ':history', 'grid:' + id + ':log'];
+    // 예전 판은 session 저장소에 두었다 — 거기 있으면 그대로 읽는다
+    const stored = id ? Object.assign({}, await chrome.storage.session.get(keys).catch(() => ({})), await chrome.storage.local.get(keys)) : {};
     session = stored['grid:' + id];
     trace('start', 'session ' + (session ? session.docs.length : 'missing'));
     history = Array.isArray(stored['grid:' + id + ':history']) ? stored['grid:' + id + ':history'] : [];
     if (!session || !Array.isArray(session.docs) || !session.docs.length) {
-      systemMsg('격자에 띄울 문서 정보가 없습니다 · 드라이브에서 문서를 고르고 [격자 보기]를 다시 누르세요', true);
+      systemMsg('이 대화를 찾지 못했습니다 · 오른쪽 위 [기록]에서 이전 대화를 고르거나 드라이브에서 [격자 보기]를 다시 누르세요', true, false);
       setBusy(true);
-      $('g-stop').disabled = true;
+      $('g-stop').hidden = true;
+      initHistoryPicker();
       return;
     }
     $('g-sub').textContent = '문서 ' + session.docs.length + '개';
@@ -514,6 +902,8 @@
     const grid = $('g-grid');
     for (const c of cards) grid.appendChild(c.root);
     layout();
+    await initLayoutControls();
+    initHistoryPicker();
     trace('cards', cards.length + ' cards');
     for (const c of cards) c.readyPromise = waitReady(c).then(ok => { trace('ready', c.doc.name + ' ' + ok); return ok; });
 
@@ -540,8 +930,31 @@
       }
     });
     $('g-stop').addEventListener('click', stopAll);
-    if (history.length) systemMsg('이전 대화 ' + history.length + '턴을 이어서 기억합니다 · 마지막 지시: ' + history[history.length - 1].instruction.slice(0, 40));
-    systemMsg('문서 ' + cards.length + '개를 열었습니다. 지시를 쓰거나 아래 버튼을 누르세요. 기본은 제안 모드라 문서는 승인한 곳만 바뀝니다.');
+    setInterval(syncAll, SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncAll(); });
+    const savedLog = stored['grid:' + id + ':log'];
+    trace('logLoad', savedLog && savedLog.entries ? savedLog.entries.length : 'none');
+    // 탭을 닫거나 새로고침하기 직전에 대기 중인 저장을 바로 내보낸다
+    window.addEventListener('pagehide', flushLog);
+    if (savedLog) applyOptions(savedLog.options);
+    if (savedLog && Array.isArray(savedLog.entries) && savedLog.entries.length) {
+      restoreLog(savedLog);
+      systemMsg('이전 대화를 불러왔습니다' + (history.length ? ' · 에이전트는 최근 ' + history.length + '턴을 기억합니다' : ''), false, false);
+    } else if (history.length) {
+      // 채팅창 저장 기능 전에 쓴 대화: 지시와 결과 요약만 남아 있으므로 그것으로 다시 그린다
+      for (const turn of history) {
+        userMsg(turn.instruction);
+        systemMsg('결과 · ' + (turn.result || '기록 없음') + (turn.changes && turn.changes.length ? ' · ' + turn.changes.slice(0, 5).join(', ') : ''));
+      }
+      systemMsg('예전 대화라 요약만 불러왔습니다 · 에이전트는 최근 ' + history.length + '턴을 기억합니다', false, false);
+    } else {
+      systemMsg('문서 ' + cards.length + '개를 열었습니다. 지시를 쓰거나 아래 버튼을 누르세요. 기본은 제안 모드라 문서는 승인한 곳만 바뀝니다.', false, false);
+    }
+    $('g-auto').addEventListener('change', saveLog);
+    $('g-conc').addEventListener('change', saveLog);
+    for (const c of cards) c.pick.addEventListener('change', saveLog);
+    // 예전 판에서 session에 있던 세션은 local로 옮겨 다음부터 유지되게 한다
+    chrome.storage.local.set({ ['grid:' + id]: Object.assign(session, { touchedAt: Date.now() }), ['grid:' + id + ':history']: history }).catch(() => {});
   }
 
   start();

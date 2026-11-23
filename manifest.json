@@ -50,7 +50,7 @@
     },
     {
       "matches": ["https://drive.google.com/*"],
-      "js": ["engine.js", "content/doc-tools.js", "content/hwpx-export.js", "content/drive.js"],
+      "js": ["content/doc-tools.js", "content/hwpx-export.js", "content/drive.js"],
       "run_at": "document_idle"
     }
   ],

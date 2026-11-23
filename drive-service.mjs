@@ -182,7 +182,36 @@ async function openDocTab(docId, authuser, target, sender) {
   return { ok: true, tabId: created && created.id };
 }
 
-// 격자 보기: 고른 문서 목록을 session 저장소에 두고 확장 페이지를 드라이브 탭 옆에 연다.
+// 격자 세션(문서 목록·대화 기록·채팅창)은 새로고침·확장 재시작·브라우저 재시작에도 남도록 local에 둔다.
+// 최근 GRID_KEEP_SESSIONS개, GRID_KEEP_DAYS일 이내만 남긴다.
+const GRID_KEEP_SESSIONS = 10;
+const GRID_KEEP_DAYS = 14;
+export async function pruneGridSessions(now = Date.now()) {
+  const all = await chrome.storage.local.get(null);
+  const sessions = Object.keys(all)
+    .filter(k => /^grid:[\w-]+$/.test(k))
+    .map(k => ({ id: k.slice(5), at: Number(all[k] && (all[k].touchedAt || all[k].createdAt)) || 0 }))
+    .sort((a, b) => b.at - a.at);
+  const drop = sessions.filter((s, i) => i >= GRID_KEEP_SESSIONS - 1 || now - s.at > GRID_KEEP_DAYS * 86400000);
+  const keys = [];
+  for (const s of drop) keys.push('grid:' + s.id, 'grid:' + s.id + ':history', 'grid:' + s.id + ':log');
+  if (keys.length) await chrome.storage.local.remove(keys);
+}
+
+async function findGridSession(docIds) {
+  const want = docIds.slice().sort().join(',');
+  const all = await chrome.storage.local.get(null);
+  let best = null;
+  for (const [k, v] of Object.entries(all)) {
+    if (!/^grid:[\w-]+$/.test(k) || !v || !Array.isArray(v.docs)) continue;
+    if (v.docs.map(d => d.id).sort().join(',') !== want) continue;
+    const at = Number(v.touchedAt || v.createdAt) || 0;
+    if (!best || at > best.at) best = { id: k.slice(5), at };
+  }
+  return best && best.id;
+}
+
+// 격자 보기: 고른 문서 목록을 저장해 두고 확장 페이지를 드라이브 탭 옆에 연다.
 const GRID_MAX_DOCS = 12;
 async function openGridTab(docs, authuser, sender) {
   const list = (Array.isArray(docs) ? docs : [])
@@ -190,8 +219,10 @@ async function openGridTab(docs, authuser, sender) {
     .slice(0, GRID_MAX_DOCS)
     .map(d => ({ id: d.id, name: String(d.name || '').slice(0, 200), version: String(d.version || '') }));
   if (!list.length) return { ok: false, error: 'no_docs' };
-  const id = crypto.randomUUID();
-  await chrome.storage.session.set({ ['grid:' + id]: { docs: list, authuser, createdAt: Date.now() } });
+  // 같은 문서 묶음으로 연 적이 있으면 그 세션(대화 기록·채팅창)을 이어 쓴다
+  const id = (await findGridSession(list.map(d => d.id))) || crypto.randomUUID();
+  await pruneGridSessions();
+  await chrome.storage.local.set({ ['grid:' + id]: { docs: list, authuser, createdAt: Date.now(), touchedAt: Date.now() } });
   const opts = { url: chrome.runtime.getURL('grid.html#' + id), active: true };
   const tab = sender && sender.tab;
   if (tab && Number.isInteger(tab.index)) {
@@ -218,6 +249,20 @@ export function handleDriveMessage(msg, sendResponse, sender) {
     sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
   };
   const authuser = Number.isInteger(msg.authuser) ? msg.authuser : 0;
+  if (msg.type === 'typo:driveGridDebug') {
+    // 개발판 진단: 저장된 격자 세션 요약(본문은 빼고 개수만)
+    if ('update_url' in chrome.runtime.getManifest()) { sendResponse({ ok: false }); return; }
+    chrome.storage.local.get(null).then(all => {
+      const out = Object.keys(all).filter(k => k.startsWith('grid:')).map(k => {
+        const v = all[k];
+        if (k.endsWith(':log')) return [k, 'entries', v && v.entries ? v.entries.length : -1];
+        if (k.endsWith(':history')) return [k, 'turns', Array.isArray(v) ? v.length : -1];
+        return [k, 'docs', v && v.docs ? v.docs.length : -1, v && v.touchedAt, v && v.docs ? v.docs.slice(0, 2).map(d => d.id) : []];
+      });
+      sendResponse({ ok: true, out });
+    });
+    return true;
+  }
   if (msg.type === 'typo:driveTakeJump') {
     sendResponse({ ok: true, target: validDocId(msg.docId) ? takePendingJump(msg.docId) : null });
     return undefined;

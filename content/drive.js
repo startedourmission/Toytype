@@ -1,7 +1,7 @@
 // 토인비 편집 — 구글 드라이브 버블 (독스 패널 버블과 같은 우하단 원형)
-// 드라이브에서 고른 구글 문서의 쪽수를 바로 보여 주고, 여러 문서를 한 번에 교정·이미지 추출·목차 추출한다.
-// 문서 본문은 백그라운드가 export로 받아 오고(드라이브 페이지에서 docs.google.com으로 직접 요청하면 막힌다),
-// 교정은 내장 규칙 엔진으로 이 페이지 안에서 돌린다. 문서를 수정하지 않는다.
+// 드라이브에서 고른 구글 문서의 쪽수를 바로 보여 주고, 여러 문서의 이미지·목차를 한 번에 뽑고, 격자 보기를 연다.
+// 문서 본문은 백그라운드가 export로 받아 온다(드라이브 페이지에서 docs.google.com으로 직접 요청하면 막힌다).
+// 교정·편집은 격자 보기에서 한다. 이 버블은 문서를 수정하지 않는다.
 'use strict';
 
 (() => {
@@ -12,23 +12,18 @@
   const DocTools = globalThis.ToytypeDocTools;
   const SELECT_DEBOUNCE_MS = 180;
   const PREFETCH_MAX = 12;
-  const SNIPPET = 18;
-  const CONTEXT = 24;
-  const FINDINGS_PER_DOC = 300;
 
   let host = null;
   let root = null;
   let view = null;
   let expanded = false;
   let selection = []; // [{ id, name, version }]
+  let folderSel = null; // 폴더 하나만 고르면 { id, name } — 패널에 안의 내용을 미리 보여 준다
+  const folderCache = new Map(); // 폴더 id → { loading, at, items: [{ id, name, kind, label }], error }
   let pages = {}; // id → { pages, stale, loading, error }
   let status = '';
   let statusError = false;
   let busy = '';
-  let results = null; // { docs: [{ id, name, findings, total, truncated, error, open }] }
-  let rules = null;
-  let rulesKey = '';
-  let settings = null;
   let selectTimer = null;
   let prefetchTimer = null;
   const prefetched = new Set();
@@ -67,6 +62,138 @@
     const img = cell.querySelector('img[src*="drive-usercontent"], img[src*="googleusercontent"]');
     const m = img && img.src.match(/-iv(\d+)/);
     return { id: cell.dataset.id, name, version: m ? 'iv' + m[1] : '' };
+  }
+
+  // ---------- 폴더 미리보기 ----------
+  // 폴더를 한 번 누르면(선택) 그 폴더 화면을 같은 출처의 숨은 프레임으로 열어 목록을 읽는다.
+  // 드라이브가 이미 로그인된 자기 화면을 그리는 것을 읽기만 하므로 별도 인증이나 내부 API를 쓰지 않는다.
+  const KIND_RULES = [
+    [/\s+(?:공유 폴더|폴더|Shared folder|Folder)(?:\s|$)/, 'folder', '폴더'],
+    [/\s+Google (?:Docs|문서)(?:\s|$)/, 'doc', '문서'],
+    [/\s+Google (?:Sheets|스프레드시트)(?:\s|$)/, 'sheet', '시트'],
+    [/\s+Google (?:Slides|프레젠테이션)(?:\s|$)/, 'slide', '슬라이드'],
+    [/\s+PDF(?:\s|$)/i, 'pdf', 'PDF'],
+    [/\s+Microsoft PowerPoint(?:\s|$)/, 'office', 'PPT'],
+    [/\s+Microsoft Word(?:\s|$)/, 'office', 'Word'],
+    [/\s+Microsoft Excel(?:\s|$)/, 'office', 'Excel'],
+    [/\s+(?:이미지|Image)(?:\s|$)/, 'image', '이미지'],
+    [/\s+(?:동영상|Video)(?:\s|$)/, 'video', '동영상']
+  ];
+
+  function rowTip(cell) {
+    const own = cell.getAttribute('aria-label') || '';
+    if (own) return own;
+    const t = cell.querySelector('[data-tooltip]');
+    return t ? t.getAttribute('data-tooltip') || '' : '';
+  }
+
+  function classifyCell(cell) {
+    const tip = rowTip(cell);
+    for (const [re, kind, label] of KIND_RULES) {
+      const m = tip.match(re);
+      if (m) return { id: cell.dataset.id, name: tip.slice(0, m.index).trim() || tip, kind, label };
+    }
+    return { id: cell.dataset.id, name: tip.trim() || cell.dataset.id, kind: 'file', label: '' };
+  }
+
+  function readFolderSelection() {
+    const picked = [];
+    const seen = new Set();
+    for (const cell of document.querySelectorAll('[data-selectable][data-id][aria-selected="true"]')) {
+      if (seen.has(cell.dataset.id)) continue;
+      seen.add(cell.dataset.id);
+      picked.push(classifyCell(cell));
+    }
+    // 폴더 하나만 골랐을 때만 미리 본다(여러 개를 고른 건 옮기거나 지우려는 뜻이 많다)
+    return picked.length === 1 && picked[0].kind === 'folder' ? { id: picked[0].id, name: picked[0].name } : null;
+  }
+
+  function scrapeFolder(doc) {
+    const out = [];
+    const seen = new Set();
+    for (const cell of doc.querySelectorAll('[data-selectable][data-id]')) {
+      if (seen.has(cell.dataset.id)) continue;
+      seen.add(cell.dataset.id);
+      out.push(classifyCell(cell));
+    }
+    return out;
+  }
+
+  function loadFolder(folder, force) {
+    const cached = folderCache.get(folder.id);
+    if (cached && (cached.loading || (!force && Date.now() - cached.at < 60000))) return;
+    const entry = { loading: true, at: Date.now(), items: [], error: '' };
+    folderCache.set(folder.id, entry);
+    const frame = document.createElement('iframe');
+    // 화면 밖에 실제 크기로 둬야 드라이브가 목록을 그린다(크기 0이면 줄을 안 만든다)
+    frame.style.cssText = 'position:fixed;left:-12000px;top:0;width:1200px;height:3000px;border:0;opacity:0;pointer-events:none;';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    frame.src = '/drive/u/' + authuser() + '/folders/' + encodeURIComponent(folder.id);
+    document.body.appendChild(frame);
+    const t0 = Date.now();
+    let last = -1;
+    let stableSince = t0;
+    const timer = setInterval(() => {
+      let items = [];
+      try { items = scrapeFolder(frame.contentDocument); } catch (_) { /* 아직 로드 전 */ }
+      const now = Date.now();
+      if (items.length !== last) {
+        last = items.length;
+        stableSince = now;
+      }
+      const settled = items.length ? now - stableSince > 1200 : now - t0 > 7000 && now - stableSince > 3000;
+      if (!settled && now - t0 < 20000) return;
+      clearInterval(timer);
+      frame.remove();
+      entry.loading = false;
+      entry.at = now;
+      entry.items = items;
+      if (!items.length && now - t0 >= 20000) entry.error = '폴더 내용을 읽지 못했습니다';
+      render();
+    }, 400);
+    render();
+  }
+
+  function itemUrl(item) {
+    const a = authuser();
+    if (item.kind === 'folder') return '/drive/u/' + a + '/folders/' + encodeURIComponent(item.id);
+    if (item.kind === 'doc') return 'https://docs.google.com/document/' + (a ? 'u/' + a + '/' : '') + 'd/' + encodeURIComponent(item.id) + '/edit';
+    if (item.kind === 'sheet') return 'https://docs.google.com/spreadsheets/' + (a ? 'u/' + a + '/' : '') + 'd/' + encodeURIComponent(item.id) + '/edit';
+    if (item.kind === 'slide') return 'https://docs.google.com/presentation/' + (a ? 'u/' + a + '/' : '') + 'd/' + encodeURIComponent(item.id) + '/edit';
+    return 'https://drive.google.com/file/d/' + encodeURIComponent(item.id) + '/view' + (a ? '?authuser=' + a : '');
+  }
+
+  function buildFolderPreview() {
+    const wrap = el('div', 'tb-section tb-folder');
+    const entry = folderCache.get(folderSel.id);
+    if (!entry || entry.loading) {
+      wrap.appendChild(el('div', 'tb-empty', '폴더 내용을 불러오는 중…'));
+      return wrap;
+    }
+    if (entry.error) {
+      wrap.appendChild(el('div', 'tb-empty tb-err', entry.error));
+      return wrap;
+    }
+    if (!entry.items.length) {
+      wrap.appendChild(el('div', 'tb-empty', '빈 폴더입니다'));
+      return wrap;
+    }
+    const SHOW = 150;
+    for (const item of entry.items.slice(0, SHOW)) {
+      const row = el('a', 'tb-file tb-entry');
+      row.href = itemUrl(item);
+      // 폴더는 이 탭에서 들어가고, 파일은 새 탭으로 연다
+      if (item.kind !== 'folder') {
+        row.target = '_blank';
+        row.rel = 'noopener';
+      }
+      row.title = item.name + (item.label ? ' · ' + item.label : '');
+      row.append(el('span', 'tb-kind tb-kind-' + item.kind, item.label || '파일'), el('span', 'tb-file-name', item.name));
+      wrap.appendChild(row);
+    }
+    if (entry.items.length > SHOW) wrap.appendChild(el('div', 'tb-empty', '외 ' + (entry.items.length - SHOW) + '개'));
+    return wrap;
   }
 
   function allDocCells() {
@@ -208,9 +335,12 @@
     clearTimeout(selectTimer);
     selectTimer = setTimeout(() => {
       const next = readSelection();
-      const key = next.map(f => f.id).join(',');
-      if (key === selection.map(f => f.id).join(',')) return;
+      const folder = readFolderSelection();
+      const key = next.map(f => f.id).join(',') + '|' + (folder ? folder.id : '');
+      if (key === selection.map(f => f.id).join(',') + '|' + (folderSel ? folderSel.id : '')) return;
       selection = next;
+      folderSel = folder;
+      if (folderSel) loadFolder(folderSel);
       refreshPages(selection);
       render();
     }, SELECT_DEBOUNCE_MS);
@@ -232,53 +362,6 @@
     const { sum, missing } = pageSum(files);
     if (!sum) return '';
     return sum.toLocaleString() + '쪽' + (missing ? '+' : '');
-  }
-
-  // ---------- 규칙 엔진 ----------
-
-  async function ensureEngine() {
-    if (!rules) {
-      const res = await send({ type: 'typo:getRules' });
-      if (!res.ok || !res.rules) throw new Error('검사 규칙을 불러오지 못했습니다');
-      rules = res.rules;
-    }
-    const stored = await new Promise(resolve => {
-      try { chrome.storage.local.get('settings', items => resolve(items && items.settings || {})); } catch (_) { resolve({}); }
-    });
-    settings = stored;
-    const enabledMap = settings.docsCategories || {};
-    const enabled = rules.categories.map(c => c.id).filter(id => enabledMap[id] !== false);
-    const key = enabled.join(',');
-    if (key !== rulesKey) {
-      globalThis.TypoEngine.init(rules, enabled);
-      rulesKey = key;
-    }
-  }
-
-  function labelOf(catId) {
-    const cat = rules && rules.categories.find(c => c.id === catId);
-    return cat && cat.label ? cat.label : catId;
-  }
-
-  function oneLine(s) {
-    return String(s || '').replace(/[\u0000-\u0008\u000e-\u001f]/g, '').replace(/\s+/g, ' ');
-  }
-
-  function scanText(text) {
-    const result = globalThis.TypoEngine.scan(text, { limit: FINDINGS_PER_DOC });
-    return {
-      truncated: !!result.truncated,
-      findings: result.findings.map(f => ({
-        src: f.src,
-        dst: f.dst,
-        cat: f.cat,
-        start: f.start,
-        before: oneLine(text.slice(Math.max(0, f.start - SNIPPET), f.start)),
-        after: oneLine(text.slice(f.end, f.end + SNIPPET)),
-        contextBefore: text.slice(Math.max(0, f.start - CONTEXT), f.start),
-        contextAfter: text.slice(f.end, f.end + CONTEXT)
-      }))
-    };
   }
 
   // ---------- 동작 ----------
@@ -308,38 +391,6 @@
     if (selection.length) return true;
     setStatus('드라이브에서 구글 문서를 하나 이상 선택하세요', true);
     return false;
-  }
-
-  function proofreadAll() {
-    if (!needSelection()) return;
-    const files = selection.slice();
-    runBusy('proofread', async () => {
-      await ensureEngine();
-      results = { docs: files.map(f => ({ id: f.id, name: f.name, findings: [], total: 0, loading: true, open: files.length === 1 })) };
-      render();
-      let i = 0;
-      // 문서 3개씩 동시에 받아 검사한다
-      const worker = async () => {
-        while (i < files.length) {
-          const doc = results.docs[i++];
-          try {
-            const text = await exportText(doc.id, 'txt');
-            const scanned = scanText(text);
-            doc.findings = scanned.findings;
-            doc.total = scanned.findings.length;
-            doc.truncated = scanned.truncated;
-          } catch (error) {
-            doc.error = error.message;
-          }
-          doc.loading = false;
-          setStatus('전체 교정 중 · ' + results.docs.filter(d => !d.loading).length + '/' + files.length);
-        }
-      };
-      await Promise.all([worker(), worker(), worker()]);
-      const total = results.docs.reduce((n, d) => n + d.total, 0);
-      const failed = results.docs.filter(d => d.error).length;
-      setStatus('전체 교정 완료 · 문서 ' + files.length + '개 · 지적 ' + total + '건' + (failed ? ' · 실패 ' + failed + '개' : ''), failed > 0);
-    });
   }
 
   function extractImages() {
@@ -417,12 +468,6 @@
     });
   }
 
-  function openDoc(docId, target) {
-    send({ type: 'typo:driveOpenDoc', docId, authuser: authuser(), target: target || null }).then(res => {
-      if (!res.ok) setStatus('문서를 열지 못했습니다', true);
-    });
-  }
-
   // 고른 문서들을 새 탭의 격자 보기로 연다(팝업 창은 쓰지 않는다)
   function openGrid() {
     if (!needSelection()) return;
@@ -478,7 +523,15 @@
     b.setAttribute('role', 'button');
     const { sum, missing } = pageSum(selection);
     const loading = selection.some(f => pages[f.id] && pages[f.id].loading);
-    if (!selection.length) {
+    const folderEntry = !selection.length && folderSel ? folderCache.get(folderSel.id) : null;
+    if (folderEntry) {
+      // 폴더를 고르면 안에 든 항목 수를 보여 준다
+      const ready = !folderEntry.loading && !folderEntry.error;
+      if (ready) b.appendChild(el('span', 'tb-bubble-num' + (folderEntry.items.length > 999 ? ' tb-small' : ''), String(folderEntry.items.length)));
+      else b.textContent = '…';
+      b.classList.add(ready ? 'tb-folder-ready' : 'tb-pending');
+      b.title = folderSel.name + (ready ? ' · 항목 ' + folderEntry.items.length + '개 · 눌러서 미리보기' : ' · 불러오는 중');
+    } else if (!selection.length) {
       b.textContent = '…';
       b.classList.add('tb-idle');
       b.title = '토인비 편집 — 구글 문서를 클릭하면 쪽수가 나옵니다';
@@ -501,24 +554,54 @@
 
   function buildPanel() {
     const panel = el('div', 'tb-panel');
+    // 머리줄: 선택 개수 · 탭 1만 계산 · 쪽수 다시 세기 · 접기
     const head = el('div', 'tb-head');
-    head.appendChild(el('div', 'tb-title', '토인비 편집 · 드라이브'));
-    head.appendChild(button('✕', '접기', () => { expanded = false; render(); }, {}));
+    const folderMode = !selection.length && !!folderSel;
+    if (folderMode) {
+      const entry = folderCache.get(folderSel.id);
+      const n = entry && !entry.loading && !entry.error ? ' · ' + entry.items.length + '개' : '';
+      const label = el('div', 'tb-label', '▸ ' + folderSel.name + n);
+      label.title = folderSel.name;
+      head.appendChild(label);
+      const again = button('↻', '폴더 내용 다시 읽기', () => loadFolder(folderSel, true), {});
+      again.classList.add('tb-icon');
+      const closeF = button('✕', '접기', () => { expanded = false; render(); }, {});
+      closeF.classList.add('tb-icon');
+      head.append(again, closeF);
+      panel.appendChild(head);
+      const fbody = el('div', 'tb-body');
+      fbody.appendChild(buildFolderPreview());
+      panel.appendChild(fbody);
+      if (status) panel.appendChild(el('div', 'tb-status' + (statusError ? ' tb-err' : ''), status));
+      return panel;
+    }
+    head.appendChild(el('div', 'tb-label', selection.length ? '선택한 문서 ' + selection.length + '개' : '문서를 고르세요'));
+    const scopeRow = el('label', 'tb-scope');
+    const scopeBox = el('input');
+    scopeBox.type = 'checkbox';
+    scopeBox.checked = firstTabOnly;
+    scopeBox.addEventListener('change', () => setFirstTabOnly(scopeBox.checked));
+    scopeRow.append(scopeBox, document.createTextNode('탭 1만 계산'));
+    scopeRow.title = '여러 탭이 있는 문서에서 첫 탭의 쪽수만 셉니다';
+    const recount = button('↻', '쪽수 다시 세기 · 캐시를 무시하고 PDF로 다시 셉니다', () => refreshPages(selection, { force: true }), { disabled: !selection.length });
+    recount.classList.add('tb-icon');
+    const close = button('✕', '접기', () => { expanded = false; render(); }, {});
+    close.classList.add('tb-icon');
+    head.append(scopeRow, recount, close);
     panel.appendChild(head);
 
     const body = el('div', 'tb-body');
     const sel = el('div', 'tb-section');
     if (!selection.length) {
-      sel.appendChild(el('div', 'tb-empty', '구글 문서를 클릭하면 쪽수가 바로 나옵니다. ⌘/Shift로 여러 개 고르면 한 번에 처리합니다.'));
+      sel.appendChild(el('div', 'tb-empty', '구글 문서를 클릭하면 쪽수가 바로 나옵니다. ⌘/Shift로 여러 개 고르면 한 번에 처리합니다. 폴더를 한 번 누르면 안의 내용을 미리 보여 줍니다.'));
     } else {
-      sel.appendChild(el('div', 'tb-label', '선택한 문서 ' + selection.length + '개'));
       for (const f of selection) {
         const row = el('div', 'tb-file');
         const name = el('span', 'tb-file-name', f.name);
         name.title = f.name;
         const p = pages[f.id];
         const pg = el('span', 'tb-file-pages' + (p && (p.stale || p.loading) ? ' tb-dim' : '') + (p && p.error ? ' tb-err' : ''), pagesText(f.id));
-        row.append(name, pg, button('열기', '문서를 새 탭으로 엽니다', () => openDoc(f.id), {}));
+        row.append(name, pg);
         sel.appendChild(row);
       }
       // 여럿이면 목록 아래에 쪽수 합계(아직 세는 문서가 있으면 +)
@@ -529,62 +612,21 @@
         sel.appendChild(row);
       }
     }
-    const scopeRow = el('label', 'tb-scope');
-    const scopeBox = el('input');
-    scopeBox.type = 'checkbox';
-    scopeBox.checked = firstTabOnly;
-    scopeBox.addEventListener('change', () => setFirstTabOnly(scopeBox.checked));
-    scopeRow.append(scopeBox, document.createTextNode(' 탭 1만 계산'));
-    scopeRow.title = '여러 탭이 있는 문서에서 첫 탭의 쪽수만 셉니다';
-    sel.appendChild(scopeRow);
     body.appendChild(sel);
 
     const actions = el('div', 'tb-actions');
     const none = !selection.length || !!busy;
     actions.append(
-      button(busy === 'proofread' ? '교정 중…' : '전체 교정', '내장 규칙으로 선택한 문서를 모두 검사합니다', proofreadAll, { primary: true, disabled: none }),
+      button('격자 보기', '선택한 문서를 새 탭에 격자로 띄우고 에이전트와 함께 교정·편집합니다', openGrid, { primary: true, disabled: none }),
       button(busy === 'images' ? '추출 중…' : '이미지 추출', '선택한 문서의 이미지를 ZIP 하나로 받습니다', extractImages, { disabled: none }),
-      button(busy === 'toc' ? '추출 중…' : '목차 추출', '선택한 문서의 목차를 이어 붙여 복사합니다', extractToc, { disabled: none }),
-      button('격자 보기', '선택한 문서를 새 탭에 3열 격자로 띄우고 교정 진행을 보여 줍니다', openGrid, { disabled: none }),
-      button('쪽수 다시 세기', '캐시를 무시하고 PDF로 다시 셉니다', () => refreshPages(selection, { force: true }), { disabled: !selection.length })
+      button(busy === 'toc' ? '추출 중…' : '목차 추출', '선택한 문서의 목차를 이어 붙여 복사합니다', extractToc, { disabled: none })
     );
     body.appendChild(actions);
 
-    if (results) body.appendChild(buildResults());
     panel.appendChild(body);
 
     if (status) panel.appendChild(el('div', 'tb-status' + (statusError ? ' tb-err' : ''), status));
     return panel;
-  }
-
-  function buildResults() {
-    const wrap = el('div', 'tb-results');
-    for (const doc of results.docs) {
-      const group = el('div', 'tb-group');
-      const gh = el('div', 'tb-group-head');
-      const meta = doc.loading ? '검사 중…' : doc.error ? doc.error : doc.total + '건' + (doc.truncated ? '+' : '');
-      gh.append(el('span', 'tb-group-caret', doc.open ? '▾' : '▸'), el('span', 'tb-group-name', doc.name), el('span', 'tb-group-meta' + (doc.error ? ' tb-err' : ''), meta));
-      gh.addEventListener('click', () => { doc.open = !doc.open; render(); });
-      group.appendChild(gh);
-      if (doc.open && !doc.loading && !doc.error) {
-        if (!doc.findings.length) group.appendChild(el('div', 'tb-empty', '발견된 오탈자가 없습니다.'));
-        for (const f of doc.findings) {
-          const item = el('div', 'tb-item');
-          const ctx = el('div', 'tb-ctx');
-          if (f.before) ctx.appendChild(document.createTextNode('…' + f.before));
-          ctx.appendChild(el('b', 'tb-hit', f.src));
-          if (f.after) ctx.appendChild(document.createTextNode(f.after + '…'));
-          const fix = el('div', 'tb-fix', '➝ ' + f.dst);
-          fix.appendChild(el('span', 'tb-cat', labelOf(f.cat)));
-          item.append(ctx, fix);
-          item.title = '문서를 새 탭으로 열고 이 위치로 갑니다';
-          item.addEventListener('click', () => openDoc(doc.id, f));
-          group.appendChild(item);
-        }
-      }
-      wrap.appendChild(group);
-    }
-    return wrap;
   }
 
   function render() {
@@ -605,44 +647,46 @@
 .tb-bubble.tb-ready{background:#1a73e8}
 .tb-bubble.tb-pending{background:#8ab4f8}
 .tb-bubble.tb-idle{background:#5f6368}
+.tb-bubble.tb-folder-ready{background:#188038}
 .tb-bubble:hover{filter:brightness(1.08)}
 .tb-bubble-num{font-size:14px;font-variant-numeric:tabular-nums}
 .tb-bubble-num.tb-small{font-size:11px}
 .tb-bubble-unit{font-size:9px;font-weight:600;opacity:.85;margin-top:2px}
 .tb-panel{position:relative;width:320px;max-height:65vh;display:flex;flex-direction:column;background:#fff;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.32);overflow:hidden}
-.tb-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px 6px 12px;background:#f8f9fa;border-bottom:1px solid #e0e0e0}
-.tb-title{font-weight:700}
+.tb-head{flex:none;display:flex;align-items:center;gap:4px;padding:6px 6px 6px 14px;background:#f8f9fa;border-bottom:1px solid #e0e0e0}
+.tb-head .tb-label{flex:1;min-width:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;color:#3c4043}
+.tb-btn.tb-icon{width:28px;height:28px;padding:0;border:0;background:transparent;border-radius:50%;font-size:14px;color:#5f6368}
+.tb-btn.tb-icon:hover:not(:disabled){background:#e8eaed}
 .tb-body{overflow:auto;flex:1;min-height:0}
-.tb-section{padding:10px 14px 4px}
+.tb-section{padding:8px 14px 8px}
 .tb-label{font-size:12px;color:#5f6368;margin-bottom:6px}
 .tb-total{margin-top:4px;padding-top:6px;border-top:1px solid #e0e0e0;font-weight:700}
-.tb-total .tb-file-pages{margin-right:46px}
-.tb-scope{display:flex;align-items:center;gap:4px;margin-top:6px;font-size:12px;color:#5f6368;cursor:pointer;user-select:none}
+.tb-scope{flex:none;display:flex;align-items:center;gap:4px;margin-right:2px;font-size:12px;color:#5f6368;cursor:pointer;user-select:none;white-space:nowrap}
 .tb-scope input{margin:0}
 .tb-empty{font-size:12px;color:#80868b;padding:6px 0}
 .tb-file{display:flex;align-items:center;gap:8px;padding:3px 0}
 .tb-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tb-file-pages{flex:none;font-weight:600;color:#1a73e8;font-variant-numeric:tabular-nums}
 .tb-dim{color:#9aa0a6}
+.tb-entry{color:inherit;text-decoration:none;border-radius:6px;margin:0 -6px;padding:4px 6px}
+.tb-entry:hover{background:#f1f3f4}
+.tb-kind{flex:none;min-width:44px;padding:0 5px;border-radius:4px;background:#f1f3f4;color:#5f6368;font-size:11px;line-height:18px;text-align:center}
+.tb-kind-folder{background:#e6f4ea;color:#137333}
+.tb-kind-doc{background:#e8f0fe;color:#1967d2}
+.tb-kind-sheet{background:#e6f4ea;color:#188038}
+.tb-kind-slide{background:#fef7e0;color:#b06000}
+.tb-kind-pdf{background:#fce8e6;color:#c5221f}
+.tb-kind-office{background:#f3e8fd;color:#8430ce}
 .tb-err{color:#d93025}
-.tb-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px 12px;border-bottom:1px solid #eceff1}
+.tb-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 14px 12px;border-top:1px solid #eceff1;border-bottom:1px solid #eceff1}
+.tb-actions .tb-btn{padding:6px 8px;font-size:13px}
+.tb-actions .tb-primary{grid-column:1 / -1}
 .tb-btn{border:1px solid #dadce0;background:#fff;color:#3c4043;border-radius:6px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
 .tb-btn:hover:not(:disabled){background:#f1f3f4}
 .tb-btn:disabled{opacity:.5;cursor:default}
 .tb-primary{background:#1a73e8;border-color:#1a73e8;color:#fff}
 .tb-primary:hover:not(:disabled){background:#1765cc}
 .tb-file .tb-btn{padding:1px 8px}
-.tb-group-head{display:flex;align-items:center;gap:6px;padding:7px 14px;background:#f8f9fa;border-bottom:1px solid #eceff1;cursor:pointer;position:sticky;top:0}
-.tb-group-caret{width:10px;color:#5f6368}
-.tb-group-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
-.tb-group-meta{flex:none;font-size:12px;color:#5f6368}
-.tb-group .tb-empty{padding:6px 14px}
-.tb-item{padding:7px 14px 8px 30px;border-bottom:1px solid #f1f3f4;cursor:pointer}
-.tb-item:hover{background:#f8f9fa}
-.tb-ctx{color:#5f6368;font-size:12px;word-break:break-all}
-.tb-hit{color:#d93025;font-weight:700;text-decoration:underline wavy #d93025 1px;text-underline-offset:3px}
-.tb-fix{font-weight:600;font-size:12px;margin-top:2px}
-.tb-cat{margin-left:6px;font-weight:400;color:#80868b;font-size:11px}
 .tb-status{padding:5px 14px;font-size:11px;color:#5f6368;background:#f1f3f4;border-top:1px solid #e0e0e0}
 `;
 

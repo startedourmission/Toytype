@@ -489,6 +489,16 @@
       .finally(() => clearTimeout(timer));
   }
 
+  // FNV-1a 32비트 — 두 편집기의 본문이 같은지 빠르게 대조하는 용도
+  function textDigest(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16) + ':' + text.length;
+  }
+
   function fetchModelText(docId) {
     return requestDocsModel('getText', { docId }).then(res => {
       if (!res || !res.ok || typeof res.text !== 'string') {
@@ -7384,6 +7394,10 @@
       const model = await fetchModelText(getDocId());
       return { ok: true, text: model.text };
     }
+    if (op === 'digest') {
+      const model = await fetchModelText(getDocId());
+      return { ok: true, digest: textDigest(model.text) };
+    }
     if (op === 'select') {
       await selectDocsModelRange(Number(args.start) || 0, Number(args.end) || Number(args.start) || 0);
       return { ok: true };
@@ -7578,6 +7592,14 @@
       else if (status === 'error') sendResponse(errorResponse());
       else sendResponse(notReadyResponse());
       return;
+    }
+    if (msg.type === 'typo:docTextDigest') {
+      // 격자 보기가 원본 탭과 문서 칸이 같은 본문인지 대조할 때 쓴다(본문 대신 요약값만 돌려준다)
+      if (window.top !== window) return;
+      fetchModelText(getDocId()).then(model => {
+        sendResponse({ ok: true, docId: getDocId(), digest: textDigest(model.text), length: model.text.length });
+      }, error => sendResponse({ ok: false, error: error && error.message ? error.message : String(error) }));
+      return true;
     }
     if (msg.type === 'typo:rescan') {
       handleRescan().then(sendResponse, () => {

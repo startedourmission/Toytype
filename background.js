@@ -419,6 +419,29 @@ function aiBridgePath(action) {
   return paths[action] || '';
 }
 
+function tabMessage(tabId, msg, timeoutMs) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve({ ok: false, error: 'timeout' }), timeoutMs);
+    chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, res => {
+      clearTimeout(timer);
+      if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+      else resolve(res || { ok: false, error: 'no_response' });
+    });
+  });
+}
+
+async function originDocDigest(docId) {
+  if (!/^[\w-]{10,}$/.test(docId)) return { ok: false, error: 'bad_doc_id' };
+  const tabs = await chrome.tabs.query({ url: 'https://docs.google.com/document/*' });
+  const mine = tabs.filter(t => String(t.url || '').includes('/d/' + docId + '/'));
+  if (!mine.length) return { ok: false, error: 'no_tab' };
+  for (const tab of mine) {
+    const res = await tabMessage(tab.id, { type: 'typo:docTextDigest' }, 4000);
+    if (res && res.ok && res.docId === docId) return { ok: true, digest: res.digest };
+  }
+  return { ok: false, error: 'no_answer' };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
 
@@ -519,6 +542,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'typo:driveGridFrameReports') {
     sendResponse({ ok: true, reports: gridFrameReports });
     return;
+  }
+
+  if (msg.type === 'typo:gridOriginDigest') {
+    // 격자 페이지(우리 확장 페이지)만: 같은 문서를 연 일반 탭의 본문 요약값을 받아 온다
+    const from = String(sender && sender.url || '');
+    if (!(sender && sender.id === chrome.runtime.id && from.startsWith(chrome.runtime.getURL('')))) {
+      sendResponse({ ok: false, error: 'forbidden_sender' });
+      return;
+    }
+    originDocDigest(String(msg.docId || '')).then(sendResponse, error => {
+      sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
+    });
+    return true;
   }
 
   if (msg.type === 'typo:devReload') {
