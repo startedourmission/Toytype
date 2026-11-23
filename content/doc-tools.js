@@ -105,7 +105,46 @@
     return pages || null;
   }
 
+  // 바꿀 문구에서 원문과 같은 앞뒤를 덜어 실제로 달라지는 부분만 남긴다.
+  // 구글 문서는 선택 영역을 새 글자로 덮어쓸 때 첫 글자의 서식을 따르므로, 범위를 넓게 잡으면
+  // 그 안의 위첨자·아래첨자·굵게 같은 서식이 지워진다. 바뀌는 글자만 덮으면 나머지 서식은 그대로 남는다.
+  function minimalEdit(src, dst, start) {
+    src = String(src || '');
+    dst = String(dst || '');
+    start = Number(start) || 0;
+    if (!src || src === dst) return { src, dst, start, end: start + src.length };
+    const max = Math.min(src.length, dst.length);
+    let p = 0;
+    while (p < max && src[p] === dst[p]) p++;
+    let q = 0;
+    while (q < max - p && src[src.length - 1 - q] === dst[dst.length - 1 - q]) q++;
+    // 서로게이트 쌍(이모지 등)을 가르지 않는다
+    const isHigh = c => c >= 0xd800 && c <= 0xdbff;
+    const isLow = c => c >= 0xdc00 && c <= 0xdfff;
+    if (p > 0 && isHigh(src.charCodeAt(p - 1))) p--;
+    if (q > 0 && isLow(src.charCodeAt(src.length - q))) q--;
+    let s = src.slice(p, src.length - q);
+    let d = dst.slice(p, dst.length - q);
+    let at = start + p;
+    if (!s) {
+      // 순수 삽입: 덮어쓸 글자가 하나는 있어야 한다. 첨자일 가능성이 낮은 이웃(한글·공백·문장부호)을 고른다
+      const right = q > 0 ? src[src.length - q] : '';
+      const left = p > 0 ? src[p - 1] : '';
+      const plain = c => !!c && !/[A-Za-z0-9]/.test(c);
+      if (right && (plain(right) || !plain(left))) {
+        s = right;
+        d = d + right;
+      } else if (left) {
+        s = left;
+        d = left + d;
+        at -= 1;
+      }
+    }
+    return { src: s, dst: d, start: at, end: at + s.length };
+  }
+
   globalThis.ToytypeDocTools = {
+    minimalEdit,
     normalizeTocLine,
     isFenceLine,
     isBadTocText,

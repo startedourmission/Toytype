@@ -230,7 +230,8 @@ async function openGridTab(docs, authuser, sender, extra) {
   const id = (await findGridSession(list.map(d => d.id))) || crypto.randomUUID();
   await pruneGridSessions();
   await chrome.storage.local.set({ ['grid:' + id]: { docs: list, pool, folderName, authuser, createdAt: Date.now(), touchedAt: Date.now() } });
-  const opts = { url: chrome.runtime.getURL('grid.html#' + id), active: true };
+  // 격자는 docs.google.com 안의 페이지에 그린다(같은 출처라야 문서 칸이 편집자 권한을 온전히 가진다)
+  const opts = { url: 'https://docs.google.com/document/toytype-grid#' + id, active: true };
   const tab = sender && sender.tab;
   if (tab && Number.isInteger(tab.index)) {
     opts.index = tab.index + 1;

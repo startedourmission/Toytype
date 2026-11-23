@@ -6,6 +6,63 @@
 'use strict';
 
 (() => {
+  // 격자 페이지는 docs.google.com/document/toytype-grid(구글이 돌려주는 가벼운 404 페이지)에 콘텐트 스크립트로 그린다.
+  // 확장 페이지(다른 출처) 안에 문서를 끼우면 구글 문서가 편집자 권한을 줄여 제안 수락 등이 막히기 때문에,
+  // 같은 출처 페이지에서 문서 칸을 띄운다.
+  if (!location.pathname.startsWith('/document/toytype-grid')) return;
+  if (globalThis.__toytypeGridLoaded) return;
+  globalThis.__toytypeGridLoaded = true;
+  for (const node of Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))) node.remove();
+  document.documentElement.lang = 'ko';
+  document.title = '토인비 편집 · 격자 보기';
+  document.body.className = 'toytype-grid-page';
+  document.body.removeAttribute('style');
+  document.body.innerHTML = `<div class="g-main">
+  <main class="g-grid" id="g-grid"></main>
+  <div class="g-split" id="g-split" title="끌어서 채팅창 너비 조절 · 두 번 누르면 원래대로"></div>
+  <aside class="g-chat" id="g-chat">
+    <div class="g-progress"><div class="g-progress-fill" id="g-progress-fill"></div></div>
+    <header class="g-chat-head">
+      <div class="g-titlebar">
+        <span class="g-chat-title">에이전트</span>
+        <span class="g-chat-sub" id="g-sub"></span>
+        <button type="button" class="g-stop" id="g-stop" hidden>멈춤</button>
+        <button type="button" class="g-ghost" id="g-docs" aria-haspopup="true" aria-expanded="false" title="격자에 띄울 문서 켜고 끄기">문서</button>
+        <button type="button" class="g-ghost" id="g-history" aria-haspopup="true" aria-expanded="false" title="이전 대화 고르기">기록</button>
+      </div>
+      <div class="g-pop" id="g-pop" hidden></div>
+      <div class="g-toolbar">
+        <label class="g-field" title="한 줄에 놓을 문서 수"><span>열</span>
+          <select id="g-cols"><option value="0">자동</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+        </label>
+        <label class="g-field" title="동시에 일하는 AI 에이전트 수"><span>인원</span>
+          <select id="g-conc"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
+        </label>
+        <label class="g-switch" title="켜면 에이전트가 고친 곳을 문서에 바로 반영합니다. 끄면 제안만 받고 직접 승인합니다.">
+          <input type="checkbox" id="g-auto"><span class="g-switch-track" aria-hidden="true"></span><span>바로 적용</span>
+        </label>
+        <button type="button" class="g-reset" id="g-reset" title="열 수·열 너비·칸 높이·채팅창 너비를 처음대로 되돌립니다" disabled>크기 원래대로</button>
+      </div>
+    </header>
+    <div class="g-log-wrap">
+      <div class="g-log" id="g-log"></div>
+      <div class="g-nav" id="g-nav" hidden>
+        <button type="button" class="g-nav-btn" id="g-top" title="맨 위로" aria-label="맨 위로">↑</button>
+        <button type="button" class="g-nav-btn g-nav-last" id="g-last" title="마지막으로 [적용]을 누른 곳으로" aria-label="마지막으로 적용을 누른 곳으로">최근 적용</button>
+        <button type="button" class="g-nav-btn" id="g-jump" title="맨 아래로" aria-label="맨 아래로">↓</button>
+      </div>
+    </div>
+    <footer class="g-composer">
+      <div class="g-presets" id="g-presets"></div>
+      <form class="g-compose" id="g-compose">
+        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · 예) 합니다체로 통일해 줘"></textarea>
+        <button type="submit" class="g-send" id="g-send" title="보내기 (⌘Enter)" aria-label="보내기">↑</button>
+      </form>
+      <div class="g-hint">⌘Enter로 보내기 · 기본은 제안 모드라 승인한 곳만 바뀝니다</div>
+    </footer>
+  </aside>
+</div>`;
+
   const AGENT_COLORS = ['#1a73e8', '#e37400', '#188038', '#8430ce', '#d01884', '#12839b'];
   const DOCS_ORIGIN = 'https://docs.google.com';
   const CHUNK_MIN = 1500;
@@ -76,6 +133,11 @@
         card.pages = ev.data.report.pages;
         updateMeta(card);
       }
+    }
+    if (ev.origin === DOCS_ORIGIN && ev.data && ev.data.kind === 'toytype-grid-notice' && typeof ev.data.text === 'string') {
+      const card = cards.find(c => c.frame.contentWindow === ev.source);
+      systemMsg((card ? card.doc.name + ' · ' : '') + ev.data.text.slice(0, 200), /못했|실패/.test(ev.data.text), false);
+      return;
     }
     if (ev.origin !== DOCS_ORIGIN || !ev.data || ev.data.kind !== 'toytype-grid-rpc-result') return;
     const waiter = rpcWaiters.get(ev.data.id);
@@ -1157,8 +1219,7 @@
     const id = location.hash.slice(1);
     sessionId = id;
     const keys = ['grid:' + id, 'grid:' + id + ':history', 'grid:' + id + ':log'];
-    // 예전 판은 session 저장소에 두었다 — 거기 있으면 그대로 읽는다
-    const stored = id ? Object.assign({}, await chrome.storage.session.get(keys).catch(() => ({})), await chrome.storage.local.get(keys)) : {};
+    const stored = id ? await chrome.storage.local.get(keys) : {};
     session = stored['grid:' + id];
     trace('start', 'session ' + (session ? session.docs.length : 'missing'));
     history = Array.isArray(stored['grid:' + id + ':history']) ? stored['grid:' + id + ':history'] : [];

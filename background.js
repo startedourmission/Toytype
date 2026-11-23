@@ -10,33 +10,7 @@ import { handleDriveMessage } from './drive-service.mjs';
 
 chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
 
-// 격자 보기(확장 페이지)가 구글 문서를 칸 안에 띄울 수 있게, 우리 확장이 연 하위 프레임에 한해서만
-// 프레임 차단 헤더(X-Frame-Options, CSP frame-ancestors)를 걷어 낸다. 일반 웹페이지의 프레임에는 적용되지 않는다.
-const GRID_FRAME_RULE_ID = 1701;
 const gridFrameReports = [];
-function installGridFrameRule() {
-  if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateSessionRules) return;
-  chrome.declarativeNetRequest.updateSessionRules({
-    removeRuleIds: [GRID_FRAME_RULE_ID],
-    addRules: [{
-      id: GRID_FRAME_RULE_ID,
-      priority: 1,
-      action: {
-        type: 'modifyHeaders',
-        responseHeaders: [
-          { header: 'x-frame-options', operation: 'remove' },
-          { header: 'content-security-policy', operation: 'remove' }
-        ]
-      },
-      condition: {
-        regexFilter: '^https://docs\\.google\\.com/document/',
-        resourceTypes: ['sub_frame'],
-        initiatorDomains: [chrome.runtime.id]
-      }
-    }]
-  }).catch(error => console.warn('[Toytype grid] frame rule failed', error));
-}
-installGridFrameRule();
 
 // SW 재기동 시 사라지는 모듈 레벨 캐시 — 재fetch가 정상 동작이다.
 let rulesCache = null;
@@ -545,9 +519,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'typo:gridOriginDigest') {
-    // 격자 페이지(우리 확장 페이지)만: 같은 문서를 연 일반 탭의 본문 요약값을 받아 온다
+    // 격자 페이지만: 같은 문서를 연 일반 탭의 본문 요약값을 받아 온다
     const from = String(sender && sender.url || '');
-    if (!(sender && sender.id === chrome.runtime.id && from.startsWith(chrome.runtime.getURL('')))) {
+    if (!(sender && sender.id === chrome.runtime.id && from.startsWith('https://docs.google.com/document/toytype-grid'))) {
       sendResponse({ ok: false, error: 'forbidden_sender' });
       return;
     }

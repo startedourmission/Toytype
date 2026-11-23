@@ -4,13 +4,16 @@
 'use strict';
 
 (() => {
+  // 격자 페이지(docs.google.com/document/toytype-grid)는 grid.js가 맡는다
+  if (location.pathname.startsWith('/document/toytype-grid')) return;
   // 목차 파서는 드라이브 버블과 같이 쓰는 content/doc-tools.js에 있다
   const {
     normalizeTocLine,
     isFenceLine,
     isBadTocText,
     parseMarkdownExportHeadings,
-    formatExtractedToc
+    formatExtractedToc,
+    minimalEdit
   } = globalThis.ToytypeDocTools;
   const DEFAULT_SETTINGS = {
     schemaVersion: 1,
@@ -6483,11 +6486,15 @@
 
   function applyResolvedFindingFromContent(resolved, options) {
     const finding = resolved.finding;
+    // 달라지는 글자만 덮어써서 범위 안 위첨자·아래첨자 등 서식을 지킨다
+    const narrow = Number.isFinite(Number(finding.start)) && Number(finding.end) - Number(finding.start) === String(finding.src || '').length
+      ? minimalEdit(finding.src, finding.dst, finding.start)
+      : { src: finding.src, dst: finding.dst, start: finding.start, end: finding.end };
     const payload = Object.assign({
-      findText: finding.src,
-      replaceText: finding.dst,
-      start: finding.start,
-      end: finding.end,
+      findText: narrow.src,
+      replaceText: narrow.dst,
+      start: narrow.start,
+      end: narrow.end,
       docId: getDocId(),
       timeoutMs: 15000
     }, sanitizeApplyBridgeOptions(options));
@@ -7253,10 +7260,10 @@
 
   // 프레임 안: 우리 격자 보기가 띄운 문서 칸에서만 동작한다(구글이 자체로 띄운 프레임에서는 쉰다)
   const IN_FRAME = window.top !== window;
+  // 격자 페이지(같은 출처 docs.google.com/document/toytype-grid)가 띄운 칸인지 — 부모 주소를 직접 읽어 확인한다
   const GRID_FRAME = IN_FRAME && window.parent === window.top && (() => {
     try {
-      const anc = location.ancestorOrigins;
-      return !!anc && anc.length > 0 && anc[anc.length - 1] === 'chrome-extension://' + chrome.runtime.id;
+      return window.parent.location.origin === location.origin && window.parent.location.pathname.startsWith('/document/toytype-grid');
     } catch (_) {
       return false;
     }
@@ -7274,13 +7281,13 @@
       sinceLoadMs: Math.round(performance.now())
     };
     try { chrome.runtime.sendMessage({ type: 'typo:gridFrameReport', report }, () => { void chrome.runtime.lastError; }); } catch (_) { /* 무시 */ }
-    try { window.parent.postMessage({ kind: 'toytype-grid-frame', report }, 'chrome-extension://' + chrome.runtime.id); } catch (_) { /* 무시 */ }
+    try { window.parent.postMessage({ kind: 'toytype-grid-frame', report }, location.origin); } catch (_) { /* 무시 */ }
   }
 
   // ---------- 격자 보기 요청 처리 ----------
   // 격자 페이지(부모 프레임, 우리 확장 출처)만 이 문서에 본문 읽기·위치 선택·문구 바꾸기를 요청할 수 있다.
   // 바꾸기는 패널의 [적용]과 같은 내부 텍스트 액션을 쓰므로 실행 취소(⌘Z)와 버전 기록에 그대로 남는다.
-  const GRID_ORIGIN = 'chrome-extension://' + chrome.runtime.id;
+  const GRID_ORIGIN = location.origin;
   let gridApplyChain = Promise.resolve();
   let pageBridgeInjectedForGrid = false;
 

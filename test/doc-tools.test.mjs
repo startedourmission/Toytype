@@ -45,3 +45,16 @@ test('export 주소·캐시 키: 첫 탭만 셀 때는 tab=t.0과 별도 캐시 
   assert.equal(pageCacheKey('abc', 'all'), 'abc');
   assert.equal(pageCacheKey('abc', 'tab1'), 'abc#t.0');
 });
+
+test('최소 바꾸기: 같은 앞뒤를 덜어 서식이 있는 글자를 덮지 않는다', () => {
+  // "O(n2)이다." → "O(n2)입니다." : 위첨자 2는 건드리지 않고 '이'만 '입니'로
+  assert.deepEqual(T.minimalEdit('O(n2)이다.', 'O(n2)입니다.', 100), { src: '이', dst: '입니', start: 105, end: 106 });
+  // 앞부분만 바뀜
+  assert.deepEqual(T.minimalEdit('비교한다.', '비교합니다.', 0), { src: '한', dst: '합니', start: 2, end: 3 });
+  // 삭제
+  assert.deepEqual(T.minimalEdit('x2 의 의', 'x2 의', 10), { src: ' 의', dst: '', start: 14, end: 16 });
+  // 순수 삽입은 첨자가 아닐 법한 이웃 글자를 함께 덮는다(오른쪽 '다'를 고름, 왼쪽 숫자 2는 피함)
+  assert.deepEqual(T.minimalEdit('n2다', 'n2이다', 0), { src: '다', dst: '이다', start: 2, end: 3 });
+  // 같으면 그대로
+  assert.deepEqual(T.minimalEdit('같음', '같음', 5), { src: '같음', dst: '같음', start: 5, end: 7 });
+});

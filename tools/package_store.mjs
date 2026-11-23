@@ -22,7 +22,7 @@ const INCLUDE = [
   'rules.json',
   'popup.html', 'popup.css', 'popup.js',
   'options.html', 'options.css', 'options.js',
-  'grid.html', 'grid.css', 'grid.js',
+  'grid.css', 'grid.js',
   'content',
   'icons',
   'third_party'
