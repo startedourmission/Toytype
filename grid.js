@@ -463,7 +463,13 @@
       const first = edit.state === 'applied' ? edit.dst : edit.src;
       const second = edit.state === 'applied' ? edit.src : edit.dst;
       show.disabled = true;
+      // 그 문서 칸을 격자에서 보이게 하고, 내려 둔 칸이면 불러오는 동안 그렇다고 알린다
+      card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const prevState = edit.stateEl.textContent;
+      const waiting = card.unloaded || !card.ready;
+      if (waiting) edit.stateEl.textContent = '문서 불러오는 중…';
       const res = await rpc(card, 'locate', { src: first || second, alts: [second].filter(Boolean), hint: edit.hint }, 15000);
+      if (waiting && edit.stateEl.textContent === '문서 불러오는 중…') edit.stateEl.textContent = prevState;
       show.disabled = false;
       trace('locate', card.doc.name + ' ' + JSON.stringify({ res, unloaded: !!card.unloaded, visible: card.visible, ready: card.ready, state: edit.state }));
       if (!res.ok) flashState(edit, res.error === 'timeout' ? '문서가 응답하지 않음 · ↻로 칸을 다시 불러오세요' : res.error === 'frame_unavailable' ? '이 문서 칸이 격자에 없습니다' : '문서에서 찾지 못함');
