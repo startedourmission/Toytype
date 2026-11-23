@@ -17,6 +17,7 @@
         <span class="g-chat-title">에이전트</span>
         <span class="g-chat-sub" id="g-sub"></span>
         <button type="button" class="g-stop" id="g-stop" hidden>멈춤</button>
+        <button type="button" class="g-ghost" id="g-docs" aria-haspopup="true" aria-expanded="false" title="격자에 띄울 문서 켜고 끄기">문서</button>
         <button type="button" class="g-ghost" id="g-history" aria-haspopup="true" aria-expanded="false" title="이전 대화 고르기">기록</button>
       </div>
       <div class="g-pop" id="g-pop" hidden></div>
@@ -35,7 +36,11 @@
     </header>
     <div class="g-log-wrap">
       <div class="g-log" id="g-log"></div>
-      <button type="button" class="g-jump" id="g-jump" title="맨 아래로" aria-label="맨 아래로" hidden>↓</button>
+      <div class="g-nav" id="g-nav" hidden>
+        <button type="button" class="g-nav-btn" id="g-top" title="맨 위로" aria-label="맨 위로">↑</button>
+        <button type="button" class="g-nav-btn g-nav-last" id="g-last" title="마지막으로 [적용]을 누른 곳으로" aria-label="마지막으로 적용을 누른 곳으로">최근 적용</button>
+        <button type="button" class="g-nav-btn" id="g-jump" title="맨 아래로" aria-label="맨 아래로">↓</button>
+      </div>
     </div>
     <footer class="g-composer">
       <div class="g-presets" id="g-presets"></div>

@@ -471,10 +471,19 @@
   // 고른 문서들을 새 탭의 격자 보기로 연다(팝업 창은 쓰지 않는다)
   function openGrid() {
     if (!needSelection()) return;
-    send({ type: 'typo:driveOpenGrid', docs: selection.slice(0, 12), authuser: authuser() }).then(res => {
+    // 지금 보고 있는 폴더의 문서 전체를 같이 넘겨, 격자에서 문서를 켜고 끌 수 있게 한다
+    const seen = new Set();
+    const pool = [];
+    for (const cell of allDocCells()) {
+      if (seen.has(cell.dataset.id)) continue;
+      seen.add(cell.dataset.id);
+      pool.push(cellInfo(cell));
+    }
+    const folderName = document.title.replace(/\s*-\s*Google (?:Drive|드라이브)\s*$/, '').trim();
+    send({ type: 'typo:driveOpenGrid', docs: selection.slice(0, 30), pool, folderName, authuser: authuser() }).then(res => {
       if (res.error === 'context_lost') return;
       if (!res.ok) setStatus('격자 보기를 열지 못했습니다 · ' + (res.error || ''), true);
-      else if (selection.length > 12) setStatus('앞 12개 문서만 격자에 넣었습니다');
+      else if (selection.length > 30) setStatus('앞 30개 문서만 격자에 넣었습니다');
     });
   }
 

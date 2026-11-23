@@ -32,6 +32,8 @@
   let cards = [];
   let busy = false;
   let stopRequested = false;
+  // [멈춤]은 그때 대기 중이던 적용만 취소한다 — 멈춘 뒤에 새로 누른 [적용]은 그대로 실행돼야 한다
+  let stopGen = 0;
   const liveRequests = new Set();
   const rpcWaiters = new Map();
   let rpcSeq = 0;
@@ -82,7 +84,18 @@
     waiter(ev.data.res || { ok: false, error: 'empty' });
   });
 
-  function rpc(card, op, args, timeoutMs) {
+  // 내려 둔 칸에 일을 시키면 먼저 다시 불러온다 — 에이전트는 안 보이는 칸도 다룰 수 있어야 한다
+  async function rpc(card, op, args, timeoutMs) {
+    if (op !== 'ping' && card.unloaded) {
+      const ok = await ensureLoaded(card);
+      if (!ok) return { ok: false, error: 'not_ready' };
+    }
+    const res = await rawRpc(card, op, args, timeoutMs);
+    if (!card.visible && op !== 'ping') scheduleUnload(card);
+    return res;
+  }
+
+  function rawRpc(card, op, args, timeoutMs) {
     return new Promise(resolve => {
       const id = 'r' + (++rpcSeq);
       const timer = setTimeout(() => {
@@ -106,7 +119,8 @@
   async function waitReady(card) {
     const t0 = Date.now();
     while (Date.now() - t0 < READY_TIMEOUT_MS) {
-      const res = await rpc(card, 'ping', {}, 1500);
+      if (card.unloaded) return false;
+      const res = await rawRpc(card, 'ping', {}, 1500);
       if (res.ok) {
         card.ready = true;
         card.root.classList.add('g-ready');
@@ -137,6 +151,7 @@
     pick.type = 'checkbox';
     pick.checked = true;
     pick.title = '에이전트 작업 대상에 넣기';
+    pick.addEventListener('change', saveLog);
     const name = el('div', 'g-card-name', doc.name || doc.id);
     name.title = doc.name || '';
     const badge = el('span', 'g-agent-badge', '');
@@ -162,7 +177,7 @@
     const frame = el('iframe', 'g-frame');
     frame.src = docUrl(doc.id, true);
     frame.setAttribute('allow', 'clipboard-read; clipboard-write');
-    wrap.append(frame);
+    wrap.append(frame, el('div', 'g-sleep', '화면 밖이라 잠시 내려 두었습니다 · 보이면 다시 불러옵니다'));
     // 오른쪽 모서리: 열 너비, 아래 모서리: 칸 높이 (두 번 누르면 원래대로)
     const sizeCol = el('div', 'g-size g-size-col');
     sizeCol.title = '끌어서 열 너비 조절 · 두 번 누르면 원래대로';
@@ -185,7 +200,62 @@
   const STALE_GRACE_MS = 8000;
   let syncRunning = false;
 
+  // ---------- 안 보이는 칸 내려 두기 ----------
+  // 칸마다 편집기 하나라 무겁다. 화면 밖에 UNLOAD_AFTER_MS 넘게 있던 칸은 편집기를 내리고, 다시 보이면 불러온다.
+  // 에이전트가 맡은 칸(pinned)은 화면 밖이어도 내리지 않는다.
+  const UNLOAD_AFTER_MS = 20000;
+  let visObserver = null;
+
+  function unloadCard(card) {
+    if (card.unloaded || card.pinned || card.applying || card.root.classList.contains('g-working')) return;
+    card.unloaded = true;
+    card.ready = false;
+    card.sync = null;
+    card.root.classList.remove('g-ready', 'g-failed');
+    card.root.classList.add('g-unloaded');
+    card.dot.title = '화면 밖이라 내려 둠';
+    card.frame.src = 'about:blank';
+  }
+
+  function loadCard(card) {
+    if (!card.unloaded) return card.readyPromise;
+    reloadCard(card, false);
+    return card.readyPromise;
+  }
+
+  async function ensureLoaded(card) {
+    if (card.unloaded) loadCard(card);
+    return card.ready ? true : await card.readyPromise;
+  }
+
+  function scheduleUnload(card) {
+    clearTimeout(card.unloadTimer);
+    if (card.visible) return;
+    card.unloadTimer = setTimeout(() => { if (!card.visible) unloadCard(card); }, UNLOAD_AFTER_MS);
+  }
+
+  function observeCard(card) {
+    if (!visObserver) {
+      visObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          const card = cards.find(c => c.root === entry.target);
+          if (!card) continue;
+          card.visible = entry.isIntersecting;
+          if (card.visible) {
+            clearTimeout(card.unloadTimer);
+            if (card.unloaded) loadCard(card);
+          } else {
+            scheduleUnload(card);
+          }
+        }
+      }, { root: $('g-grid'), rootMargin: '300px' });
+    }
+    visObserver.observe(card.root);
+  }
+
   function reloadCard(card, auto) {
+    card.unloaded = false;
+    card.root.classList.remove('g-unloaded');
     card.ready = false;
     card.sync = null;
     card.root.classList.remove('g-ready', 'g-failed');
@@ -206,7 +276,7 @@
   }
 
   async function syncCard(card) {
-    if (!card.ready || card.root.classList.contains('g-working')) return;
+    if (!card.ready || card.unloaded || card.root.classList.contains('g-working')) return;
     const origin = await send({ type: 'typo:gridOriginDigest', docId: card.doc.id });
     if (!origin.ok) { card.sync = null; return; }
     const mine = await rpc(card, 'digest', {}, 8000);
@@ -272,7 +342,7 @@
       const entries = logEntries.slice(-LOG_MAX_ENTRIES).map(e => e.t !== 'agent' ? e : {
         t: 'agent', agent: e.agent, who: e.who, text: e.pending ? '(새로고침으로 중단됨)' : e.text, docId: e.docId,
         edits: (e.edits || []).map(x => ({
-          src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint,
+          src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0,
           state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : 'proposed'
         }))
       });
@@ -299,9 +369,37 @@
     return log.scrollHeight - log.scrollTop - log.clientHeight < 24;
   }
 
+  // 대화창 아래 떠 있는 이동 버튼: 맨 위 · 최근 적용 · 맨 아래 — 대화가 화면을 넘칠 때만 보인다
+  let lastAppliedItem = null;
+
+  // 직접 누른 [적용]이 없으면(새로고침 전·바로 적용 모드) 대화창에서 가장 아래 있는 적용된 항목으로 간다
+  function lastAppliedTarget() {
+    if (lastAppliedItem && lastAppliedItem.isConnected) return lastAppliedItem;
+    const applied = $('g-log').querySelectorAll('.g-edit.g-applied');
+    return applied.length ? applied[applied.length - 1] : null;
+  }
+
   function updateJump() {
     const log = $('g-log');
-    $('g-jump').hidden = atBottom(log);
+    const scrollable = log.scrollHeight - log.clientHeight > 24;
+    const hasLast = !!lastAppliedTarget();
+    $('g-nav').hidden = !scrollable && !hasLast;
+    $('g-top').disabled = log.scrollTop < 24;
+    $('g-jump').disabled = atBottom(log);
+    $('g-last').hidden = !hasLast;
+  }
+
+  function jumpToTop() {
+    $('g-log').scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function jumpToLastApplied() {
+    const item = lastAppliedTarget();
+    if (!item) return;
+    item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    item.classList.remove('g-flash');
+    void item.offsetWidth;
+    item.classList.add('g-flash');
   }
 
   function scrollLog() {
@@ -311,7 +409,6 @@
   function jumpToBottom(smooth) {
     const log = $('g-log');
     log.scrollTo({ top: log.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
-    $('g-jump').hidden = true;
   }
 
   // persist=false: 잠깐 보이는 안내(대기 중·멈추는 중 등)는 기록하지 않는다
@@ -368,7 +465,8 @@
       show.disabled = true;
       const res = await rpc(card, 'locate', { src: first || second, alts: [second].filter(Boolean), hint: edit.hint }, 15000);
       show.disabled = false;
-      if (!res.ok) flashState(edit, '문서에서 찾지 못함');
+      trace('locate', card.doc.name + ' ' + JSON.stringify({ res, unloaded: !!card.unloaded, visible: card.visible, ready: card.ready, state: edit.state }));
+      if (!res.ok) flashState(edit, res.error === 'timeout' ? '문서가 응답하지 않음 · ↻로 칸을 다시 불러오세요' : res.error === 'frame_unavailable' ? '이 문서 칸이 격자에 없습니다' : '문서에서 찾지 못함');
       else if (res.approx) flashState(edit, '문구가 바뀌어 원래 자리 근처로 갔습니다');
       else if (edit.state === 'failed' && res.matched === edit.dst) {
         // 실패로 표시됐지만 문서에는 이미 고친 문구가 있다 — 적용됨으로 바로잡는다
@@ -401,15 +499,23 @@
     card.counts.applied++;
     updateMeta(card);
     saveLog();
+    updateJump();
   }
 
   function queueApply(card, edit, agentCursor) {
     if (edit.state === 'applied' || edit.state === 'applying' || edit.state === 'queued') return Promise.resolve();
+    // 사람이 누른 [적용]만 '최근 적용'으로 기억한다(바로 적용 모드의 자동 적용은 빼고)
+    if (!agentCursor) {
+      lastAppliedItem = edit.item;
+      edit.pressedAt = Date.now();
+      updateJump();
+    }
     edit.state = 'queued';
     edit.applyBtn.disabled = true;
     edit.stateEl.textContent = '적용 대기';
+    const gen = stopGen;
     const run = card.applyChain.then(async () => {
-      if (stopRequested) {
+      if (gen !== stopGen) {
         edit.state = 'proposed';
         edit.applyBtn.disabled = false;
         edit.stateEl.textContent = '멈춤';
@@ -417,6 +523,7 @@
       }
       edit.state = 'applying';
       edit.stateEl.textContent = '적용 중…';
+      card.applying = (card.applying || 0) + 1;
       const res = await rpc(card, 'applyEdit', { src: edit.src, dst: edit.dst, hint: edit.hint, agent: agentCursor || null }, 45000);
       let ok = res.ok;
       if (!ok && edit.dst && edit.dst !== edit.src) {
@@ -437,6 +544,9 @@
         edit.applyBtn.disabled = false;
         edit.stateEl.textContent = res.error === 'not_found' ? '문서에서 찾지 못함(이미 바뀜?)' : '적용 실패 · 다시 시도';
       }
+      updateJump();
+      card.applying = Math.max(0, (card.applying || 1) - 1);
+      if (!card.applying) scheduleUnload(card);
       saveLog();
     });
     card.applyChain = run.catch(() => {});
@@ -493,6 +603,13 @@
     $('g-progress-fill').style.width = total ? Math.round(done / total * 100) + '%' : '0';
   }
 
+  function unpinTargets(targets) {
+    for (const c of targets) {
+      c.pinned = false;
+      scheduleUnload(c);
+    }
+  }
+
   async function runInstruction(instruction) {
     if (busy) return;
     const targets = cards.filter(c => c.pick.checked);
@@ -505,6 +622,12 @@
     setBusy(true);
     const auto = $('g-auto').checked;
     const agents = Number($('g-conc').value) || 3;
+    // 맡긴 칸은 화면 밖이어도 내리지 않고, 내려 둔 칸은 다시 불러온다
+    for (const c of targets) {
+      c.pinned = true;
+      clearTimeout(c.unloadTimer);
+      if (c.unloaded) loadCard(c);
+    }
     const notReady = targets.filter(c => !c.ready);
     if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)', false, false);
     await Promise.all(notReady.map(c => c.readyPromise));
@@ -526,6 +649,7 @@
       for (const q of queues) if (round < q.length) tasks.push(q[round]);
     }
     if (!tasks.length) {
+      unpinTargets(targets);
       setBusy(false);
       return;
     }
@@ -552,6 +676,7 @@
     if (!disabled) recordTurn(instruction, tasks);
     if (disabled) systemMsg('AI 기능이 꺼져 있습니다 · 설정에서 [브릿지 · AI 기능 사용]을 켜고 로컬 브리지를 실행하세요', true);
     else systemMsg((stopRequested ? '멈췄습니다 · ' : '끝 · ') + '고칠 곳 ' + total + '개' + (auto ? ' · 적용 ' + targets.reduce((n, c) => n + c.counts.applied, 0) + '개(누적)' : ''));
+    unpinTargets(targets);
     setBusy(false);
   }
 
@@ -563,9 +688,11 @@
       const actions = el('div', 'g-msg-actions');
       const all = el('button', 'g-link', '모두 적용');
       all.type = 'button';
-      all.addEventListener('click', () => {
+      all.addEventListener('click', async () => {
         all.disabled = true;
-        for (const edit of edits) queueApply(card, edit);
+        await Promise.all(edits.map(edit => queueApply(card, edit)));
+        // 멈춤·실패로 남은 항목이 있으면 다시 누를 수 있게 둔다
+        all.disabled = edits.every(e => e.state === 'applied');
       });
       actions.appendChild(all);
       msg.bubble.appendChild(actions);
@@ -574,6 +701,7 @@
 
   // 저장해 둔 채팅창을 다시 그린다. 적용된 제안은 적용됨으로, 진행 중이던 것은 제안으로 돌아온다.
   function restoreLog(saved) {
+    let newest = 0;
     for (const e of saved.entries || []) {
       if (e.t === 'system') systemMsg(e.text, e.error);
       else if (e.t === 'user') userMsg(e.text);
@@ -589,6 +717,10 @@
           const states = edits.map(x => x.state);
           renderEdits(msg, card, edits, false);
           edits.forEach((edit, i) => {
+            if (edit.pressedAt > newest) {
+              newest = edit.pressedAt;
+              lastAppliedItem = edit.item;
+            }
             if (states[i] === 'applied') {
               edit.state = 'applied';
               edit.item.classList.add('g-applied');
@@ -716,6 +848,7 @@
 
   function stopAll() {
     stopRequested = true;
+    stopGen++;
     for (const id of liveRequests) send({ type: 'typo:aiBridgeAbort', requestId: id });
     systemMsg('멈추는 중…', false, false);
   }
@@ -755,12 +888,84 @@
   async function newConversation() {
     if (!session || busy) return;
     const id = crypto.randomUUID();
-    await chrome.storage.local.set({ ['grid:' + id]: { docs: session.docs, authuser: session.authuser, createdAt: Date.now(), touchedAt: Date.now() } });
+    await chrome.storage.local.set({ ['grid:' + id]: { docs: session.docs, pool: session.pool, folderName: session.folderName, authuser: session.authuser, createdAt: Date.now(), touchedAt: Date.now() } });
     gotoSession(id);
   }
 
   function closeHistory() {
     $('g-pop').hidden = true;
+    $('g-history').setAttribute('aria-expanded', 'false');
+    $('g-docs').setAttribute('aria-expanded', 'false');
+  }
+
+  // ---------- 격자 문서 켜고 끄기 ----------
+  // 드라이브에서 격자를 열 때 보고 있던 폴더의 문서들을 후보로 두고, 칸을 켜고 끈다(최대 GRID_MAX_CARDS개).
+  const GRID_MAX_CARDS = 30;
+
+  function poolDocs() {
+    const pool = Array.isArray(session.pool) ? session.pool.slice() : [];
+    for (const d of session.docs) if (!pool.some(p => p.id === d.id)) pool.push(d);
+    return pool;
+  }
+
+  function persistDocs() {
+    session.docs = cards.map(c => c.doc);
+    $('g-sub').textContent = '문서 ' + cards.length + '개';
+    document.title = '격자 보기 · 문서 ' + cards.length + '개';
+    chrome.storage.local.set({ ['grid:' + sessionId]: Object.assign(session, { touchedAt: Date.now() }) }).catch(() => {});
+  }
+
+  function addDocCard(doc) {
+    if (cards.length >= GRID_MAX_CARDS || cards.some(c => c.doc.id === doc.id)) return;
+    const order = poolDocs().map(d => d.id);
+    const rank = id => { const i = order.indexOf(id); return i === -1 ? 1e9 : i; };
+    const card = buildCard(doc);
+    let idx = cards.findIndex(c => rank(c.doc.id) > rank(doc.id));
+    if (idx === -1) idx = cards.length;
+    $('g-grid').insertBefore(card.root, cards[idx] ? cards[idx].root : null);
+    cards.splice(idx, 0, card);
+    layout();
+    card.readyPromise = waitReady(card);
+    observeCard(card);
+    persistDocs();
+  }
+
+  function removeDocCard(id) {
+    const i = cards.findIndex(c => c.doc.id === id);
+    if (i === -1 || cards.length <= 1) return;
+    clearTimeout(cards[i].unloadTimer);
+    if (visObserver) visObserver.unobserve(cards[i].root);
+    cards[i].root.remove();
+    cards.splice(i, 1);
+    layout();
+    persistDocs();
+  }
+
+  function openDocsPicker() {
+    const pop = $('g-pop');
+    pop.textContent = '';
+    pop.appendChild(el('div', 'g-pop-label', (session.folderName ? session.folderName + ' · ' : '') + '격자 ' + cards.length + '/' + GRID_MAX_CARDS));
+    if (busy) pop.appendChild(el('div', 'g-pop-note', '에이전트가 일하는 중에는 바꿀 수 없습니다'));
+    for (const doc of poolDocs()) {
+      const on = cards.some(c => c.doc.id === doc.id);
+      const blocked = busy || (on ? cards.length <= 1 : cards.length >= GRID_MAX_CARDS);
+      const row = el('label', 'g-doc-row' + (blocked ? ' g-disabled' : ''));
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = on;
+      box.disabled = blocked;
+      box.addEventListener('change', () => {
+        if (box.checked) addDocCard(doc);
+        else removeDocCard(doc.id);
+        openDocsPicker();
+      });
+      row.append(box, el('span', 'g-switch-track'), el('span', 'g-doc-name', doc.name || doc.id));
+      row.title = doc.name || '';
+      pop.appendChild(row);
+    }
+    if (!Array.isArray(session.pool) || !session.pool.length) pop.appendChild(el('div', 'g-pop-note', '예전에 연 격자라 폴더 목록이 없습니다 · 드라이브에서 격자를 다시 열면 그 폴더의 문서가 다 나옵니다'));
+    pop.hidden = false;
+    $('g-docs').setAttribute('aria-expanded', 'true');
     $('g-history').setAttribute('aria-expanded', 'false');
   }
 
@@ -802,16 +1007,24 @@
     }
     pop.hidden = false;
     $('g-history').setAttribute('aria-expanded', 'true');
+    $('g-docs').setAttribute('aria-expanded', 'false');
   }
 
   function initHistoryPicker() {
     const btn = $('g-history');
     btn.addEventListener('click', ev => {
       ev.stopPropagation();
-      if ($('g-pop').hidden) openHistory();
+      if ($('g-pop').hidden || btn.getAttribute('aria-expanded') !== 'true') openHistory();
       else closeHistory();
     });
-    document.addEventListener('click', ev => { if (!$('g-pop').contains(ev.target)) closeHistory(); });
+    $('g-docs').addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (!session) return;
+      if ($('g-pop').hidden || $('g-docs').getAttribute('aria-expanded') !== 'true') openDocsPicker();
+      else closeHistory();
+    });
+    // 켜고 끌 때 목록을 다시 그리므로 클릭한 줄이 이미 DOM에서 빠졌을 수 있다 — 이벤트 경로로 판단한다
+    document.addEventListener('click', ev => { if (!ev.composedPath().includes($('g-pop'))) closeHistory(); });
     document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeHistory(); });
   }
 
@@ -960,6 +1173,7 @@
     initHistoryPicker();
     trace('cards', cards.length + ' cards');
     for (const c of cards) c.readyPromise = waitReady(c).then(ok => { trace('ready', c.doc.name + ' ' + ok); return ok; });
+    for (const c of cards) observeCard(c);
 
     const presets = $('g-presets');
     for (const [label, text] of PRESETS) {
@@ -986,6 +1200,8 @@
     $('g-stop').addEventListener('click', stopAll);
     $('g-log').addEventListener('scroll', updateJump, { passive: true });
     $('g-jump').addEventListener('click', () => jumpToBottom(true));
+    $('g-top').addEventListener('click', jumpToTop);
+    $('g-last').addEventListener('click', jumpToLastApplied);
     setInterval(syncAll, SYNC_INTERVAL_MS);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncAll(); });
     const savedLog = stored['grid:' + id + ':log'];
@@ -1010,7 +1226,7 @@
     }
     $('g-auto').addEventListener('change', saveLog);
     $('g-conc').addEventListener('change', saveLog);
-    for (const c of cards) c.pick.addEventListener('change', saveLog);
+
     // 예전 판에서 session에 있던 세션은 local로 옮겨 다음부터 유지되게 한다
     chrome.storage.local.set({ ['grid:' + id]: Object.assign(session, { touchedAt: Date.now() }), ['grid:' + id + ':history']: history }).catch(() => {});
   }

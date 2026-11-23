@@ -212,17 +212,24 @@ async function findGridSession(docIds) {
 }
 
 // 격자 보기: 고른 문서 목록을 저장해 두고 확장 페이지를 드라이브 탭 옆에 연다.
-const GRID_MAX_DOCS = 12;
-async function openGridTab(docs, authuser, sender) {
-  const list = (Array.isArray(docs) ? docs : [])
-    .filter(d => d && validDocId(d.id))
-    .slice(0, GRID_MAX_DOCS)
-    .map(d => ({ id: d.id, name: String(d.name || '').slice(0, 200), version: String(d.version || '') }));
+const GRID_MAX_DOCS = 30;
+const GRID_POOL_MAX = 100;
+const cleanDocs = (docs, max) => (Array.isArray(docs) ? docs : [])
+  .filter(d => d && validDocId(d.id))
+  .slice(0, max)
+  .map(d => ({ id: d.id, name: String(d.name || '').slice(0, 200), version: String(d.version || '') }));
+
+async function openGridTab(docs, authuser, sender, extra) {
+  const list = cleanDocs(docs, GRID_MAX_DOCS);
+  // 격자에서 켜고 끌 수 있는 후보: 드라이브에서 보고 있던 폴더의 문서들(고른 문서는 항상 포함)
+  const pool = cleanDocs(extra && extra.pool, GRID_POOL_MAX);
+  for (const d of list) if (!pool.some(p => p.id === d.id)) pool.push(d);
+  const folderName = String(extra && extra.folderName || '').slice(0, 200);
   if (!list.length) return { ok: false, error: 'no_docs' };
   // 같은 문서 묶음으로 연 적이 있으면 그 세션(대화 기록·채팅창)을 이어 쓴다
   const id = (await findGridSession(list.map(d => d.id))) || crypto.randomUUID();
   await pruneGridSessions();
-  await chrome.storage.local.set({ ['grid:' + id]: { docs: list, authuser, createdAt: Date.now(), touchedAt: Date.now() } });
+  await chrome.storage.local.set({ ['grid:' + id]: { docs: list, pool, folderName, authuser, createdAt: Date.now(), touchedAt: Date.now() } });
   const opts = { url: chrome.runtime.getURL('grid.html#' + id), active: true };
   const tab = sender && sender.tab;
   if (tab && Number.isInteger(tab.index)) {
@@ -277,7 +284,7 @@ export function handleDriveMessage(msg, sendResponse, sender) {
     return true;
   }
   if (msg.type === 'typo:driveOpenGrid') {
-    openGridTab(msg.docs, authuser, sender).then(sendResponse, fail);
+    openGridTab(msg.docs, authuser, sender, { pool: msg.pool, folderName: msg.folderName }).then(sendResponse, fail);
     return true;
   }
   if (!validDocId(msg.docId)) {
