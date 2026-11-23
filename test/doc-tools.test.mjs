@@ -60,3 +60,23 @@ test('최소 바꾸기: 같은 앞뒤를 덜어 서식이 있는 글자를 덮�
   // 같으면 그대로
   assert.deepEqual(T.minimalEdit('같음', '같음', 5), { src: '같음', dst: '같음', start: 5, end: 7 });
 });
+
+test('docx 댓글·제안: 앵커 문구와 문맥, 바꾸기 묶음을 뽑는다', async () => {
+  const { DOMParser } = await import('@xmldom/xmldom');
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const documentXml = `<w:document ${W}><w:body>
+    <w:p><w:r><w:t>스택은 </w:t></w:r><w:commentRangeStart w:id="0"/><w:r><w:t>후입선출</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:t> 구조다.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>배열을 </w:t></w:r><w:del w:id="1" w:author="편집자" w:date="2026-11-20T00:00:00Z"><w:r><w:delText>사용한다</w:delText></w:r></w:del><w:ins w:id="2" w:author="편집자" w:date="2026-11-20T00:00:00Z"><w:r><w:t>사용합니다</w:t></w:r></w:ins><w:r><w:t>.</w:t></w:r></w:p>
+    <w:p><w:ins w:id="3" w:author="저자"><w:r><w:t>새 문장.</w:t></w:r></w:ins></w:p>
+  </w:body></w:document>`;
+  const commentsXml = `<w:comments ${W}><w:comment w:id="0" w:author="검토자" w:date="2026-11-21T00:00:00Z"><w:p><w:r><w:t>LIFO도 같이 적어 주세요</w:t></w:r></w:p></w:comment></w:comments>`;
+  const r = T.parseDocxReview(documentXml, commentsXml, DOMParser);
+  assert.equal(r.comments.length, 1);
+  assert.equal(r.comments[0].author, '검토자');
+  assert.equal(r.comments[0].anchor, '후입선출');
+  assert.equal(r.comments[0].context, '스택은 후입선출 구조다.');
+  assert.equal(r.suggestions.length, 2);
+  assert.deepEqual([r.suggestions[0].kind, r.suggestions[0].author, r.suggestions[0].deleted, r.suggestions[0].inserted], ['replace', '편집자', '사용한다', '사용합니다']);
+  assert.equal(r.suggestions[0].context, '배열을 ⟦-사용한다⟧⟦+사용합니다⟧.');
+  assert.deepEqual([r.suggestions[1].kind, r.suggestions[1].author, r.suggestions[1].inserted], ['insert', '저자', '새 문장.']);
+});

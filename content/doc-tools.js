@@ -144,7 +144,86 @@
     return { src: s, dst: d, start: at, end: at + s.length };
   }
 
+  // DOCX export에서 댓글과 제안(변경 내용 추적)을 뽑는다. 구글 문서는 본문을 캔버스에 그려서
+  // 댓글이 걸린 문구(앵커)와 앞뒤 문맥은 화면 DOM에 없다 — export의 commentRange·w:ins·w:del에서 읽는다.
+  // Parser: 브라우저는 DOMParser, Node 테스트는 @xmldom/xmldom의 DOMParser를 넘긴다.
+  function parseDocxReview(documentXml, commentsXml, Parser) {
+    const P = Parser || globalThis.DOMParser;
+    const parse = xml => new P().parseFromString(String(xml || ''), 'application/xml');
+    const list = nodes => Array.prototype.slice.call(nodes || []);
+    const attr = (node, name) => (node.getAttribute && node.getAttribute(name)) || '';
+    const textOf = (node, tag) => list(node.getElementsByTagName(tag)).map(t => t.textContent || '').join('');
+
+    const comments = new Map();
+    if (commentsXml) {
+      for (const c of list(parse(commentsXml).getElementsByTagName('w:comment'))) {
+        const id = attr(c, 'w:id');
+        const text = list(c.getElementsByTagName('w:p')).map(p => textOf(p, 'w:t')).join('\n').trim();
+        comments.set(id, { id, author: attr(c, 'w:author'), date: attr(c, 'w:date'), text, anchor: '', context: '' });
+      }
+    }
+
+    const suggestions = [];
+    const open = new Set();
+    const doc = parse(documentXml);
+    for (const p of list(doc.getElementsByTagName('w:p'))) {
+      let marked = ''; // 제안을 ⟦-지움⟧⟦+넣음⟧으로 표시한 문단
+      let plain = ''; // 지운 글자도 남긴 문단(문서 모델 본문과 가깝다)
+      const touched = new Set(open);
+      const local = [];
+      const addText = t => {
+        marked += t;
+        plain += t;
+        for (const id of open) { const c = comments.get(id); if (c) c.anchor += t; }
+      };
+      const walk = node => {
+        for (const ch of list(node.childNodes)) {
+          const n = ch.nodeName;
+          if (n === 'w:p') continue; // 문단 안 문단(글상자)은 따로 돈다
+          if (n === 'w:commentRangeStart') { open.add(attr(ch, 'w:id')); touched.add(attr(ch, 'w:id')); continue; }
+          if (n === 'w:commentRangeEnd') { open.delete(attr(ch, 'w:id')); continue; }
+          if (n === 'w:ins' || n === 'w:del') {
+            const kind = n === 'w:ins' ? 'insert' : 'delete';
+            const t = textOf(ch, kind === 'insert' ? 'w:t' : 'w:delText');
+            if (t) {
+              const author = attr(ch, 'w:author');
+              const last = local[local.length - 1];
+              // 같은 사람이 바로 붙여 지우고 넣은 것은 한 건의 "바꾸기"다
+              if (last && last.author === author && last.end === marked.length && last.kind !== kind && last.kind !== 'replace') {
+                last.kind = 'replace';
+                if (kind === 'insert') last.inserted = t; else last.deleted = t;
+              } else {
+                local.push({ kind, author, date: attr(ch, 'w:date'), inserted: kind === 'insert' ? t : '', deleted: kind === 'delete' ? t : '', at: marked.length, end: 0 });
+              }
+              marked += kind === 'insert' ? '⟦+' + t + '⟧' : '⟦-' + t + '⟧';
+              plain += t;
+              local[local.length - 1].end = marked.length;
+            }
+            continue;
+          }
+          if (n === 'w:t') { addText(ch.textContent || ''); continue; }
+          if (n === 'w:tab') { addText('\t'); continue; }
+          if (n === 'w:br') { addText('\n'); continue; }
+          if (n === 'w:delText' || n === 'w:instrText') continue;
+          if (ch.childNodes && ch.childNodes.length) walk(ch);
+        }
+      };
+      walk(p);
+      for (const id of touched) {
+        const c = comments.get(id);
+        if (c && !c.context) c.context = plain.slice(0, 600);
+      }
+      for (const s of local) {
+        const from = Math.max(0, s.at - 200);
+        suggestions.push({ kind: s.kind, author: s.author, date: s.date, inserted: s.inserted, deleted: s.deleted, context: marked.slice(from, s.end + 200) });
+      }
+    }
+    for (const c of comments.values()) c.anchor = c.anchor.slice(0, 400);
+    return { comments: Array.from(comments.values()), suggestions };
+  }
+
   globalThis.ToytypeDocTools = {
+    parseDocxReview,
     minimalEdit,
     normalizeTocLine,
     isFenceLine,

@@ -7402,7 +7402,113 @@
     return { ok: verified, error: verified ? '' : 'not_verified', start };
   }
 
-  async function handleGridRpc(op, args) {
+  // ---------- 댓글·제안 카드 ----------
+  // 격자 페이지의 [댓글 반영]이 쓴다. 카드 목록(종류·작성자·내용)을 넘기고, 지정한 카드의 [수락]·[거부]·[해결]을 누른다.
+  function docosCards() {
+    return Array.from(document.querySelectorAll('.docos-anchoreddocoview'));
+  }
+
+  function squash(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function replyText(reply) {
+    const body = reply.querySelector('.docos-replyview-body');
+    if (body) return squash(body.textContent);
+    // 제안 카드는 본문 칸이 따로 없다 — 머리줄(작성자·시각·버튼)과 숨은 안내 문구를 빼고 읽는다
+    const clone = reply.cloneNode(true);
+    clone.querySelectorAll('.docos-anchoredreplyview-header, .docos-replyview-tombstone, .docos-show-more, .docos-show-less, [class*="attribution-warning"], .docos-replyview-reply-count, .docos-new-message, [role="button"]').forEach(n => n.remove());
+    return squash(clone.textContent);
+  }
+
+  function docosCardInfo(card, index) {
+    const replies = Array.from(card.querySelectorAll('.docos-replyview'));
+    const first = replies[0] || card;
+    const authorOf = r => squash((r.querySelector('.docos-anchoredreplyview-author, .docos-author') || {}).textContent);
+    return {
+      index,
+      type: card.querySelector('.docos-replyview-suggest') ? 'suggestion' : 'comment',
+      author: authorOf(first),
+      body: replyText(first).slice(0, 800),
+      replies: replies.slice(1, 7).map(r => ({ author: authorOf(r), body: replyText(r).slice(0, 300) }))
+    };
+  }
+
+  function pressDocsButton(btn) {
+    const r = btn.getBoundingClientRect();
+    const init = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+    for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) btn.dispatchEvent(new MouseEvent(type, init));
+  }
+
+  function cardGone(card) {
+    return !card.isConnected || getComputedStyle(card).display === 'none';
+  }
+
+  function findDocosCard(sig) {
+    const cards = docosCards();
+    const same = (c, i) => {
+      const info = docosCardInfo(c, i);
+      return info.type === sig.type && info.author === sig.author && info.body === sig.body;
+    };
+    return cards[sig.index] && same(cards[sig.index], sig.index) ? cards[sig.index] : cards.find(same) || null;
+  }
+
+  // 카드를 눌러 활성화하면 구글 문서가 그 댓글·제안이 걸린 본문 위치로 스크롤한다
+  async function docosFocus(args) {
+    const card = findDocosCard(args.sig || {});
+    if (!card) return { ok: false, error: 'not_found' };
+    const target = card.querySelector('.docos-replyview-body, .docos-anchoredreplyview-author') || card;
+    pressDocsButton(target);
+    await new Promise(r => setTimeout(r, 400));
+    return { ok: true };
+  }
+
+  async function docosAct(args) {
+    const sig = args.sig || {};
+    const card = findDocosCard(sig);
+    if (!card) return { ok: false, error: 'not_found' };
+    const selector = { accept: '.docos-accept-suggestion', reject: '.docos-reject-suggestion', resolve: '.docos-replyview-resolve-button' }[args.action];
+    const btn = selector && card.querySelector(selector);
+    if (!btn) return { ok: false, error: 'no_button' };
+    const holder = btn.closest('.docos-anchoredreplyview-buttonholder');
+    if (holder) holder.style.setProperty('opacity', '1');
+    pressDocsButton(btn);
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 300));
+      if (cardGone(card)) return { ok: true };
+    }
+    // 마우스 흉내가 안 먹으면 키보드로 한 번 더
+    btn.focus();
+    for (const type of ['keydown', 'keyup']) btn.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 300));
+      if (cardGone(card)) return { ok: true };
+    }
+    return { ok: false, error: 'not_applied' };
+  }
+
+  // 문서의 선택(커서)은 하나뿐이다. 여러 에이전트가 한 문서에서 동시에 커서를 옮기고 바꾸면
+  // 한 에이전트가 고를 곳을 선택해 둔 사이 다른 에이전트가 선택을 옮겨 엉뚱한 곳이 바뀐다.
+  // 선택을 건드리는 요청은 모두 한 줄로 세워 하나씩 처리한다.
+  const SELECTION_OPS = new Set(['applyEdit', 'agentCursor', 'select', 'locate', 'docosFocus', 'docosAct']);
+
+  function handleGridRpc(op, args) {
+    if (!SELECTION_OPS.has(op)) return runGridOp(op, args);
+    const run = gridApplyChain.then(() => runGridOp(op, args));
+    gridApplyChain = run.catch(() => {});
+    return run;
+  }
+
+  async function runGridOp(op, args) {
+    if (op === 'docosList') {
+      return { ok: true, items: docosCards().map(docosCardInfo).filter(it => it.author || it.body) };
+    }
+    if (op === 'docosFocus') {
+      return docosFocus(args);
+    }
+    if (op === 'docosAct') {
+      return docosAct(args);
+    }
     if (op === 'ping') {
       // 패널 초기화(페이지 브리지 주입)가 끝나야 문서 모델을 다룰 수 있다
       return { ok: !!pageBridgeReady, pages: measureEditorPages() };
@@ -7457,10 +7563,7 @@
       return { ok: false, error: 'not_found' };
     }
     if (op === 'applyEdit') {
-      // 문서 모델 조작은 한 번에 하나씩
-      const run = gridApplyChain.then(() => gridApplyEdit(args));
-      gridApplyChain = run.catch(() => {});
-      return run;
+      return gridApplyEdit(args);
     }
     return { ok: false, error: 'unknown_op' };
   }

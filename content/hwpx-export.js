@@ -2880,6 +2880,7 @@ ${styleXml(STYLE_FOOTNOTE, '각주', 'Footnote', PARA_FOOTNOTE, CHAR_FOOTNOTE, S
     extractImageFilesFromDocx,
     createStoredZip,
     safeFileName,
+    readZipPackage,
     _internal: {
       extractImagesFromDocx,
       buildHwpx,

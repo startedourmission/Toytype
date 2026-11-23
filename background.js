@@ -380,6 +380,7 @@ function aiBridgePath(action) {
     test: '/ai/test',
     proofread: '/ai/proofread',
     proofreadChunk: '/ai/proofread-chunk',
+    reviewComments: '/ai/review-comments',
     terms: '/ai/terms',
     question: '/ai/question',
     adjustLength: '/ai/adjust-length',

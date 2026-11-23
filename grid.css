@@ -159,6 +159,28 @@ body.g-dragging .g-card { transition: none; }
 .g-doc-row input:checked + .g-switch-track::after { transform: translateX(12px); }
 .g-doc-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-pop-note { padding: 4px 10px 8px; color: var(--muted); font-size: 11px; }
+.g-pop-count { flex: none; color: var(--muted); font-size: 11px; }
+.g-review-author { display: flex; align-items: center; }
+.g-review-author .g-doc-row { flex: 1; min-width: 0; }
+.g-caret { flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.g-caret:hover { background: #f1f3f4; color: var(--ink); }
+.g-pop-label { display: flex; align-items: center; }
+.g-pop-refresh { margin-left: auto; font-size: 14px; }
+.g-review-extra {
+  display: block; width: calc(100% - 20px); margin: 4px 10px 2px; padding: 6px 8px; resize: vertical;
+  border: 1px solid #dadce0; border-radius: 8px; font: inherit; font-size: 12px; outline: none;
+}
+.g-review-extra:focus { border-color: var(--accent); }
+.g-review-items { margin: 0 0 6px 18px; padding-left: 8px; border-left: 2px solid var(--line); max-height: 260px; overflow: auto; }
+.g-review-items[hidden] { display: none; }
+.g-review-item { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.g-review-item:hover { background: #f1f3f4; }
+.g-review-item.g-current { background: #e8f0fe; }
+.g-review-item input { margin: 0; flex: none; }
+.g-review-kind { flex: none; padding: 0 5px; border-radius: 4px; font-size: 10.5px; line-height: 17px; }
+.g-review-comment { background: #fef7e0; color: #b06000; }
+.g-review-suggestion { background: #e8f0fe; color: #1967d2; }
+.g-review-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .g-field {
   display: inline-flex; align-items: center; gap: 2px;
@@ -175,6 +197,13 @@ body.g-dragging .g-card { transition: none; }
   border-radius: 13px; background: #f1f3f4; color: #3c4043; font-size: 12px; white-space: nowrap; cursor: pointer;
 }
 .g-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.g-apply-all {
+  height: 26px; padding: 0 12px; border: 0; border-radius: 13px;
+  background: var(--accent); color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.g-apply-all:hover:not(:disabled) { background: #1765cc; }
+.g-apply-all:disabled { background: #a8c7fa; cursor: default; }
+.g-apply-all[hidden] { display: none; }
 .g-reset {
   margin-left: auto; border: 0; background: transparent; color: var(--accent);
   font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap;
@@ -301,3 +330,7 @@ body.g-dragging .g-card { transition: none; }
   .g-card::after { transition: none; }
 }
 @media (max-width: 1100px) { :root { --chat-w: 320px; } }
+
+.g-review-row.g-review-done { background: #f3faf5; }
+.g-review-row.g-review-left { background: #fef7e0; }
+.g-review-row.g-review-fail { background: #fce8e6; }

@@ -27,6 +27,7 @@
         <span class="g-chat-title">에이전트</span>
         <span class="g-chat-sub" id="g-sub"></span>
         <button type="button" class="g-stop" id="g-stop" hidden>멈춤</button>
+        <button type="button" class="g-ghost" id="g-review" aria-haspopup="true" aria-expanded="false" title="문서에 남은 댓글·제안을 작성자별로 골라 AI가 판단해 반영·해결합니다">댓글 반영</button>
         <button type="button" class="g-ghost" id="g-docs" aria-haspopup="true" aria-expanded="false" title="격자에 띄울 문서 켜고 끄기">문서</button>
         <button type="button" class="g-ghost" id="g-history" aria-haspopup="true" aria-expanded="false" title="이전 대화 고르기">기록</button>
       </div>
@@ -41,6 +42,7 @@
         <label class="g-switch" title="켜면 에이전트가 고친 곳을 문서에 바로 반영합니다. 끄면 제안만 받고 직접 승인합니다.">
           <input type="checkbox" id="g-auto"><span class="g-switch-track" aria-hidden="true"></span><span>바로 적용</span>
         </label>
+        <button type="button" class="g-apply-all" id="g-apply-all" title="이 대화에서 아직 적용 안 된 제안을 전부 문서에 적용합니다" hidden>전체 적용</button>
         <button type="button" class="g-reset" id="g-reset" title="열 수·열 너비·칸 높이·채팅창 너비를 처음대로 되돌립니다" disabled>크기 원래대로</button>
       </div>
     </header>
@@ -442,6 +444,7 @@
   let logSaveTimer = 0;
 
   function saveLog() {
+    updateApplyAll();
     if (!sessionId) return;
     clearTimeout(logSaveTimer);
     logSaveTimer = setTimeout(flushLog, 400);
@@ -453,6 +456,7 @@
     try {
       const entries = logEntries.slice(-LOG_MAX_ENTRIES).map(e => e.t !== 'agent' ? e : {
         t: 'agent', agent: e.agent, who: e.who, text: e.pending ? '(새로고침으로 중단됨)' : e.text, docId: e.docId,
+        review: Array.isArray(e.review) ? e.review.slice(0, 200) : undefined,
         edits: (e.edits || []).map(x => ({
           src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0,
           state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : 'proposed'
@@ -711,6 +715,7 @@
 
   function setBusy(on) {
     busy = on;
+    updateApplyAll();
     $('g-send').disabled = on;
     $('g-stop').hidden = !on;
     $('g-conc').disabled = on;
@@ -802,19 +807,44 @@
     const list = el('div', 'g-edits');
     for (const edit of edits) list.appendChild(buildEditItem(card, edit, auto));
     msg.bubble.appendChild(list);
-    if (!auto && edits.filter(e => e.state !== 'applied').length > 1) {
-      const actions = el('div', 'g-msg-actions');
-      const all = el('button', 'g-link', '모두 적용');
-      all.type = 'button';
-      all.addEventListener('click', async () => {
-        all.disabled = true;
-        await Promise.all(edits.map(edit => queueApply(card, edit)));
-        // 멈춤·실패로 남은 항목이 있으면 다시 누를 수 있게 둔다
-        all.disabled = edits.every(e => e.state === 'applied');
-      });
-      actions.appendChild(all);
-      msg.bubble.appendChild(actions);
+    updateApplyAll();
+  }
+
+  // ---------- 전체 적용 ----------
+  // 이 대화에서 아직 적용 안 된 제안(제안 상태·실패)을 문서마다 차례로 전부 적용한다.
+  function pendingEdits() {
+    const out = [];
+    for (const entry of logEntries) {
+      if (entry.t !== 'agent' || !Array.isArray(entry.edits)) continue;
+      const card = cards.find(c => c.doc.id === entry.docId);
+      if (!card) continue; // [문서]에서 꺼 둔 문서는 건너뛴다
+      for (const edit of entry.edits) {
+        if (edit.item && (edit.state === 'proposed' || edit.state === 'failed')) out.push({ card, edit });
+      }
     }
+    return out;
+  }
+
+  function updateApplyAll() {
+    const btn = $('g-apply-all');
+    if (!btn) return;
+    const n = pendingEdits().length;
+    btn.hidden = n === 0;
+    btn.textContent = '전체 적용 ' + n;
+    btn.disabled = busy;
+  }
+
+  async function applyAllPending() {
+    const todo = pendingEdits();
+    if (!todo.length || busy) return;
+    const btn = $('g-apply-all');
+    btn.disabled = true;
+    systemMsg('아직 적용 안 된 ' + todo.length + '곳을 전부 적용합니다', false, false);
+    // 문서마다 적용 줄이 따로 있어 문서끼리는 동시에, 한 문서 안에서는 차례로 돈다
+    await Promise.all(todo.map(({ card, edit }) => queueApply(card, edit)));
+    const left = pendingEdits().length;
+    systemMsg('전체 적용 끝 · ' + (todo.length - left) + '곳 적용' + (left ? ' · 남은 ' + left + '곳은 실패나 멈춤' : ''), left > 0, false);
+    updateApplyAll();
   }
 
   // 저장해 둔 채팅창을 다시 그린다. 적용된 제안은 적용됨으로, 진행 중이던 것은 제안으로 돌아온다.
@@ -824,11 +854,12 @@
       if (e.t === 'system') systemMsg(e.text, e.error);
       else if (e.t === 'user') userMsg(e.text);
       else if (e.t === 'agent') {
-        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [] };
+        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], review: Array.isArray(e.review) ? e.review : undefined };
         logEntries.push(entry);
         const msg = agentMsg(entry.agent, entry.who, entry);
         msg.text.textContent = entry.text;
         const card = cards.find(c => c.doc.id === e.docId);
+        if (entry.review) renderReviewRows(msg, card, entry.review);
         const edits = (e.edits || []).map(x => Object.assign({}, x));
         entry.edits = edits;
         if (card && edits.length) {
@@ -1014,6 +1045,368 @@
     $('g-pop').hidden = true;
     $('g-history').setAttribute('aria-expanded', 'false');
     $('g-docs').setAttribute('aria-expanded', 'false');
+    $('g-review').setAttribute('aria-expanded', 'false');
+  }
+
+  // ---------- 댓글 반영 ----------
+  // 체크한 문서들에서 댓글·제안 카드를 모아 작성자별로 고르게 한 뒤, 고른 사람의 것만 AI가 판단해
+  // 제안은 수락·거절하고, 댓글은 요청대로 고친 뒤 해결(또는 해결만)한다. 사람이 봐야 할 것은 남겨 둔다.
+  const REVIEW_BATCH = 40;
+  let reviewCollected = null;
+  let reviewInstruction = ''; // 댓글 반영 때 AI에게 덧붙이는 지시(창을 닫았다 열어도 남는다)
+
+  function reviewLabel(it) {
+    return (it.type === 'suggestion' ? '제안' : '댓글') + ' · ' + it.author + ' · ' + it.body.slice(0, 50);
+  }
+
+  async function collectReviewItems() {
+    const targets = cards.filter(c => c.pick.checked);
+    const out = [];
+    for (const card of targets) {
+      const res = await rpc(card, 'docosList', {}, 20000);
+      if (!res.ok) continue;
+      for (const it of res.items) out.push(Object.assign({ card }, it));
+    }
+    return { targets, items: out };
+  }
+
+  async function openReviewPicker(refresh) {
+    const pop = $('g-pop');
+    pop.textContent = '';
+    pop.appendChild(el('div', 'g-pop-label', '댓글 반영'));
+    if (busy) {
+      pop.appendChild(el('div', 'g-pop-note', '에이전트가 일하는 중에는 시작할 수 없습니다'));
+      pop.hidden = false;
+      return;
+    }
+    pop.hidden = false;
+    $('g-review').setAttribute('aria-expanded', 'true');
+    // 한 번 모은 목록과 고른 상태는 창을 닫았다 열어도 그대로 쓴다(체크한 문서가 바뀌었거나 ↻를 누를 때만 다시 모은다)
+    const targetKey = cards.filter(c => c.pick.checked).map(c => c.doc.id).join(',');
+    if (!reviewCollected || reviewCollected.key !== targetKey || refresh) {
+      const wait = el('div', 'g-pop-note', '체크한 문서에서 댓글·제안을 모으는 중…');
+      pop.appendChild(wait);
+      reviewCollected = await collectReviewItems();
+      reviewCollected.key = targetKey;
+      reviewCollected.chosen = new Set(reviewCollected.items);
+      reviewCollected.open = new Set();
+      wait.remove();
+    }
+    const again = el('button', 'g-caret g-pop-refresh', '↻');
+    again.type = 'button';
+    again.title = '댓글·제안을 다시 모으기';
+    again.addEventListener('click', ev => { ev.stopPropagation(); openReviewPicker(true); });
+    pop.firstChild.appendChild(again);
+    const { items, targets } = reviewCollected;
+    if (!items.length) {
+      pop.appendChild(el('div', 'g-pop-note', '체크한 문서 ' + targets.length + '개에 남은 댓글·제안이 없습니다'));
+      return;
+    }
+    // 작성자별로 묶고, 작성자 줄의 ▸를 누르면 그 사람의 댓글·제안을 하나씩 골라 끄고 켤 수 있다
+    const groups = new Map();
+    for (const it of items) {
+      if (!groups.has(it.author)) groups.set(it.author, []);
+      groups.get(it.author).push(it);
+    }
+    pop.appendChild(el('div', 'g-pop-note', '문서 ' + targets.length + '개 · 댓글 ' + items.filter(i => i.type === 'comment').length + ' · 제안 ' + items.filter(i => i.type === 'suggestion').length + ' · 반영할 것을 고르세요'));
+    const chosen = reviewCollected.chosen;
+    const go = el('button', 'g-pop-new', '');
+    go.type = 'button';
+    const syncGo = () => {
+      go.disabled = chosen.size === 0;
+      go.textContent = chosen.size ? '고른 ' + chosen.size + '개 반영 시작' : '반영할 것을 고르세요';
+    };
+    for (const [name, list] of groups) {
+      const head = el('div', 'g-review-author');
+      const label = el('label', 'g-doc-row');
+      const box = el('input');
+      box.type = 'checkbox';
+      const nc = list.filter(i => i.type === 'comment').length;
+      const ns = list.length - nc;
+      const counts = [nc ? '댓글 ' + nc : '', ns ? '제안 ' + ns : ''].filter(Boolean).join(' · ');
+      label.append(box, el('span', 'g-switch-track'), el('span', 'g-doc-name', name || '(이름 없음)'), el('span', 'g-pop-count', counts));
+      const caret = el('button', 'g-caret', '▸');
+      caret.type = 'button';
+      caret.title = '하나씩 고르기';
+      caret.setAttribute('aria-expanded', 'false');
+      head.append(label, caret);
+      const sub = el('div', 'g-review-items');
+      sub.hidden = !reviewCollected.open.has(name);
+      caret.textContent = sub.hidden ? '▸' : '▾';
+      const itemBoxes = [];
+      const syncAuthor = () => {
+        const on = list.filter(it => chosen.has(it)).length;
+        box.checked = on === list.length;
+        box.indeterminate = on > 0 && on < list.length;
+        syncGo();
+      };
+      for (const it of list) {
+        // 체크는 체크박스로만, 줄을 누르면 그 댓글·제안이 걸린 문서 위치로 간다
+        const row = el('div', 'g-review-item');
+        row.title = '눌러서 문서의 그 위치로 이동';
+        const b = el('input');
+        b.type = 'checkbox';
+        b.checked = chosen.has(it);
+        b.addEventListener('click', ev => ev.stopPropagation());
+        b.addEventListener('change', () => {
+          if (b.checked) chosen.add(it); else chosen.delete(it);
+          syncAuthor();
+        });
+        row.addEventListener('click', () => {
+          it.card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          for (const r of row.parentElement.querySelectorAll('.g-review-item.g-current')) r.classList.remove('g-current');
+          row.classList.add('g-current');
+          rpc(it.card, 'docosFocus', { sig: { index: it.index, type: it.type, author: it.author, body: it.body } }, 15000);
+        });
+        itemBoxes.push(b);
+        const text = el('span', 'g-review-text', it.body || '(내용 없음)');
+        row.append(b, el('span', 'g-review-kind g-review-' + it.type, it.type === 'suggestion' ? '제안' : '댓글'), text);
+        if (targets.length > 1) row.appendChild(el('span', 'g-pop-count', it.card.doc.name.slice(0, 12)));
+        sub.appendChild(row);
+      }
+      box.addEventListener('change', () => {
+        for (let k = 0; k < list.length; k++) {
+          itemBoxes[k].checked = box.checked;
+          if (box.checked) chosen.add(list[k]); else chosen.delete(list[k]);
+        }
+        syncAuthor();
+      });
+      caret.addEventListener('click', ev => {
+        ev.preventDefault();
+        sub.hidden = !sub.hidden;
+        if (sub.hidden) reviewCollected.open.delete(name); else reviewCollected.open.add(name);
+        caret.textContent = sub.hidden ? '▸' : '▾';
+        caret.setAttribute('aria-expanded', sub.hidden ? 'false' : 'true');
+      });
+      syncAuthor();
+      pop.append(head, sub);
+    }
+    const extra = el('textarea', 'g-review-extra');
+    extra.rows = 2;
+    extra.placeholder = '추가 지시 (선택) · 예) 코드 블록 안 제안은 모두 거절해 줘 / 용어는 “함수”로 통일';
+    extra.value = reviewInstruction;
+    extra.addEventListener('input', () => { reviewInstruction = extra.value; });
+    extra.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && !go.disabled) { ev.preventDefault(); go.click(); }
+    });
+    go.addEventListener('click', () => {
+      const picked = new Set(chosen);
+      closeHistory();
+      runReview(picked, reviewInstruction.trim());
+    });
+    syncGo();
+    pop.appendChild(el('div', 'g-pop-note', '제안은 맞으면 수락, 댓글은 고친 뒤 해결까지 바로 처리합니다 · 틀렸거나 판단이 어려운 것은 거절하지 않고 남겨 두며, 결과에서 [위치]로 바로 찾아갈 수 있습니다'));
+    pop.appendChild(extra);
+    pop.appendChild(go);
+  }
+
+  // DOCX export에서 댓글이 걸린 문구와 앞뒤 문맥, 제안의 지움·넣음 원문을 가져온다
+  async function fetchReviewContext(card) {
+    const H = globalThis.ToytypeHwpxExport;
+    const D = globalThis.ToytypeDocTools;
+    if (!H || !H.readZipPackage || !D || !D.parseDocxReview) return null;
+    const a = session.authuser > 0 ? 'u/' + session.authuser + '/' : '';
+    const res = await fetch('https://docs.google.com/document/' + a + 'd/' + encodeURIComponent(card.doc.id) + '/export?format=docx');
+    if (!res.ok) throw new Error('export ' + res.status);
+    const pkg = await H.readZipPackage(await res.arrayBuffer());
+    const text = name => { const f = pkg.files.get(name); return f ? new TextDecoder('utf-8').decode(f.data) : ''; };
+    return D.parseDocxReview(text('word/document.xml'), text('word/comments.xml'));
+  }
+
+  function squashText(t) {
+    return String(t || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // 화면 카드와 DOCX 항목을 작성자·내용으로 짝짓는다
+  function enrichReviewItems(items, review) {
+    if (!review) return;
+    const usedC = new Set();
+    const usedS = new Set();
+    for (const it of items) {
+      if (it.type === 'comment') {
+        const c = review.comments.find((x, i) => !usedC.has(i) && x.author === it.author && squashText(x.text).slice(0, 40) === it.body.slice(0, 40));
+        if (c) {
+          usedC.add(review.comments.indexOf(c));
+          it.anchor = c.anchor;
+          it.context = c.context;
+        }
+      } else {
+        const body = squashText(it.body);
+        const s = review.suggestions.find((x, i) => !usedS.has(i) && x.author === it.author && [x.deleted, x.inserted].some(t => t && body.includes(squashText(t).slice(0, 12))));
+        if (s) {
+          usedS.add(review.suggestions.indexOf(s));
+          it.context = s.context;
+          it.inserted = s.inserted;
+          // 지우기만 한 제안은 받아들이면 글자가 사라지므로 바로 앞 문구로 위치를 잡는다
+          const before = s.context.slice(0, s.context.indexOf('⟦') >= 0 ? s.context.indexOf('⟦') : s.context.length).replace(/⟦[^⟧]*⟧/g, '');
+          it.before = before.slice(-20);
+        }
+      }
+    }
+  }
+
+  const DECISION_LABEL = { accept: '수락', edit: '고치고 해결', resolve: '해결', skip: '남겨 둠' };
+
+  // 처리 결과를 항목별 줄로 그린다. 남겨 둔 것·실패한 것에는 [위치]를 달아 문서의 그 댓글로 바로 간다.
+  function renderReviewRows(msg, card, rows) {
+    let list = msg.bubble.querySelector('.g-review-results');
+    if (!list) {
+      list = el('div', 'g-edits g-review-results');
+      msg.bubble.appendChild(list);
+    }
+    list.textContent = '';
+    for (const r of rows) {
+      const item = el('div', 'g-edit g-review-row g-review-' + (r.mark === '✓' ? 'done' : r.mark === '✗' ? 'fail' : 'left'));
+      const head = el('div', 'g-edit-diff');
+      head.append(el('b', '', r.mark + ' ' + r.label), document.createTextNode(' ' + r.what));
+      item.appendChild(head);
+      if (r.reason) item.appendChild(el('div', 'g-edit-why', r.reason));
+      if (card && (r.sig || r.find)) {
+        const row = el('div', 'g-edit-row');
+        const done = r.mark === '✓';
+        const state = el('span', 'g-edit-state', done ? '' : r.fail ? '실패: ' + r.fail : '직접 처리할 것');
+        const go = el('button', 'g-link', '위치');
+        go.type = 'button';
+        go.title = done ? '문서에서 반영한 곳으로 이동' : '문서에서 이 댓글·제안으로 이동';
+        go.addEventListener('click', async () => {
+          card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          // 남은 카드는 카드를 눌러 이동하고, 처리돼 카드가 없으면 본문 문구로 찾는다
+          let res = !done && r.sig ? await rpc(card, 'docosFocus', { sig: r.sig }, 15000) : { ok: false };
+          if (!res.ok && r.find) res = await rpc(card, 'locate', { src: r.find, hint: r.hint || 0 }, 15000);
+          state.textContent = res.ok ? (res.approx ? '문구가 바뀌어 근처로 갔습니다' : state.textContent) : '문서에서 찾지 못함';
+        });
+        row.append(state, go);
+        item.appendChild(row);
+      }
+      list.appendChild(item);
+    }
+  }
+
+  async function reviewOneDoc(card, items, agent, instruction) {
+    const name = '에이전트 ' + (agent + 1);
+    setWorking(card, agent, name);
+    const msg = agentMsg(agent, name + ' · ' + card.doc.name + ' · 댓글 반영 · 댓글·제안 ' + items.length + '개');
+    msg.entry.docId = card.doc.id;
+    const lines = [];
+    const flush = text => {
+      msg.text.textContent = text;
+      msg.entry.text = text;
+      msg.entry.pending = false;
+      saveLog();
+    };
+    try {
+      let review = null;
+      try { review = await fetchReviewContext(card); } catch (_) { review = null; }
+      enrichReviewItems(items, review);
+      const decisions = new Map();
+      let note = '';
+      for (let i = 0; i < items.length && !stopRequested; i += REVIEW_BATCH) {
+        const batch = items.slice(i, i + REVIEW_BATCH).map((it, k) => ({
+          id: 'r' + (i + k), type: it.type, author: it.author, request: it.body, anchor: it.anchor || '', context: it.context || '',
+          replies: it.replies.map(r => r.author + ': ' + r.body)
+        }));
+        const requestId = 'review-' + card.doc.id.slice(0, 8) + '-' + i + '-' + Date.now().toString(36);
+        liveRequests.add(requestId);
+        const res = await send({ type: 'typo:aiBridge', action: 'reviewComments', requestId, payload: { timeoutMs: AI_TIMEOUT_MS, document: { title: card.doc.name, items: batch, instruction: instruction || '', history: history.slice(-HISTORY_TURNS) } } });
+        liveRequests.delete(requestId);
+        if (!res || !res.ok) {
+          flush(res && res.error === 'external_features_disabled' ? 'AI 기능이 꺼져 있습니다 · 설정에서 [브릿지 · AI 기능 사용]을 켜세요' : '판단을 받지 못했습니다 (' + (res && (res.message || res.error) || '오류') + ')');
+          return { done: 0, total: items.length };
+        }
+        if (res.note) note = res.note;
+        for (const d of res.decisions || []) decisions.set(d.id, d);
+      }
+      flush((note || '판단을 마쳤습니다') + ' · 처리하는 중…');
+      let modelText = '';
+      const textRes = await rpc(card, 'getText', {}, 30000);
+      if (textRes.ok) modelText = textRes.text;
+      const cursor = { id: 'review-' + agent + '-' + Date.now().toString(36), label: name, color: AGENT_COLORS[agent % AGENT_COLORS.length] };
+      let done = 0;
+      for (let i = 0; i < items.length; i++) {
+        if (stopRequested) {
+          for (const rest of items.slice(i)) lines.push({ mark: '·', label: '멈춤', what: reviewLabel(rest), reason: '', fail: '', sig: { index: rest.index, type: rest.type, author: rest.author, body: rest.body } });
+          msg.entry.review = lines.slice();
+          renderReviewRows(msg, card, lines);
+          break;
+        }
+        const it = items[i];
+        const d = decisions.get('r' + i) || { decision: 'skip', reason: '판단을 받지 못함' };
+        const sig = { index: it.index, type: it.type, author: it.author, body: it.body };
+        let ok = true;
+        let why = '';
+        if (d.decision === 'accept' || d.decision === 'resolve') {
+          const r = await rpc(card, 'docosAct', { sig, action: d.decision }, 20000);
+          ok = r.ok;
+          why = r.error || '';
+        } else if (d.decision === 'edit') {
+          const anchorAt = modelText ? modelText.indexOf(it.anchor || d.source) : -1;
+          const r = await rpc(card, 'applyEdit', { src: d.source, dst: d.replacement, hint: anchorAt >= 0 ? anchorAt : 0, agent: cursor }, 45000);
+          ok = r.ok;
+          why = r.error || '';
+          if (ok) {
+            const r2 = await rpc(card, 'docosAct', { sig, action: 'resolve' }, 20000);
+            if (!r2.ok) why = '고쳤지만 해결 표시는 못함';
+          }
+        }
+        if (ok && d.decision !== 'skip') done++;
+        const mark = d.decision === 'skip' ? '·' : ok ? '✓' : '✗';
+        const change = d.decision === 'edit' ? ' (' + d.source + ' → ' + d.replacement + ')' : '';
+        // 처리한 뒤에는 카드가 사라지므로 본문 문구로 위치를 찾는다(받아들인 제안은 넣은 글자, 고친 댓글은 고친 문구)
+        const find = d.decision === 'edit' ? (d.replacement || it.anchor || '')
+          : d.decision === 'accept' ? (it.inserted || it.before || '')
+          : (it.anchor || '');
+        const at = modelText && (it.anchor || d.source) ? modelText.indexOf(it.anchor || d.source) : -1;
+        lines.push({ mark, label: DECISION_LABEL[d.decision] || '남겨 둠', what: reviewLabel(it) + change, reason: d.reason || '', fail: !ok && d.decision !== 'skip' ? (why || '알 수 없음') : '', sig, find: find.slice(0, 200), hint: at >= 0 ? at : 0 });
+        msg.entry.review = lines.slice();
+        renderReviewRows(msg, card, lines);
+        flush(note || '처리하는 중…');
+      }
+      rpc(card, 'agentCursorRemove', { id: cursor.id }, 3000);
+      const left = lines.filter(l => l.mark !== '✓').length;
+      flush((note ? note + ' · ' : '') + '처리 ' + done + '개' + (left ? ' · 직접 볼 것 ' + left + '개' : ''));
+      return { done, total: items.length, decisions: Array.from(decisions.values()) };
+    } finally {
+      setWorking(card, null);
+    }
+  }
+
+  async function runReview(picked, instruction) {
+    if (busy || !reviewCollected) return;
+    const items = reviewCollected.items.filter(it => picked.has(it));
+    const chosen = new Set(items.map(it => it.author));
+    if (!items.length) return;
+    const byCard = new Map();
+    for (const it of items) {
+      if (!byCard.has(it.card)) byCard.set(it.card, []);
+      byCard.get(it.card).push(it);
+    }
+    userMsg('댓글·제안 반영 · ' + Array.from(chosen).join(', ') + ' (' + items.length + '개)' + (instruction ? '\n' + instruction : ''));
+    stopRequested = false;
+    setBusy(true);
+    const queue = Array.from(byCard.entries());
+    for (const [c] of queue) { c.pinned = true; clearTimeout(c.unloadTimer); }
+    const agents = Math.min(Number($('g-conc').value) || 3, queue.length);
+    let next = 0;
+    let done = 0;
+    let total = 0;
+    setProgress(0, queue.length);
+    let finished = 0;
+    await Promise.all(Array.from({ length: agents }, async (_, a) => {
+      while (next < queue.length && !stopRequested) {
+        const [card, list] = queue[next++];
+        const r = await reviewOneDoc(card, list, a, instruction);
+        done += r.done;
+        total += r.total;
+        setProgress(++finished, queue.length);
+      }
+    }));
+    for (const [c] of queue) { c.pinned = false; scheduleUnload(c); }
+    history.push({ instruction: '댓글·제안 반영 (' + Array.from(chosen).join(', ') + ')', result: '처리 ' + done + '/' + total, notes: [], changes: [] });
+    history = history.slice(-HISTORY_TURNS);
+    if (sessionId) chrome.storage.local.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
+    systemMsg((stopRequested ? '멈췄습니다 · ' : '댓글 반영 끝 · ') + total + '개 중 ' + done + '개 처리 · 나머지는 남겨 두었거나 실패', false);
+    reviewCollected = null;
+    setBusy(false);
   }
 
   // ---------- 격자 문서 켜고 끄기 ----------
@@ -1085,6 +1478,7 @@
     pop.hidden = false;
     $('g-docs').setAttribute('aria-expanded', 'true');
     $('g-history').setAttribute('aria-expanded', 'false');
+    $('g-review').setAttribute('aria-expanded', 'false');
   }
 
   async function openHistory() {
@@ -1126,6 +1520,7 @@
     pop.hidden = false;
     $('g-history').setAttribute('aria-expanded', 'true');
     $('g-docs').setAttribute('aria-expanded', 'false');
+    $('g-review').setAttribute('aria-expanded', 'false');
   }
 
   function initHistoryPicker() {
@@ -1133,6 +1528,12 @@
     btn.addEventListener('click', ev => {
       ev.stopPropagation();
       if ($('g-pop').hidden || btn.getAttribute('aria-expanded') !== 'true') openHistory();
+      else closeHistory();
+    });
+    $('g-review').addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (!session) return;
+      if ($('g-pop').hidden || $('g-review').getAttribute('aria-expanded') !== 'true') openReviewPicker();
       else closeHistory();
     });
     $('g-docs').addEventListener('click', ev => {
@@ -1324,6 +1725,8 @@
     guardHeld($('g-log'), 'log');
     $('g-jump').addEventListener('click', () => jumpToBottom(true));
     $('g-top').addEventListener('click', jumpToTop);
+    $('g-apply-all').addEventListener('click', applyAllPending);
+    updateApplyAll();
     $('g-last').addEventListener('click', jumpToLastApplied);
     setInterval(syncAll, SYNC_INTERVAL_MS);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncAll(); });
@@ -1334,6 +1737,7 @@
     if (savedLog) applyOptions(savedLog.options);
     if (savedLog && Array.isArray(savedLog.entries) && savedLog.entries.length) {
       restoreLog(savedLog);
+      updateApplyAll();
       // 불러온 대화는 처음 한 번만 마지막 메시지가 보이게 둔다
       requestAnimationFrame(() => jumpToBottom(false));
       systemMsg('이전 대화를 불러왔습니다' + (history.length ? ' · 에이전트는 최근 ' + history.length + '턴을 기억합니다' : ''), false, false);

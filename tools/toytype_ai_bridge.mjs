@@ -2880,6 +2880,105 @@ async function generateProofreadChunk(body) {
   };
 }
 
+// ---------- 댓글·제안 반영 ----------
+// 문서에 남은 댓글과 제안(변경 내용 추적)을 하나씩 판단한다.
+// 제안: accept(반영) / skip(사람이 봐야 함) — 거절은 하지 않는다(잘못된 제안은 남겨 두고 사람이 처리)
+// 댓글: edit(요청대로 고치고 해결) / resolve(이미 반영됐거나 요청이 틀렸거나 정보성이라 해결만) / skip
+const REVIEW_MAX_ITEMS = 40;
+
+export function buildReviewCommentsPrompt(document) {
+  const items = (Array.isArray(document.items) ? document.items : []).slice(0, REVIEW_MAX_ITEMS).map(it => ({
+    id: String(it && it.id || ''),
+    type: it && it.type === 'suggestion' ? 'suggestion' : 'comment',
+    author: String(it && it.author || '').slice(0, 80),
+    request: String(it && it.request || '').slice(0, 800),
+    anchor: String(it && it.anchor || '').slice(0, 400),
+    context: String(it && it.context || '').slice(0, 700),
+    replies: (Array.isArray(it && it.replies) ? it.replies : []).slice(0, 6).map(r => String(r).slice(0, 300))
+  }));
+  const instruction = String(document.instruction || '').trim().slice(0, 1000);
+  return [
+    'You are the lead editor of a Korean IT book. Reviewers left comments and suggested edits (track changes) in the manuscript.',
+    'Decide what to do with each item so the document can be cleaned up. Return only one JSON object: {"note":"...","decisions":[{"id":"...","decision":"...","source":"...","replacement":"...","reason":"..."}]}. No markdown.',
+    instruction ? 'The editor-in-chief added (follow this): <<<' + instruction + '>>>' : '',
+    untrustedManuscriptDataInstructions(),
+    projectSpecificRuleInstructions(),
+    manuscriptNotationInstructions(),
+    '',
+    'Rules:',
+    '- For type "suggestion": decision is "accept" when the suggested change is correct and improves the text (grammar, clarity, technical accuracy, house style). Never reject: when it introduces an error, changes meaning wrongly, breaks code/identifiers, is worse, or you cannot judge, use "skip" and explain the problem in reason so a human can handle it. In context, ⟦-text⟧ is suggested deletion and ⟦+text⟧ is suggested insertion.',
+    '- For type "comment": if it asks for a concrete, local text change you can make, use "edit" with source copied exactly from context (shortest phrase that pins the place, 4-60 chars, never across ⟦ ⟧ markers) and replacement; the comment is resolved after the edit. Use "resolve" when the comment is already addressed, purely informational, a question already answered by the text, or its request is wrong (say why). Use "skip" when it needs the author (large rewrite, new figures, missing facts, a decision only the author can make).',
+    '- Never edit code, identifiers, URLs, file paths, or command lines.',
+    '- reason: one short Korean sentence the editor-in-chief will read.',
+    '- note: one short Korean sentence summarizing what you decided overall.',
+    '- Return one decision for every id.',
+    '',
+    '<<<TOYTYPE_REVIEW_ITEMS',
+    JSON.stringify({ title: String(document.title || ''), items }),
+    'TOYTYPE_REVIEW_ITEMS'
+  ].filter(line => line !== '').join('\n');
+}
+
+export function parseReviewDecisions(response, items) {
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(String(response || ''));
+  } catch (_) {
+    parsed = null;
+  }
+  const byId = new Map((Array.isArray(items) ? items : []).map(it => [String(it && it.id || ''), it]));
+  const out = [];
+  const seen = new Set();
+  for (const d of parsed && Array.isArray(parsed.decisions) ? parsed.decisions : []) {
+    const id = String(d && d.id || '');
+    const item = byId.get(id);
+    if (!item || seen.has(id)) continue;
+    let decision = String(d && d.decision || '').toLowerCase();
+    // 거절은 하지 않는다 — 들어오면 사람에게 넘긴다
+    if (item.type === 'suggestion' && decision === 'reject') decision = 'skip';
+    const allowed = item.type === 'suggestion' ? ['accept', 'skip'] : ['edit', 'resolve', 'skip'];
+    if (!allowed.includes(decision)) continue;
+    const entry = { id, decision, reason: String(d && d.reason || '').slice(0, 300) };
+    if (decision === 'edit') {
+      const source = String(d && d.source || '');
+      const replacement = String(d && d.replacement || '');
+      const where = String(item.context || '') + '\n' + String(item.anchor || '');
+      // 문맥에 없는 문구는 문서에서 찾을 수 없으니 고치지 않고 사람에게 넘긴다
+      if (!source || source === replacement || !where.includes(source) || /[⟦⟧]/.test(source)) {
+        entry.decision = 'skip';
+        entry.reason = (entry.reason ? entry.reason + ' · ' : '') + '고칠 문구를 문맥에서 찾지 못해 넘깁니다';
+      } else {
+        entry.source = source;
+        entry.replacement = replacement;
+      }
+    }
+    seen.add(id);
+    out.push(entry);
+  }
+  return out;
+}
+
+async function generateReviewComments(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  const items = Array.isArray(document.items) ? document.items.slice(0, REVIEW_MAX_ITEMS) : [];
+  if (!items.length) throw new HttpError(400, 'document.items is required');
+  const run = await runProvider(provider, buildReviewCommentsPrompt(Object.assign({}, document, { items })), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  }
+  return {
+    ok: true,
+    provider,
+    note: parseProofreadChunkNote(run.response),
+    decisions: parseReviewDecisions(run.response, items),
+    elapsedMs: run.elapsedMs
+  };
+}
+
 const DIAGRAM_OCR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'ocr_text_boxes.swift');
 const DIAGRAM_COLOR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'sample_box_colors.swift');
 // 글상자(그리기의 [텍스트 상자]) 원래 속성: 테두리·채우기 없음
@@ -3869,6 +3968,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/terms' || url.pathname === '/ai/terms') {
     await sendLoggedAiJson(res, 'Local terms', body, generateTermConsistency);
+    return;
+  }
+  if (url.pathname === '/ai/review-comments') {
+    await sendLoggedAiJson(res, 'AI review comments', body, generateReviewComments);
     return;
   }
   if (url.pathname === '/ai/proofread-chunk') {
