@@ -7381,7 +7381,17 @@
       rescan: false,
       knownBeforeText: model.text
     });
-    const verified = !!(result && result.verified === true);
+    let verified = !!(result && result.verified === true);
+    if (!verified && dst !== src) {
+      // 검증 단계가 놓쳐도 실제로는 바뀌었을 수 있다 — 문서를 다시 읽어 그 자리에 고친 문구가 있으면 성공으로 본다
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const after = await fetchModelText(getDocId()).catch(() => null);
+      if (after) {
+        const near = after.text.slice(Math.max(0, start - 40), start + Math.max(src.length, dst.length) + 40);
+        const srcGone = nearestIndexOf(after.text, src, start) === -1 || Math.abs(nearestIndexOf(after.text, src, start) - start) > 40;
+        verified = (dst ? near.includes(dst) : true) && srcGone;
+      }
+    }
     return { ok: verified, error: verified ? '' : 'not_verified', start };
   }
 
@@ -7410,12 +7420,34 @@
       removeAgentCursor(String(args.id || ''));
       return { ok: true };
     }
-    if (op === 'locate') {
+    if (op === 'probe') {
+      // 선택은 건드리지 않고, 원문과 고친 문구가 원래 자리 근처에 있는지만 본다
       const model = await fetchModelText(getDocId());
-      const start = nearestIndexOf(model.text, String(args.src || ''), args.hint);
-      if (start === -1) return { ok: false, error: 'not_found' };
-      await selectDocsModelRange(start, start + String(args.src).length);
-      return { ok: true, start };
+      const hint = Number(args.hint) || 0;
+      const near = needle => {
+        if (!needle) return false;
+        const i = nearestIndexOf(model.text, needle, hint);
+        return i !== -1 && Math.abs(i - hint) <= 300;
+      };
+      return { ok: true, src: near(String(args.src || '')), dst: near(String(args.dst || '')) };
+    }
+    if (op === 'locate') {
+      // 원문을 먼저 찾고, 이미 고쳐졌으면 고친 문구를, 그것도 없으면 원래 자리 근처에 커서를 둔다
+      const model = await fetchModelText(getDocId());
+      const candidates = [String(args.src || '')].concat(Array.isArray(args.alts) ? args.alts.map(String) : []).filter(Boolean);
+      for (const needle of candidates) {
+        const start = nearestIndexOf(model.text, needle, args.hint);
+        if (start === -1) continue;
+        await selectDocsModelRange(start, start + needle.length);
+        return { ok: true, start, matched: needle };
+      }
+      const hint = Number(args.hint);
+      if (Number.isFinite(hint) && hint >= 0) {
+        const at = Math.min(hint, Math.max(0, model.text.length - 1));
+        await selectDocsModelRange(at, at);
+        return { ok: true, start: at, approx: true };
+      }
+      return { ok: false, error: 'not_found' };
     }
     if (op === 'applyEdit') {
       // 문서 모델 조작은 한 번에 하나씩

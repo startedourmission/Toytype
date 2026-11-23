@@ -345,7 +345,20 @@
     const show = el('button', 'g-link', '위치');
     show.type = 'button';
     show.title = '문서에서 이 문구를 선택합니다';
-    show.addEventListener('click', () => rpc(card, 'locate', { src: edit.state === 'applied' ? edit.dst : edit.src, hint: edit.hint }));
+    show.addEventListener('click', async () => {
+      // 적용됐으면 고친 문구부터, 아니면 원문부터 찾는다(적용 실패로 보였지만 실제로 바뀐 경우도 찾게 둘 다 보낸다)
+      const first = edit.state === 'applied' ? edit.dst : edit.src;
+      const second = edit.state === 'applied' ? edit.src : edit.dst;
+      show.disabled = true;
+      const res = await rpc(card, 'locate', { src: first || second, alts: [second].filter(Boolean), hint: edit.hint }, 15000);
+      show.disabled = false;
+      if (!res.ok) flashState(edit, '문서에서 찾지 못함');
+      else if (res.approx) flashState(edit, '문구가 바뀌어 원래 자리 근처로 갔습니다');
+      else if (edit.state === 'failed' && res.matched === edit.dst) {
+        // 실패로 표시됐지만 문서에는 이미 고친 문구가 있다 — 적용됨으로 바로잡는다
+        markApplied(card, edit);
+      }
+    });
     const apply = el('button', 'g-link', '적용');
     apply.type = 'button';
     apply.addEventListener('click', () => queueApply(card, edit));
@@ -353,6 +366,25 @@
     item.appendChild(row);
     Object.assign(edit, { item, stateEl: state, applyBtn: apply, state: 'proposed' });
     return item;
+  }
+
+  function flashState(edit, text) {
+    const prev = edit.stateEl.textContent;
+    edit.stateEl.textContent = text;
+    clearTimeout(edit.flashTimer);
+    edit.flashTimer = setTimeout(() => { if (edit.stateEl.textContent === text) edit.stateEl.textContent = prev; }, 2500);
+  }
+
+  function markApplied(card, edit) {
+    if (edit.state === 'applied') return;
+    edit.state = 'applied';
+    edit.item.classList.remove('g-failed');
+    edit.item.classList.add('g-applied');
+    edit.stateEl.textContent = '✓ 적용됨';
+    edit.applyBtn.disabled = true;
+    card.counts.applied++;
+    updateMeta(card);
+    saveLog();
   }
 
   function queueApply(card, edit, agentCursor) {
@@ -370,9 +402,15 @@
       edit.state = 'applying';
       edit.stateEl.textContent = '적용 중…';
       const res = await rpc(card, 'applyEdit', { src: edit.src, dst: edit.dst, hint: edit.hint, agent: agentCursor || null }, 45000);
-      saveLog();
-      if (res.ok) {
+      let ok = res.ok;
+      if (!ok && edit.dst && edit.dst !== edit.src) {
+        // 시간 초과나 검증 실패여도 실제로는 바뀌었을 수 있다 — 원문은 사라지고 고친 문구가 그 자리에 있으면 적용된 것이다
+        const probe = await rpc(card, 'probe', { src: edit.src, dst: edit.dst, hint: edit.hint }, 15000);
+        ok = !!(probe.ok && probe.dst && !probe.src);
+      }
+      if (ok) {
         edit.state = 'applied';
+        edit.item.classList.remove('g-failed');
         edit.item.classList.add('g-applied');
         edit.stateEl.textContent = '✓ 적용됨';
         card.counts.applied++;
