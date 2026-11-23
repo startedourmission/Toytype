@@ -146,13 +146,61 @@
     waiter(ev.data.res || { ok: false, error: 'empty' });
   });
 
+  // ---------- 화면 고정 ----------
+  // 문서 칸과 격자 페이지가 같은 출처라서, 칸 안의 구글 문서가 커서·찾기 상자를 보이게 하려고 부르는
+  // scrollIntoView가 바깥 격자 페이지까지 올라와 화면을 밀어 올린다. 스크롤하면 안 되는 상자는 늘 0으로 되돌리고,
+  // 칸에서 편집이 도는 동안에는 격자와 대화창 위치도 그대로 붙잡아 둔다.
+  function pinScroll(el) {
+    el.addEventListener('scroll', () => {
+      if (el.scrollTop || el.scrollLeft) {
+        el.scrollTop = 0;
+        el.scrollLeft = 0;
+      }
+    });
+  }
+  window.addEventListener('scroll', () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
+  let holdDepth = 0;
+  let held = null;
+  function holdScroll() {
+    if (holdDepth++ === 0) {
+      const grid = $('g-grid');
+      const log = $('g-log');
+      held = { grid: [grid.scrollTop, grid.scrollLeft], log: log.scrollTop };
+    }
+  }
+  function releaseScroll() {
+    // 구글 문서가 조금 늦게 스크롤을 부르기도 해서 잠깐 더 붙잡았다 놓는다
+    setTimeout(() => { if (--holdDepth === 0) held = null; }, 600);
+  }
+  function guardHeld(el, key) {
+    el.addEventListener('scroll', () => {
+      if (!held) return;
+      if (key === 'grid') {
+        if (el.scrollTop !== held.grid[0] || el.scrollLeft !== held.grid[1]) {
+          el.scrollTop = held.grid[0];
+          el.scrollLeft = held.grid[1];
+        }
+      } else if (el.scrollTop !== held.log) {
+        el.scrollTop = held.log;
+      }
+    });
+  }
+  const HOLD_OPS = new Set(['applyEdit', 'select', 'agentCursor', 'agentCursorRemove', 'probe', 'getText', 'digest']);
+
   // 내려 둔 칸에 일을 시키면 먼저 다시 불러온다 — 에이전트는 안 보이는 칸도 다룰 수 있어야 한다
   async function rpc(card, op, args, timeoutMs) {
     if (op !== 'ping' && card.unloaded) {
       const ok = await ensureLoaded(card);
       if (!ok) return { ok: false, error: 'not_ready' };
     }
-    const res = await rawRpc(card, op, args, timeoutMs);
+    const hold = HOLD_OPS.has(op);
+    if (hold) holdScroll();
+    let res;
+    try {
+      res = await rawRpc(card, op, args, timeoutMs);
+    } finally {
+      if (hold) releaseScroll();
+    }
     if (!card.visible && op !== 'ping') scheduleUnload(card);
     return res;
   }
@@ -240,6 +288,8 @@
     frame.src = docUrl(doc.id, true);
     frame.setAttribute('allow', 'clipboard-read; clipboard-write');
     wrap.append(frame, el('div', 'g-sleep', '화면 밖이라 잠시 내려 두었습니다 · 보이면 다시 불러옵니다'));
+    pinScroll(wrap);
+    pinScroll(root);
     // 오른쪽 모서리: 열 너비, 아래 모서리: 칸 높이 (두 번 누르면 원래대로)
     const sizeCol = el('div', 'g-size g-size-col');
     sizeCol.title = '끌어서 열 너비 조절 · 두 번 누르면 원래대로';
@@ -1266,6 +1316,12 @@
     });
     $('g-stop').addEventListener('click', stopAll);
     $('g-log').addEventListener('scroll', updateJump, { passive: true });
+    pinScroll(document.documentElement);
+    pinScroll(document.body);
+    pinScroll(document.querySelector('.g-main'));
+    pinScroll($('g-chat'));
+    guardHeld($('g-grid'), 'grid');
+    guardHeld($('g-log'), 'log');
     $('g-jump').addEventListener('click', () => jumpToBottom(true));
     $('g-top').addEventListener('click', jumpToTop);
     $('g-last').addEventListener('click', jumpToLastApplied);
