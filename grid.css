@@ -177,6 +177,15 @@ body.g-dragging .g-card { transition: none; }
 .g-switch input:checked + .g-switch-track::after { transform: translateX(12px); }
 .g-switch input:focus-visible + .g-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+.g-log-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.g-jump {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  width: 34px; height: 34px; border: 1px solid #dadce0; border-radius: 50%;
+  background: #fff; color: var(--accent); font-size: 17px; font-weight: 700; line-height: 1; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(60, 64, 67, .25);
+}
+.g-jump:hover { background: #e8f0fe; }
+.g-jump[hidden] { display: none; }
 .g-log {
   flex: 1; min-height: 0; overflow: auto;
   padding: 14px; display: flex; flex-direction: column; gap: 12px;

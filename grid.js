@@ -294,9 +294,24 @@
     return entry;
   }
 
-  function scrollLog() {
+  // 새 메시지가 와도 읽던 자리를 끌어내리지 않는다. 아래에 안 본 내용이 있으면 [↓] 버튼만 띄운다.
+  function atBottom(log) {
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  }
+
+  function updateJump() {
     const log = $('g-log');
-    log.scrollTop = log.scrollHeight;
+    $('g-jump').hidden = atBottom(log);
+  }
+
+  function scrollLog() {
+    requestAnimationFrame(updateJump);
+  }
+
+  function jumpToBottom(smooth) {
+    const log = $('g-log');
+    log.scrollTo({ top: log.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    $('g-jump').hidden = true;
   }
 
   // persist=false: 잠깐 보이는 안내(대기 중·멈추는 중 등)는 기록하지 않는다
@@ -310,6 +325,7 @@
 
   function userMsg(text, persist) {
     pushEntry({ t: 'user', text }, persist);
+    if (persist !== false) requestAnimationFrame(() => jumpToBottom(false));
     $('g-log').appendChild(el('div', 'g-msg g-msg-user', text));
     scrollLog();
   }
@@ -968,6 +984,8 @@
       }
     });
     $('g-stop').addEventListener('click', stopAll);
+    $('g-log').addEventListener('scroll', updateJump, { passive: true });
+    $('g-jump').addEventListener('click', () => jumpToBottom(true));
     setInterval(syncAll, SYNC_INTERVAL_MS);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncAll(); });
     const savedLog = stored['grid:' + id + ':log'];
@@ -977,6 +995,8 @@
     if (savedLog) applyOptions(savedLog.options);
     if (savedLog && Array.isArray(savedLog.entries) && savedLog.entries.length) {
       restoreLog(savedLog);
+      // 불러온 대화는 처음 한 번만 마지막 메시지가 보이게 둔다
+      requestAnimationFrame(() => jumpToBottom(false));
       systemMsg('이전 대화를 불러왔습니다' + (history.length ? ' · 에이전트는 최근 ' + history.length + '턴을 기억합니다' : ''), false, false);
     } else if (history.length) {
       // 채팅창 저장 기능 전에 쓴 대화: 지시와 결과 요약만 남아 있으므로 그것으로 다시 그린다
