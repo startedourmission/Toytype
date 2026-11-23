@@ -49,7 +49,9 @@ const DEFAULT_SETTINGS = {
   requestTimeoutMs: 30 * 60 * 1000,
   maxDocumentChars: 180000,
   proofreadFactCheckEnabled: true,
-  proofreadFactCheckCodexModel: 'gpt-5.5',
+  // 비워 두면 --model을 넘기지 않아 codex 자신의 기본 모델(~/.codex/config.toml)을 쓴다.
+  // 모델명을 박아 두면 Codex가 구 모델을 내리는 순간 팩트체크가 통째로 깨진다.
+  proofreadFactCheckCodexModel: '',
   proofreadFactCheckCodexReasoningEffort: 'medium',
   proofreadFactCheckClaudeModel: 'sonnet',
   proofreadFactCheckGrokModel: '',
@@ -104,7 +106,7 @@ function mergeSettings(input) {
     requestTimeoutMs: clampNumber(s.requestTimeoutMs, DEFAULT_SETTINGS.requestTimeoutMs, 5000, 60 * 60 * 1000),
     maxDocumentChars: clampNumber(s.maxDocumentChars, DEFAULT_SETTINGS.maxDocumentChars, 1000, 1000000),
     proofreadFactCheckEnabled: s.proofreadFactCheckEnabled !== false,
-    proofreadFactCheckCodexModel: typeof s.proofreadFactCheckCodexModel === 'string' && s.proofreadFactCheckCodexModel.trim() ? s.proofreadFactCheckCodexModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexModel,
+    proofreadFactCheckCodexModel: typeof s.proofreadFactCheckCodexModel === 'string' ? s.proofreadFactCheckCodexModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexModel,
     proofreadFactCheckCodexReasoningEffort: typeof s.proofreadFactCheckCodexReasoningEffort === 'string' && s.proofreadFactCheckCodexReasoningEffort.trim() ? s.proofreadFactCheckCodexReasoningEffort.trim() : DEFAULT_SETTINGS.proofreadFactCheckCodexReasoningEffort,
     proofreadFactCheckClaudeModel: typeof s.proofreadFactCheckClaudeModel === 'string' && s.proofreadFactCheckClaudeModel.trim() ? s.proofreadFactCheckClaudeModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckClaudeModel,
     proofreadFactCheckGrokModel: typeof s.proofreadFactCheckGrokModel === 'string' ? s.proofreadFactCheckGrokModel.trim() : DEFAULT_SETTINGS.proofreadFactCheckGrokModel,
