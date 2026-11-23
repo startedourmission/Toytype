@@ -126,16 +126,17 @@
     let s = src.slice(p, src.length - q);
     let d = dst.slice(p, dst.length - q);
     let at = start + p;
-    if (!s) {
-      // 순수 삽입: 덮어쓸 글자가 하나는 있어야 한다. 첨자일 가능성이 낮은 이웃(한글·공백·문장부호)을 고른다
+    // 순수 삽입(덮을 글자 없음)이나 순수 삭제(넣을 글자 없음)는 문서에 글자를 "입력"하는 방식으로 처리할 수 없다.
+    // 이웃 글자 하나를 같이 덮어 입력할 글자가 생기게 한다. 첨자일 가능성이 낮은 이웃(한글·공백·문장부호)을 고른다.
+    if (!s || !d) {
       const right = q > 0 ? src[src.length - q] : '';
       const left = p > 0 ? src[p - 1] : '';
       const plain = c => !!c && !/[A-Za-z0-9]/.test(c);
       if (right && (plain(right) || !plain(left))) {
-        s = right;
+        s = s + right;
         d = d + right;
       } else if (left) {
-        s = left;
+        s = left + s;
         d = left + d;
         at -= 1;
       }

@@ -51,8 +51,10 @@ test('최소 바꾸기: 같은 앞뒤를 덜어 서식이 있는 글자를 덮�
   assert.deepEqual(T.minimalEdit('O(n2)이다.', 'O(n2)입니다.', 100), { src: '이', dst: '입니', start: 105, end: 106 });
   // 앞부분만 바뀜
   assert.deepEqual(T.minimalEdit('비교한다.', '비교합니다.', 0), { src: '한', dst: '합니', start: 2, end: 3 });
-  // 삭제
-  assert.deepEqual(T.minimalEdit('x2 의 의', 'x2 의', 10), { src: ' 의', dst: '', start: 14, end: 16 });
+  // 삭제도 넣을 글자가 있어야 하므로 이웃 한 글자를 같이 덮는다
+  assert.deepEqual(T.minimalEdit('x2 의 의', 'x2 의', 10), { src: '의 의', dst: '의', start: 13, end: 16 });
+  // 앞머리 삭제: "따라서 "를 지우면서 뒤 글자 t를 함께 덮는다
+  assert.deepEqual(T.minimalEdit('따라서 top이 -1인 경우', 'top이 -1인 경우', 0), { src: '따라서 t', dst: 't', start: 0, end: 5 });
   // 순수 삽입은 첨자가 아닐 법한 이웃 글자를 함께 덮는다(오른쪽 '다'를 고름, 왼쪽 숫자 2는 피함)
   assert.deepEqual(T.minimalEdit('n2다', 'n2이다', 0), { src: '다', dst: '이다', start: 2, end: 3 });
   // 같으면 그대로
