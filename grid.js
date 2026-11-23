@@ -457,6 +457,7 @@
       const entries = logEntries.slice(-LOG_MAX_ENTRIES).map(e => e.t !== 'agent' ? e : {
         t: 'agent', agent: e.agent, who: e.who, text: e.pending ? '(새로고침으로 중단됨)' : e.text, docId: e.docId,
         review: Array.isArray(e.review) ? e.review.slice(0, 200) : undefined,
+        turn: e.turn || undefined,
         edits: (e.edits || []).map(x => ({
           src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0,
           state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : 'proposed'
@@ -528,6 +529,19 @@
   }
 
   // persist=false: 잠깐 보이는 안내(대기 중·멈추는 중 등)는 기록하지 않는다
+  // 지시 한 번(대화 한 턴)에서 나온 제안을 묶는 표시 — 턴 끝 메시지에 [이 대화 모두 적용]을 단다
+  let currentTurn = '';
+
+  function attachTurnApply(m, turn) {
+    const btn = el('button', 'g-link g-turn-apply', '');
+    btn.type = 'button';
+    btn.dataset.turn = turn;
+    btn.title = '이 지시에서 나온 제안 중 아직 적용 안 된 것을 모두 적용합니다';
+    btn.addEventListener('click', () => applyAllPending(turn));
+    m.append(document.createTextNode(' '), btn);
+    updateApplyAll();
+  }
+
   function systemMsg(text, error, persist) {
     pushEntry({ t: 'system', text, error: !!error }, persist);
     const m = el('div', 'g-msg g-msg-system' + (error ? ' g-err' : ''), text);
@@ -544,7 +558,7 @@
   }
 
   function agentMsg(agent, who, restored) {
-    const entry = restored || pushEntry({ t: 'agent', agent, who, text: '', pending: true, docId: '', edits: [] });
+    const entry = restored || pushEntry({ t: 'agent', agent, who, text: '', pending: true, docId: '', edits: [], turn: currentTurn });
     const m = el('div', 'g-msg g-msg-agent');
     m.style.setProperty('--agent', AGENT_COLORS[agent % AGENT_COLORS.length]);
     // who: "에이전트 N · 문서 · i/n · 구간 첫 줄" → 머리줄(이름·위치)과 인용 한 줄로 나눠 보여 준다
@@ -741,6 +755,8 @@
       return;
     }
     userMsg(instruction);
+    currentTurn = 'turn-' + Date.now().toString(36);
+    const turn = currentTurn;
     stopRequested = false;
     setBusy(true);
     const auto = $('g-auto').checked;
@@ -798,7 +814,15 @@
     if (auto) await Promise.all(targets.map(c => c.applyChain));
     if (!disabled) recordTurn(instruction, tasks);
     if (disabled) systemMsg('AI 기능이 꺼져 있습니다 · 설정에서 [브릿지 · AI 기능 사용]을 켜고 로컬 브리지를 실행하세요', true);
-    else systemMsg((stopRequested ? '멈췄습니다 · ' : '끝 · ') + '고칠 곳 ' + total + '개' + (auto ? ' · 적용 ' + targets.reduce((n, c) => n + c.counts.applied, 0) + '개(누적)' : ''));
+    else {
+      const endMsg = systemMsg((stopRequested ? '멈췄습니다 · ' : '끝 · ') + '고칠 곳 ' + total + '개' + (auto ? ' · 적용 ' + targets.reduce((n, c) => n + c.counts.applied, 0) + '개(누적)' : ''));
+      if (total) {
+        logEntries[logEntries.length - 1].turnApply = turn;
+        attachTurnApply(endMsg, turn);
+        saveLog();
+      }
+    }
+    currentTurn = '';
     unpinTargets(targets);
     setBusy(false);
   }
@@ -812,10 +836,11 @@
 
   // ---------- 전체 적용 ----------
   // 이 대화에서 아직 적용 안 된 제안(제안 상태·실패)을 문서마다 차례로 전부 적용한다.
-  function pendingEdits() {
+  function pendingEdits(turn) {
     const out = [];
     for (const entry of logEntries) {
       if (entry.t !== 'agent' || !Array.isArray(entry.edits)) continue;
+      if (turn && entry.turn !== turn) continue;
       const card = cards.find(c => c.doc.id === entry.docId);
       if (!card) continue; // [문서]에서 꺼 둔 문서는 건너뛴다
       for (const edit of entry.edits) {
@@ -832,10 +857,16 @@
     btn.hidden = n === 0;
     btn.textContent = '전체 적용 ' + n;
     btn.disabled = busy;
+    for (const b of document.querySelectorAll('.g-turn-apply')) {
+      const k = pendingEdits(b.dataset.turn).length;
+      b.hidden = k === 0;
+      b.textContent = '이 대화 모두 적용 ' + k;
+      b.disabled = busy;
+    }
   }
 
-  async function applyAllPending() {
-    const todo = pendingEdits();
+  async function applyAllPending(turn) {
+    const todo = pendingEdits(typeof turn === 'string' ? turn : '');
     if (!todo.length || busy) return;
     const btn = $('g-apply-all');
     btn.disabled = true;
@@ -850,11 +881,24 @@
   // 저장해 둔 채팅창을 다시 그린다. 적용된 제안은 적용됨으로, 진행 중이던 것은 제안으로 돌아온다.
   function restoreLog(saved) {
     let newest = 0;
+    // 턴 표시가 없던 예전 대화는 사용자 지시를 기준으로 턴을 나눠 [이 대화 모두 적용]을 단다
+    let inferredTurn = '';
+    let userCount = 0;
     for (const e of saved.entries || []) {
-      if (e.t === 'system') systemMsg(e.text, e.error);
-      else if (e.t === 'user') userMsg(e.text);
+      if (e.t === 'system') {
+        const m = systemMsg(e.text, e.error);
+        const turnApply = e.turnApply || (inferredTurn && /^(끝|멈췄습니다) · 고칠 곳 [1-9]/.test(String(e.text || '')) ? inferredTurn : '');
+        if (turnApply) {
+          logEntries[logEntries.length - 1].turnApply = turnApply;
+          attachTurnApply(m, turnApply);
+        }
+      }
+      else if (e.t === 'user') {
+        userMsg(e.text);
+        inferredTurn = 'restored-' + (++userCount);
+      }
       else if (e.t === 'agent') {
-        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], review: Array.isArray(e.review) ? e.review : undefined };
+        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], turn: e.turn || inferredTurn, review: Array.isArray(e.review) ? e.review : undefined };
         logEntries.push(entry);
         const msg = agentMsg(entry.agent, entry.who, entry);
         msg.text.textContent = entry.text;
