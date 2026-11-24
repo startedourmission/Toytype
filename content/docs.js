@@ -502,8 +502,9 @@
     return (h >>> 0).toString(16) + ':' + text.length;
   }
 
-  function fetchModelText(docId) {
-    return requestDocsModel('getText', { docId }).then(res => {
+  // 기본 4초. 격자 칸처럼 막 불러온 큰 문서는 첫 본문 읽기가 더 걸리므로 넉넉히 받을 수 있게 한다
+  function fetchModelText(docId, timeoutMs) {
+    return requestDocsModel('getText', timeoutMs ? { docId, timeoutMs } : { docId }).then(res => {
       if (!res || !res.ok || typeof res.text !== 'string') {
         throw new Error(res && res.errorMessage ? res.errorMessage : 'model text unavailable');
       }
@@ -6303,7 +6304,8 @@
   }
 
   function selectDocsModelRange(start, end) {
-    return requestDocsModel('setSelection', { start, end, docId: getDocId() }).then(res => {
+    // 막 열린 큰 문서에서 먼 곳을 고르면 4초(기본)를 넘기기도 한다
+    return requestDocsModel('setSelection', { start, end, docId: getDocId(), timeoutMs: 15000 }).then(res => {
       if (!res || !res.ok) throw new Error(res && res.errorMessage ? res.errorMessage : 'setSelection failed');
       return res;
     });
@@ -7366,7 +7368,7 @@
     const src = String(args.src || '');
     const dst = String(args.dst || '');
     if (!src) throw new Error('empty source');
-    const model = await fetchModelText(getDocId());
+    const model = await fetchModelText(getDocId(), 20000);
     const start = nearestIndexOf(model.text, src, args.hint);
     if (start === -1) return { ok: false, error: 'not_found' };
     if (args.agent) await placeAgentCursor(args.agent, start).catch(() => false);
@@ -7392,7 +7394,7 @@
     if (!verified && dst !== src) {
       // 검증 단계가 놓쳐도 실제로는 바뀌었을 수 있다 — 문서를 다시 읽어 그 자리에 고친 문구가 있으면 성공으로 본다
       await new Promise(resolve => setTimeout(resolve, 400));
-      const after = await fetchModelText(getDocId()).catch(() => null);
+      const after = await fetchModelText(getDocId(), 20000).catch(() => null);
       if (after) {
         const near = after.text.slice(Math.max(0, start - 40), start + Math.max(src.length, dst.length) + 40);
         const srcGone = nearestIndexOf(after.text, src, start) === -1 || Math.abs(nearestIndexOf(after.text, src, start) - start) > 40;
@@ -7490,11 +7492,82 @@
   // 문서의 선택(커서)은 하나뿐이다. 여러 에이전트가 한 문서에서 동시에 커서를 옮기고 바꾸면
   // 한 에이전트가 고를 곳을 선택해 둔 사이 다른 에이전트가 선택을 옮겨 엉뚱한 곳이 바뀐다.
   // 선택을 건드리는 요청은 모두 한 줄로 세워 하나씩 처리한다.
-  const SELECTION_OPS = new Set(['applyEdit', 'agentCursor', 'select', 'locate', 'docosFocus', 'docosAct']);
+  const SELECTION_OPS = new Set(['applyEdit', 'agentCursor', 'select', 'locate', 'docosFocus', 'docosAct', 'formatFix']);
+
+  // 서식 고치기: 문단(또는 문단 안 글자)을 선택한 뒤 툴바(글꼴·크기) 또는 단축키(첨자)로 바꾼다.
+  // 간결 모드 칸에는 툴바가 없어 크기·글꼴은 need_full을 돌려주고, 격자가 그 칸을 전체 편집기로 바꿔 다시 부른다.
+  async function gridFormatFix(args) {
+    // 단계마다 실패 위치를 남긴다(어느 요청이 늦는지 알 수 있게)
+    let step = 'read';
+    try {
+      return await gridFormatFixSteps(args, s => { step = s; });
+    } catch (error) {
+      return { ok: false, error: step + ': ' + (error && error.message ? error.message : String(error)) };
+    }
+  }
+
+  async function gridFormatFixSteps(args, mark) {
+    const fix = args.fix || {};
+    const model = await fetchModelText(getDocId(), 20000);
+    const find = String(args.find || '');
+    const start = nearestIndexOf(model.text, find, args.hint);
+    if (!find || start === -1) return { ok: false, error: 'not_found' };
+    let end = model.text.indexOf('\n', start);
+    if (end === -1) end = model.text.length;
+    if (fix.type === 'fontSize' || fix.type === 'fontFamily') {
+      if (!document.querySelector('#docs-toolbar, #docs-font-family')) return { ok: false, error: 'need_full' };
+      mark('select');
+      await selectDocsModelRange(start, end);
+      mark('toolbar');
+      const res = await requestDocsModel('stylePresetOp', fix.type === 'fontSize'
+        ? { op: 'fontSize', sizePt: Number(fix.value), docId: getDocId(), timeoutMs: 15000 }
+        : { op: 'fontFamily', fontName: String(fix.value), docId: getDocId(), timeoutMs: 15000 });
+      return res && res.ok ? { ok: true } : { ok: false, error: (res && (res.errorMessage || res.error)) || 'format_failed' };
+    }
+    if (fix.type === 'script') {
+      const para = model.text.slice(start, end);
+      const text = String(fix.text || '');
+      // 문단 안 위치(off)가 있으면 그 근처, 없으면 첫 위치
+      // 문단 안에서 바꿀 글자 찾기: 문제 문구(quote) 안의 그 글자 → 문단 안 위치(off) 근처 → 첫 위치
+      const quote = String(args.quote || '');
+      const qi = quote ? nearestIndexOf(para, quote, Number(fix.off) || 0) : -1;
+      let within = qi !== -1 && quote.includes(text) ? qi + quote.lastIndexOf(text) : -1;
+      if (within === -1) within = Number.isFinite(Number(fix.off)) ? nearestIndexOf(para, text, Number(fix.off)) : para.indexOf(text);
+      if (!text || within === -1) return { ok: false, error: 'not_found' };
+      mark('select');
+      await selectDocsModelRange(start + within, start + within + text.length);
+      mark('shortcut');
+      // kind라는 이름은 쓰면 안 된다 — 요청 메시지 종류(kind)를 덮어써 페이지 브리지가 요청을 못 알아본다
+      const res = await requestDocsModel('stylePresetOp', { op: 'scriptToggle', scriptKind: fix.kind, docId: getDocId(), timeoutMs: 8000 });
+      return res && res.ok ? { ok: true } : { ok: false, error: 'script_failed' };
+    }
+    return { ok: false, error: 'unknown_fix' };
+  }
+
+  // 에이전트가 커서를 옮기거나 고칠 때 구글 문서가 그 자리로 화면을 끌고 가지 않게, 작업 전 스크롤 위치로 되돌린다.
+  // 사람이 누른 [위치]·카드 이동(locate·docosFocus)만 화면을 옮긴다.
+  const KEEP_VIEW_OPS = new Set(['applyEdit', 'agentCursor', 'select', 'docosAct']);
+
+  async function keepView(fn) {
+    const editor = document.querySelector('.kix-appview-editor');
+    const top = editor ? editor.scrollTop : 0;
+    const left = editor ? editor.scrollLeft : 0;
+    try {
+      return await fn();
+    } finally {
+      if (editor) {
+        const back = () => { if (editor.scrollTop !== top || editor.scrollLeft !== left) { editor.scrollTop = top; editor.scrollLeft = left; } };
+        back();
+        setTimeout(back, 150);
+        setTimeout(back, 500);
+      }
+    }
+  }
 
   function handleGridRpc(op, args) {
     if (!SELECTION_OPS.has(op)) return runGridOp(op, args);
-    const run = gridApplyChain.then(() => runGridOp(op, args));
+    const work = KEEP_VIEW_OPS.has(op) && !(args && args.reveal) ? () => keepView(() => runGridOp(op, args)) : () => runGridOp(op, args);
+    const run = gridApplyChain.then(work);
     gridApplyChain = run.catch(() => {});
     return run;
   }
@@ -7506,6 +7579,15 @@
     if (op === 'docosFocus') {
       return docosFocus(args);
     }
+    if (op === 'formatFix') {
+      return gridFormatFix(args);
+    }
+    if (op === 'tabInfo') {
+      // 문서 탭이 여럿이면 편집기 본문은 지금 보이는 탭뿐이다 — export도 같은 탭만 받아야 위치가 맞는다
+      const tab = new URLSearchParams(location.search).get('tab') || '';
+      const active = document.querySelector('[role="treeitem"][aria-selected="true"], .chapter-item-label-and-buttons-container[aria-selected="true"]');
+      return { ok: true, tab, label: active ? String(active.textContent || '').trim().slice(0, 80) : '' };
+    }
     if (op === 'docosAct') {
       return docosAct(args);
     }
@@ -7514,11 +7596,11 @@
       return { ok: !!pageBridgeReady, pages: measureEditorPages() };
     }
     if (op === 'getText') {
-      const model = await fetchModelText(getDocId());
+      const model = await fetchModelText(getDocId(), 20000);
       return { ok: true, text: model.text };
     }
     if (op === 'digest') {
-      const model = await fetchModelText(getDocId());
+      const model = await fetchModelText(getDocId(), 20000);
       return { ok: true, digest: textDigest(model.text) };
     }
     if (op === 'select') {
@@ -7535,7 +7617,7 @@
     }
     if (op === 'probe') {
       // 선택은 건드리지 않고, 원문과 고친 문구가 원래 자리 근처에 있는지만 본다
-      const model = await fetchModelText(getDocId());
+      const model = await fetchModelText(getDocId(), 20000);
       const hint = Number(args.hint) || 0;
       const near = needle => {
         if (!needle) return false;
@@ -7546,7 +7628,7 @@
     }
     if (op === 'locate') {
       // 원문을 먼저 찾고, 이미 고쳐졌으면 고친 문구를, 그것도 없으면 원래 자리 근처에 커서를 둔다
-      const model = await fetchModelText(getDocId());
+      const model = await fetchModelText(getDocId(), 20000);
       const candidates = [String(args.src || '')].concat(Array.isArray(args.alts) ? args.alts.map(String) : []).filter(Boolean);
       for (const needle of candidates) {
         const start = nearestIndexOf(model.text, needle, args.hint);
@@ -7588,6 +7670,9 @@
       injectPageBridgeScript();
       pageBridgeInjectedForGrid = true;
       setTimeout(reportGridFrame, 6000);
+      // 격자 칸은 문서 다루기(브리지·격자 요청)만 한다. 규칙 엔진·패널·자동 검사·쪽수 표본은 칸마다 돌면
+      // 문서 수십 개를 띄울 때 메모리와 CPU를 크게 잡아먹어 탭이 죽는다 — 여기서 멈춘다.
+      return;
     }
     settings = await readSettings();
     syncExternalFeatureState();

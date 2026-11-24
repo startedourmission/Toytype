@@ -80,3 +80,82 @@ test('docx 댓글·제안: 앵커 문구와 문맥, 바꾸기 묶음을 뽑는�
   assert.equal(r.suggestions[0].context, '배열을 ⟦-사용한다⟧⟦+사용합니다⟧.');
   assert.deepEqual([r.suggestions[1].kind, r.suggestions[1].author, r.suggestions[1].inserted], ['insert', '저자', '새 문장.']);
 });
+
+test('서식 점검: 요소를 나누고 크기·글꼴·첨자·표기 불일치를 잡는다', async () => {
+  const { DOMParser } = await import('@xmldom/xmldom');
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const stylesXml = `<w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arimo"/><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
+    <w:style w:styleId="Heading2"><w:name w:val="heading 2"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style></w:styles>`;
+  const p = (t, rpr = '', ppr = '') => `<w:p>${ppr}<w:r>${rpr ? '<w:rPr>' + rpr + '</w:rPr>' : ''}<w:t xml:space="preserve">${t}</w:t></w:r></w:p>`;
+  const body = [
+    `<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>2.1 스택</w:t></w:r></w:p>`,
+    p('본문 하나입니다.'), p('본문 둘입니다.'), p('본문 셋입니다.'), p('본문 넷은 크기가 다릅니다.', '<w:sz w:val="24"/>'),
+    p('&lt;NOTE&gt; 노트는 작게 씁니다.', '<w:sz w:val="18"/>'), p('NOTE 표기가 다른 노트', '<w:sz w:val="18"/>'),
+    p('```'), p('int a = 1;', '<w:rFonts w:ascii="Consolas"/><w:sz w:val="18"/>'), p('```'),
+    `<w:p><w:r><w:t>복잡도는 O(n</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>2</w:t></w:r><w:r><w:t>)이고 O(m2)도 있다 </w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>입니다</w:t></w:r></w:p>`,
+    p('A -&gt; B로 갑니다.')
+  ].join('');
+  const sum = T.summarizeDocxFormat(`<w:document ${W}><w:body>${body}</w:body></w:document>`, stylesXml, DOMParser);
+  assert.deepEqual(sum.paragraphs.map(x => x.kind), ['h2', 'body', 'body', 'body', 'body', 'note', 'note', 'fence', 'code', 'fence', 'body', 'body']);
+  assert.equal(sum.paragraphs[0].size, 16);
+  assert.equal(sum.paragraphs[1].font, 'Arimo');
+  assert.equal(sum.paragraphs[8].font, 'Consolas');
+  const f = T.formatRuleFindings(sum);
+  const issues = f.map(x => x.issue).join('\n');
+  assert.match(issues, /본문 크기가 다릅니다 \(12pt\)/);
+  assert.match(issues, /위첨자로 잘못 올라간 한글/);
+  assert.match(issues, /첨자로 써야 할 수 있는 표기: O\(m2\)/);
+  assert.doesNotMatch(issues, /O\(n2\)/); // 이미 위첨자
+  assert.match(issues, /노트 표기가 섞여/);
+  assert.match(issues, /화살표가 ➝가 아닙니다/);
+  assert.match(T.formatTranscript(sum, 0, 99), /#8 \[code 9pt Consolas, 1 lines\]/);
+});
+
+test('서식 점검: 코드 안 한글 주석·C 화살표 연산자는 지적하지 않는다', async () => {
+  const { DOMParser } = await import('@xmldom/xmldom');
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  // 구글 DOCX처럼: 문단 기호에는 실제 코드 글꼴, 한글 섞인 글자 단위에는 Arial Unicode MS
+  const code = (t, k) => `<w:p><w:pPr><w:rPr><w:rFonts w:ascii="Roboto Mono"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial Unicode MS"/><w:sz w:val="16"/></w:rPr><w:t xml:space="preserve">${t}${k}</w:t></w:r></w:p>`;
+  const body = '<w:p><w:r><w:t>```</w:t></w:r></w:p>' + code('int *p; ', '// 정수를 가리키는 포인터를 선언하는 긴 한글 주석입니다') + code('p = &amp;a; ', '// 주소 저장') + '<w:p><w:r><w:t>```</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>화살표 연산자를 쓰면 ptr-&gt;score로 씁니다.</w:t></w:r></w:p>';
+  const sum = T.summarizeDocxFormat(`<w:document ${W}><w:body>${body}</w:body></w:document>`, '', DOMParser);
+  assert.equal(sum.paragraphs[1].font, 'Roboto Mono');
+  const issues = T.formatRuleFindings(sum).map(f => f.issue).join('\n');
+  assert.doesNotMatch(issues, /고정폭/);
+  assert.doesNotMatch(issues, /화살표/);
+});
+
+test('서식 점검(HTML): 클래스 CSS로 글꼴·크기·첨자를 읽는다', async () => {
+  const { DOMParser } = await import('@xmldom/xmldom');
+  const html = `<html><head><style>.c1{font-family:"Arimo";font-size:10pt}.c2{font-family:"Roboto Mono";font-size:8pt}.c3{vertical-align:super;font-size:10pt}.c4{font-size:12pt;font-family:"Arimo"}h2{font-size:16pt}</style></head><body>
+    <h2 class="c0"><span class="c1">2.1 스택</span></h2>
+    <p><span class="c1">본문 하나</span></p><p><span class="c1">본문 둘</span></p><p><span class="c1">본문 셋</span></p><p><span class="c4">본문 넷은 크다</span></p>
+    <p><span class="c2">\`\`\`</span></p><p><span class="c2">int *p; // 한글 주석이 아주 길게 붙어 있다</span></p><p><span class="c2">\`\`\`</span></p>
+    <p><span class="c1">복잡도는 O(n</span><span class="c3">2</span><span class="c1">)이다</span></p>
+    <table><tr><td><p><span class="c1">[경고] 상자 안</span></p></td></tr></table>
+  </body></html>`;
+  const sum = T.summarizeHtmlFormat(html, DOMParser);
+  assert.deepEqual(sum.paragraphs.map(p => p.kind), ['h2', 'body', 'body', 'body', 'body', 'fence', 'code', 'fence', 'body', 'corner']);
+  assert.equal(sum.paragraphs[6].font, 'Roboto Mono');
+  assert.equal(sum.paragraphs[6].size, 8);
+  assert.equal(sum.paragraphs[9].inTable, true);
+  assert.equal(sum.paragraphs[8].scripts[0].text, '2');
+  const issues = T.formatRuleFindings(sum).map(f => f.issue).join('\n');
+  assert.match(issues, /본문 크기가 다릅니다 \(12pt\)/);
+  assert.doesNotMatch(issues, /고정폭/);
+  assert.doesNotMatch(issues, /O\(n2\)/);
+});
+
+test('서식 점검(HTML): 끝에 붙는 댓글 본문은 빼고, 고칠 방법(fix·edit)을 붙인다', async () => {
+  const { DOMParser } = await import('@xmldom/xmldom');
+  const html = `<html><head><style>.c1{font-family:"Arimo";font-size:10pt}.c4{font-family:"Arimo";font-size:11pt}</style></head><body>
+    <p><span class="c1">본문 하나</span><sup><a href="#cmnt1" id="cmnt_ref1">[a]</a></sup></p><p><span class="c1">본문 둘</span></p><p><span class="c1">본문 셋 A -&gt; B</span></p><p><span class="c4">본문 넷</span></p>
+    <div class="c9"><p><a href="#cmnt_ref1" id="cmnt1">[a]</a><span class="c4">@@ 댓글 본문</span></p><p><span class="c4">댓글 둘째 줄</span></p></div>
+  </body></html>`;
+  const sum = T.summarizeHtmlFormat(html, DOMParser);
+  assert.deepEqual(sum.paragraphs.map(p => p.text), ['본문 하나', '본문 둘', '본문 셋 A -> B', '본문 넷']);
+  const f = T.formatRuleFindings(sum);
+  const size = f.find(x => /크기가 다릅니다/.test(x.issue));
+  assert.deepEqual(size.fix, { type: 'fontSize', value: 10 });
+  assert.deepEqual(f.find(x => /화살표/.test(x.issue)).edit, { src: '->', dst: '➝' });
+});

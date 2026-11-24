@@ -43,24 +43,28 @@
           <input type="checkbox" id="g-auto"><span class="g-switch-track" aria-hidden="true"></span><span>바로 적용</span>
         </label>
         <button type="button" class="g-apply-all" id="g-apply-all" title="이 대화에서 아직 적용 안 된 제안을 전부 문서에 적용합니다" hidden>전체 적용</button>
+        <div class="g-nav" id="g-nav" hidden>
+        <button type="button" class="g-nav-btn" id="g-top" title="맨 위로" aria-label="맨 위로">↑</button>
+        <button type="button" class="g-nav-btn g-nav-last" id="g-last" title="마지막으로 [적용]을 누른 곳으로" aria-label="마지막으로 적용을 누른 곳으로">최근 적용</button>
+        <button type="button" class="g-nav-btn" id="g-jump" title="맨 아래로" aria-label="맨 아래로">↓</button>
+      </div>
         <button type="button" class="g-reset" id="g-reset" title="열 수·열 너비·칸 높이·채팅창 너비를 처음대로 되돌립니다" disabled>크기 원래대로</button>
       </div>
     </header>
     <div class="g-log-wrap">
       <div class="g-log" id="g-log"></div>
-      <div class="g-nav" id="g-nav" hidden>
-        <button type="button" class="g-nav-btn" id="g-top" title="맨 위로" aria-label="맨 위로">↑</button>
-        <button type="button" class="g-nav-btn g-nav-last" id="g-last" title="마지막으로 [적용]을 누른 곳으로" aria-label="마지막으로 적용을 누른 곳으로">최근 적용</button>
-        <button type="button" class="g-nav-btn" id="g-jump" title="맨 아래로" aria-label="맨 아래로">↓</button>
-      </div>
     </div>
     <footer class="g-composer">
-      <div class="g-presets" id="g-presets"></div>
+      <div class="g-targets" id="g-targets" title="에이전트가 맡을 문서 · 눌러서 넣고 빼기 · 입력창에 @all을 쓰면 전부 선택, 지우면 전부 해제"></div>
+      <div class="g-slash" id="g-slash" hidden></div>
       <form class="g-compose" id="g-compose">
-        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · 예) 합니다체로 통일해 줘"></textarea>
+        <div class="g-compose-main">
+        <div class="g-cmds" id="g-cmds" hidden></div>
+        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/서식 점검, /전체 교정 …)"></textarea>
+        </div>
         <button type="submit" class="g-send" id="g-send" title="보내기 (⌘Enter)" aria-label="보내기">↑</button>
       </form>
-      <div class="g-hint">⌘Enter로 보내기 · 기본은 제안 모드라 승인한 곳만 바뀝니다</div>
+      <div class="g-hint">⌘Enter로 보내기 · /로 기능 부르기 · @all로 전부 선택</div>
     </footer>
   </aside>
 </div>`;
@@ -174,17 +178,25 @@
     // 구글 문서가 조금 늦게 스크롤을 부르기도 해서 잠깐 더 붙잡았다 놓는다
     setTimeout(() => { if (--holdDepth === 0) held = null; }, 600);
   }
+  // 사람이 스크롤·클릭·키를 쓴 직후가 아니면, 에이전트가 일하는 동안 생긴 스크롤은 되돌린다
+  let lastUserIntent = 0;
+  for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    window.addEventListener(type, () => { lastUserIntent = Date.now(); }, { capture: true, passive: true });
+  }
   function guardHeld(el, key) {
+    let pos = [el.scrollTop, el.scrollLeft];
     el.addEventListener('scroll', () => {
-      if (!held) return;
-      if (key === 'grid') {
-        if (el.scrollTop !== held.grid[0] || el.scrollLeft !== held.grid[1]) {
-          el.scrollTop = held.grid[0];
-          el.scrollLeft = held.grid[1];
-        }
-      } else if (el.scrollTop !== held.log) {
-        el.scrollTop = held.log;
+      const userMoved = Date.now() - lastUserIntent < 1500;
+      if (held && !userMoved) {
+        const want = key === 'grid' ? held.grid : [held.log, el.scrollLeft];
+        if (el.scrollTop !== want[0] || el.scrollLeft !== want[1]) { el.scrollTop = want[0]; el.scrollLeft = want[1]; }
+        return;
       }
+      if (busy && !userMoved) {
+        if (el.scrollTop !== pos[0] || el.scrollLeft !== pos[1]) { el.scrollTop = pos[0]; el.scrollLeft = pos[1]; }
+        return;
+      }
+      pos = [el.scrollTop, el.scrollLeft];
     });
   }
   const HOLD_OPS = new Set(['applyEdit', 'select', 'agentCursor', 'agentCursorRemove', 'probe', 'getText', 'digest']);
@@ -263,7 +275,7 @@
     pick.type = 'checkbox';
     pick.checked = true;
     pick.title = '에이전트 작업 대상에 넣기';
-    pick.addEventListener('change', saveLog);
+    pick.addEventListener('change', () => { saveLog(); renderTargets(); });
     const name = el('div', 'g-card-name', doc.name || doc.id);
     name.title = doc.name || '';
     const badge = el('span', 'g-agent-badge', '');
@@ -317,7 +329,17 @@
   // ---------- 안 보이는 칸 내려 두기 ----------
   // 칸마다 편집기 하나라 무겁다. 화면 밖에 UNLOAD_AFTER_MS 넘게 있던 칸은 편집기를 내리고, 다시 보이면 불러온다.
   // 에이전트가 맡은 칸(pinned)은 화면 밖이어도 내리지 않는다.
-  const UNLOAD_AFTER_MS = 20000;
+  const UNLOAD_AFTER_MS = 10000;
+  // 동시에 편집기를 띄워 두는 칸 수 상한. 넘으면 화면 밖 칸부터 바로 내린다(에이전트가 맡은 칸은 제외)
+  const MAX_LIVE_FRAMES = 9;
+
+  function trimLiveFrames() {
+    const live = cards.filter(c => !c.unloaded);
+    if (live.length <= MAX_LIVE_FRAMES) return;
+    const spare = live.filter(c => !c.visible && !c.pinned && !c.applying && !c.root.classList.contains('g-working'))
+      .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0));
+    for (const c of spare.slice(0, live.length - MAX_LIVE_FRAMES)) unloadCard(c);
+  }
   let visObserver = null;
 
   function unloadCard(card) {
@@ -356,9 +378,12 @@
           if (!card) continue;
           card.visible = entry.isIntersecting;
           if (card.visible) {
+            card.lastSeen = Date.now();
             clearTimeout(card.unloadTimer);
             if (card.unloaded) loadCard(card);
+            trimLiveFrames();
           } else {
+            card.lastSeen = Date.now();
             scheduleUnload(card);
           }
         }
@@ -457,9 +482,10 @@
       const entries = logEntries.slice(-LOG_MAX_ENTRIES).map(e => e.t !== 'agent' ? e : {
         t: 'agent', agent: e.agent, who: e.who, text: e.pending ? '(새로고침으로 중단됨)' : e.text, docId: e.docId,
         review: Array.isArray(e.review) ? e.review.slice(0, 200) : undefined,
+        format: Array.isArray(e.format) ? e.format.slice(0, 300) : undefined,
         turn: e.turn || undefined,
         edits: (e.edits || []).map(x => ({
-          src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0,
+          src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0, refs: x.refs || undefined,
           state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : 'proposed'
         }))
       });
@@ -532,6 +558,91 @@
   // 지시 한 번(대화 한 턴)에서 나온 제안을 묶는 표시 — 턴 끝 메시지에 [이 대화 모두 적용]을 단다
   let currentTurn = '';
 
+  // ---------- 애매한 선택은 묻기 ----------
+  // AI가 고르지 못한 선택(용어 A/B, 코너 이름 등)을 모아 채팅창에 질문 카드로 띄운다.
+  // 답은 이 대화의 편집자 결정(session.decisions)으로 남아 이후 모든 요청에 함께 가고, 같은 것을 다시 묻지 않는다.
+  let runQuestions = [];
+
+  function decisions() {
+    return session && Array.isArray(session.decisions) ? session.decisions : [];
+  }
+
+  function addDecision(topic, choice) {
+    if (!session) return;
+    const list = decisions().filter(d => !d.startsWith(topic + ': '));
+    list.push(topic + ': ' + choice);
+    session.decisions = list.slice(-40);
+    chrome.storage.local.set({ ['grid:' + sessionId]: Object.assign(session, { touchedAt: Date.now() }) }).catch(() => {});
+  }
+
+  function collectQuestions(list) {
+    for (const q of list || []) {
+      const key = String(q.topic || q.question).replace(/\s+/g, '').toLowerCase();
+      if (decisions().some(d => d.split(': ')[0].replace(/\s+/g, '').toLowerCase() === key)) continue;
+      const same = runQuestions.find(x => String(x.topic || x.question).replace(/\s+/g, '').toLowerCase() === key);
+      if (same) {
+        for (const o of q.options) if (!same.options.includes(o) && same.options.length < 4) same.options.push(o);
+      } else if (runQuestions.length < 8) {
+        runQuestions.push({ topic: q.topic, question: q.question, options: q.options.slice(0, 4), answer: '' });
+      }
+    }
+  }
+
+  function renderQuestionCard(entry) {
+    const m = el('div', 'g-msg g-msg-question');
+    m.appendChild(el('div', 'g-q-title', '확인이 필요한 선택 ' + entry.items.length + '개 · 답하면 이 대화 내내 그대로 따릅니다'));
+    const again = el('button', 'g-apply-all g-q-go', '답한 내용으로 다시 처리');
+    again.type = 'button';
+    const sync = () => {
+      const answered = entry.items.filter(q => q.answer).length;
+      again.disabled = !answered || busy;
+      again.textContent = answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
+    };
+    for (const q of entry.items) {
+      const box = el('div', 'g-q');
+      box.appendChild(el('div', 'g-q-text', q.question));
+      const opts = el('div', 'g-q-opts');
+      const buttons = [];
+      const pick = choice => {
+        q.answer = choice;
+        if (choice !== '(넘김)') addDecision(q.topic, choice);
+        for (const b of buttons) b.classList.toggle('g-on', b.dataset.choice === choice);
+        sync();
+        saveLog();
+      };
+      for (const o of q.options.concat(['(넘김)'])) {
+        const b = el('button', 'g-target' + (q.answer === o ? ' g-on' : ''), o);
+        b.type = 'button';
+        b.dataset.choice = o;
+        b.title = o === '(넘김)' ? '이번에는 정하지 않기' : '“' + o + '”로 정하기';
+        b.addEventListener('click', () => pick(o));
+        buttons.push(b);
+        opts.appendChild(b);
+      }
+      box.appendChild(opts);
+      m.appendChild(box);
+    }
+    again.addEventListener('click', () => {
+      if (busy) return;
+      again.disabled = true;
+      const f = entry.followUp || {};
+      if (f.kind === 'format') runFormatCheck(f.extra || '');
+      else if (f.instruction) runInstruction(f.instruction);
+    });
+    m.appendChild(again);
+    sync();
+    $('g-log').appendChild(m);
+    scrollLog();
+    return m;
+  }
+
+  function showRunQuestions(followUp) {
+    if (!runQuestions.length) return;
+    const entry = pushEntry({ t: 'question', items: runQuestions, followUp });
+    runQuestions = [];
+    renderQuestionCard(entry);
+  }
+
   function attachTurnApply(m, turn) {
     const btn = el('button', 'g-link g-turn-apply', '');
     btn.type = 'button';
@@ -582,7 +693,11 @@
     const diff = el('div', 'g-edit-diff');
     diff.append(el('del', '', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', edit.dst || '(삭제)'));
     item.appendChild(diff);
-    if (edit.reason) item.appendChild(el('div', 'g-edit-why', (edit.category ? '[' + edit.category + '] ' : '') + edit.reason));
+    if (edit.reason) {
+      const why = el('div', 'g-edit-why');
+      appendWithRefs(why, (edit.category ? '[' + edit.category + '] ' : '') + edit.reason, edit.refs, card);
+      item.appendChild(why);
+    }
     const row = el('div', 'g-edit-row');
     const state = el('span', 'g-edit-state', auto ? '적용 대기' : '');
     const show = el('button', 'g-link', '위치');
@@ -755,6 +870,7 @@
       return;
     }
     userMsg(instruction);
+    runQuestions = [];
     currentTurn = 'turn-' + Date.now().toString(36);
     const turn = currentTurn;
     stopRequested = false;
@@ -825,6 +941,7 @@
     currentTurn = '';
     unpinTargets(targets);
     setBusy(false);
+    if (!disabled) showRunQuestions({ kind: 'text', instruction });
   }
 
   function renderEdits(msg, card, edits, auto) {
@@ -885,6 +1002,12 @@
     let inferredTurn = '';
     let userCount = 0;
     for (const e of saved.entries || []) {
+      if (e.t === 'question') {
+        const entry = { t: 'question', items: Array.isArray(e.items) ? e.items : [], followUp: e.followUp || {} };
+        logEntries.push(entry);
+        renderQuestionCard(entry);
+        continue;
+      }
       if (e.t === 'system') {
         const m = systemMsg(e.text, e.error);
         const turnApply = e.turnApply || (inferredTurn && /^(끝|멈췄습니다) · 고칠 곳 [1-9]/.test(String(e.text || '')) ? inferredTurn : '');
@@ -898,12 +1021,13 @@
         inferredTurn = 'restored-' + (++userCount);
       }
       else if (e.t === 'agent') {
-        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], turn: e.turn || inferredTurn, review: Array.isArray(e.review) ? e.review : undefined };
+        const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], turn: e.turn || inferredTurn, review: Array.isArray(e.review) ? e.review : undefined, format: Array.isArray(e.format) ? e.format : undefined };
         logEntries.push(entry);
         const msg = agentMsg(entry.agent, entry.who, entry);
         msg.text.textContent = entry.text;
         const card = cards.find(c => c.doc.id === e.docId);
         if (entry.review) renderReviewRows(msg, card, entry.review);
+        if (entry.format) renderFormatRows(msg, card, entry.format);
         const edits = (e.edits || []).map(x => Object.assign({}, x));
         entry.edits = edits;
         if (card && edits.length) {
@@ -939,6 +1063,7 @@
     if (o.conc) $('g-conc').value = String(o.conc);
     for (const c of cards) if ((o.unchecked || []).includes(c.doc.id)) c.pick.checked = false;
     for (const c of cards) if ((o.full || []).includes(c.doc.id)) setFullEditor(c, true, true);
+    renderTargets();
   }
 
   async function runChunk(task, agent, instruction, auto) {
@@ -964,6 +1089,7 @@
           text: card.text.slice(chunk.start, chunk.end),
           instruction,
           history: history.slice(-HISTORY_TURNS),
+          decisions: decisions(),
           chunkIndex: idx,
           chunkCount: count
         }
@@ -992,6 +1118,7 @@
       hint: chunk.start + (Number(f.offset) || 0)
     }));
     task.note = res.note || '';
+    collectQuestions(res.questions);
     msg.text.textContent = res.note || (edits.length ? '고칠 곳 ' + edits.length + '개를 찾았습니다.' : '고칠 곳이 없습니다.');
     msg.entry.text = msg.text.textContent;
     msg.entry.edits = edits;
@@ -1245,16 +1372,337 @@
   }
 
   // DOCX export에서 댓글이 걸린 문구와 앞뒤 문맥, 제안의 지움·넣음 원문을 가져온다
-  async function fetchReviewContext(card) {
+  // 문서를 DOCX로 내보내 본문·스타일·댓글 XML을 꺼낸다(격자 페이지가 docs.google.com이라 같은 출처로 바로 받는다)
+  async function fetchDocxParts(card) {
     const H = globalThis.ToytypeHwpxExport;
-    const D = globalThis.ToytypeDocTools;
-    if (!H || !H.readZipPackage || !D || !D.parseDocxReview) return null;
+    if (!H || !H.readZipPackage) throw new Error('docx reader unavailable');
     const a = session.authuser > 0 ? 'u/' + session.authuser + '/' : '';
     const res = await fetch('https://docs.google.com/document/' + a + 'd/' + encodeURIComponent(card.doc.id) + '/export?format=docx');
     if (!res.ok) throw new Error('export ' + res.status);
     const pkg = await H.readZipPackage(await res.arrayBuffer());
     const text = name => { const f = pkg.files.get(name); return f ? new TextDecoder('utf-8').decode(f.data) : ''; };
-    return D.parseDocxReview(text('word/document.xml'), text('word/comments.xml'));
+    return { document: text('word/document.xml'), styles: text('word/styles.xml'), comments: text('word/comments.xml') };
+  }
+
+  async function fetchReviewContext(card) {
+    const D = globalThis.ToytypeDocTools;
+    if (!D || !D.parseDocxReview) return null;
+    const parts = await fetchDocxParts(card);
+    return D.parseDocxReview(parts.document, parts.comments);
+  }
+
+  // ---------- 서식 점검 ----------
+  // DOCX의 문단·글자 서식을 요소별로 정리해 규칙으로 확실한 불일치를 먼저 잡고,
+  // 요약본을 구간별로 AI에게 보내 코너 분류·표기 통일·흐름 같은 판단이 필요한 문제를 찾는다.
+  const FORMAT_SECTION_CHARS = 12000;
+
+  function formatStats(summary) {
+    const ps = summary.paragraphs.filter(p => p.kind !== 'empty');
+    const stats = {};
+    for (const p of ps) {
+      const k = stats[p.kind] || (stats[p.kind] = { count: 0, sizes: {}, fonts: {} });
+      k.count++;
+      k.sizes[p.size] = (k.sizes[p.size] || 0) + 1;
+      k.fonts[p.font || '기본'] = (k.fonts[p.font || '기본'] || 0) + 1;
+    }
+    const corners = {};
+    for (const p of ps.filter(p => p.kind === 'corner')) {
+      const m = /^\s*\[([^\]\n]{1,24})\]/.exec(p.text);
+      if (m) corners[m[1]] = (corners[m[1]] || 0) + 1;
+    }
+    return { elements: stats, cornerTitles: corners };
+  }
+
+  // "#124" 같은 문단 번호를 눌러 그 문단으로 가는 링크로 바꿔 붙인다
+  function appendWithRefs(node, text, refs, card) {
+    const str = String(text || '');
+    let last = 0;
+    for (const m of str.matchAll(/#(\d{1,5})/g)) {
+      const ref = refs && refs[m[1]];
+      if (!ref || !card) continue;
+      node.appendChild(document.createTextNode(str.slice(last, m.index)));
+      const a = el('button', 'g-ref', m[0]);
+      a.type = 'button';
+      a.title = '문서에서 이 문단으로 이동';
+      a.addEventListener('click', () => {
+        card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        rpc(card, 'locate', { src: ref.find, hint: ref.hint || 0 }, 15000);
+      });
+      node.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    node.appendChild(document.createTextNode(str.slice(last)));
+  }
+
+  function renderFormatRows(msg, card, rows) {
+    let list = msg.bubble.querySelector('.g-format-results');
+    if (!list) {
+      list = el('div', 'g-edits g-format-results');
+      msg.bubble.appendChild(list);
+    }
+    list.textContent = '';
+    for (const r of rows) {
+      const item = el('div', 'g-edit g-format-row');
+      const head = el('div', 'g-edit-diff');
+      head.append(el('span', 'g-review-kind g-format-' + (r.rule ? 'rule' : 'ai'), r.category), document.createTextNode(' '));
+      appendWithRefs(head, r.issue, r.refs, card);
+      item.appendChild(head);
+      if (r.suggestion) {
+        const why = el('div', 'g-edit-why');
+        appendWithRefs(why, r.suggestion, r.refs, card);
+        item.appendChild(why);
+      }
+      if (card && r.find) {
+        const row = el('div', 'g-edit-row');
+        const state = el('span', 'g-edit-state', r.done ? '✓ 적용됨' : r.text ? '“' + r.text.slice(0, 40) + '”' : '');
+        if (r.done) item.classList.add('g-applied');
+        const go = el('button', 'g-link', '위치');
+        go.type = 'button';
+        go.addEventListener('click', async () => {
+          card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          const res = await rpc(card, 'locate', { src: r.find, hint: r.hint || 0 }, 15000);
+          if (!res.ok) state.textContent = '문서에서 찾지 못함';
+          else if (res.approx) state.textContent = '이 문단을 찾지 못해 근처로 갔습니다';
+        });
+        row.append(state, go);
+        if (r.fix) {
+          const apply = el('button', 'g-link', '적용');
+          apply.type = 'button';
+          apply.disabled = !!r.done;
+          apply.title = fixLabel(r.fix);
+          apply.addEventListener('click', async () => {
+            apply.disabled = true;
+            state.textContent = '적용 중…';
+            const ok = await applyFormatFix(card, r);
+            r.done = ok.ok;
+            state.textContent = ok.ok ? '✓ 적용됨' : '적용 실패 · ' + ok.why;
+            item.classList.toggle('g-applied', ok.ok);
+            if (!ok.ok) apply.disabled = false;
+            saveLog();
+          });
+          row.appendChild(apply);
+        }
+        item.appendChild(row);
+      }
+      list.appendChild(item);
+    }
+  }
+
+  function fixLabel(fix) {
+    if (fix.type === 'fontSize') return '이 문단 글자 크기를 ' + fix.value + 'pt로';
+    if (fix.type === 'fontFamily') return '이 문단 글꼴을 ' + fix.value + '(으)로';
+    if (fix.type === 'script') return '“' + fix.text + '” ' + (fix.on ? (fix.kind === 'sub' ? '아래첨자로' : '위첨자로') : '첨자 풀기');
+    return '';
+  }
+
+  // 서식 고치기. 크기·글꼴은 툴바가 있어야 해서, 간결 모드 칸이면 그 칸을 전체 편집기로 바꾼 뒤 다시 한다
+  async function applyFormatFix(card, r) {
+    // 서식은 문단 단위로 잡고(문단 첫머리 글자), 첨자는 문제 문구(quote) 안의 글자를 고른다
+    const args = { find: r.paraFind || r.find, hint: r.paraHint != null ? r.paraHint : r.hint || 0, quote: r.quote || '', fix: r.fix };
+    let res = await rpc(card, 'formatFix', args, 45000);
+    if (!res.ok && res.error === 'need_full') {
+      setFullEditor(card, true);
+      const ready = await card.readyPromise;
+      if (!ready) return { ok: false, why: '전체 편집기를 열지 못함' };
+      // 툴바는 편집기보다 조금 늦게 뜬다 — 몇 번 다시 시도한다
+      for (let k = 0; k < 6; k++) {
+        await sleep(1500);
+        res = await rpc(card, 'formatFix', args, 45000);
+        if (res.ok || res.error !== 'need_full') break;
+      }
+    }
+    if (!res.ok) trace('formatFix', card.doc.name + ' ' + JSON.stringify({ error: res.error, fix: r.fix, find: String(args.find).slice(0, 30), quote: args.quote }));
+    const why = { not_found: '문서에서 찾지 못함', need_full: '툴바를 찾지 못함', script_failed: '첨자 바꾸기 실패', timeout: '문서가 응답하지 않음' }[res.error] || (/timeout/.test(res.error || '') ? '문서 응답이 늦음 · 다시 눌러 보세요' : res.error) || '';
+    return { ok: !!res.ok, why };
+  }
+
+  // HTML 문단을 문서 모델 본문 위치에 차례로 맞춘다(같은 문구가 여러 번 나와도 순서대로 짝지어 [위치]가 정확해진다)
+  function mapParagraphOffsets(paragraphs, modelText) {
+    const out = new Array(paragraphs.length).fill(-1);
+    let pos = 0;
+    for (const p of paragraphs) {
+      const key = p.text.replace(/\s+/g, ' ').trim().slice(0, 24);
+      if (!key || !modelText) continue;
+      let at = modelText.indexOf(key, pos);
+      if (at === -1 || at - pos > 20000) {
+        // 앞부분이 모델과 조금 다르면(머리 기호 등) 가운데 몇 글자로 다시 찾는다
+        const mid = key.slice(Math.floor(key.length / 3), Math.floor(key.length / 3) + 10);
+        const m = mid.length >= 4 ? modelText.indexOf(mid, pos) : -1;
+        at = m !== -1 && m - pos <= 20000 ? Math.max(pos, m - Math.floor(key.length / 3)) : -1;
+      }
+      if (at !== -1) {
+        out[p.i] = at;
+        pos = at + 1;
+      }
+    }
+    return out;
+  }
+
+  async function formatCheckDoc(card, agent, instruction) {
+    const D = globalThis.ToytypeDocTools;
+    const name = '에이전트 ' + (agent + 1);
+    setWorking(card, agent, name);
+    const msg = agentMsg(agent, name + ' · ' + card.doc.name + ' · 서식 점검');
+    msg.entry.docId = card.doc.id;
+    const flush = text => {
+      msg.text.textContent = text;
+      msg.entry.text = text;
+      msg.entry.pending = false;
+      saveLog();
+    };
+    try {
+      let summary;
+      try {
+        // 글꼴·크기는 HTML export가 화면과 같다(DOCX는 한글 섞인 줄의 글꼴을 자리표시용으로 내보낸다)
+        const a = session.authuser > 0 ? 'u/' + session.authuser + '/' : '';
+        // 칸에 보이는 문서 탭만 내보낸다(탭이 여럿이면 전체 export와 편집기 본문이 어긋나 위치를 못 찾는다)
+        const info = await rpc(card, 'tabInfo', {}, 8000);
+        const tab = info && info.ok && /^t\.[\w-]+$/.test(info.tab || '') ? info.tab : '';
+        const res = await fetch('https://docs.google.com/document/' + a + 'd/' + encodeURIComponent(card.doc.id) + '/export?format=html' + (tab ? '&tab=' + encodeURIComponent(tab) : ''));
+        if (!res.ok) throw new Error('export ' + res.status);
+        summary = D.summarizeHtmlFormat(await res.text());
+      } catch (e) {
+        flush('문서 서식을 읽지 못했습니다 (' + (e && e.message || e) + ')');
+        return 0;
+      }
+      const ruleFindings = D.formatRuleFindings(summary);
+      const stats = formatStats(summary);
+      const textRes = await rpc(card, 'getText', {}, 30000);
+      const modelText = textRes.ok ? textRes.text : '';
+      const paraText = i => (summary.paragraphs[i] ? summary.paragraphs[i].text : '');
+      const offsets = mapParagraphOffsets(summary.paragraphs, modelText);
+      // [위치]는 모델 본문에서 그 문단 자리의 실제 글자로 찾는다
+      const findOf = i => {
+        const at = offsets[i];
+        if (at >= 0) { const line = modelText.slice(at, modelText.indexOf('\n', at) === -1 ? undefined : modelText.indexOf('\n', at)); return line.slice(0, 40); }
+        return paraText(i).replace(/\s+/g, ' ').trim().slice(0, 40);
+      };
+      const hintOf = i => (offsets[i] >= 0 ? offsets[i] : 0);
+      // 설명 속 "#124" 같은 문단 번호를 눌러 갈 수 있게 그 문단 자리를 함께 적어 둔다
+      const refsOf = text => {
+        const out = {};
+        for (const m of String(text || '').matchAll(/#(\d{1,5})/g)) {
+          const i = Number(m[1]);
+          if (summary.paragraphs[i] && !out[i]) out[i] = { find: findOf(i), hint: hintOf(i) };
+        }
+        return out;
+      };
+      // [위치]·[적용]이 문단 첫머리가 아니라 문제 문구 자체로 가게 한다
+      const placeOf = (i, quote) => {
+        if (i < 0) return { find: '', hint: 0 };
+        const ptext = paraText(i);
+        const q = String(quote || '');
+        const qi = q ? ptext.indexOf(q) : -1;
+        if (qi !== -1) return { find: q, hint: hintOf(i) + qi, quote: q, paraFind: findOf(i), paraHint: hintOf(i) };
+        return { find: findOf(i), hint: hintOf(i), paraFind: findOf(i), paraHint: hintOf(i) };
+      };
+      const rows = [];
+      const edits = [];
+      for (const f of ruleFindings) {
+        if (f.edit && f.at >= 0) {
+          const ptext = paraText(f.at);
+          const hint = hintOf(f.at) + Math.max(0, ptext.indexOf(f.edit.src));
+          edits.push({ src: f.edit.src, dst: f.edit.dst, reason: f.issue + (f.suggestion ? ' · ' + f.suggestion : ''), category: f.category, hint });
+          continue;
+        }
+        rows.push(Object.assign({ rule: true, category: f.category, issue: f.issue, suggestion: f.suggestion, at: f.at, text: f.text, fix: f.fix || null }, placeOf(f.at, f.quote)));
+      }
+      renderFormatRows(msg, card, rows);
+      msg.entry.format = rows.slice();
+      flush('규칙으로 ' + rows.length + '곳을 찾았습니다 · AI가 일관성을 보는 중…');
+
+      // 요약본을 구간으로 나눠 AI에게 보낸다
+      const lines = D.formatTranscript(summary, 0, summary.paragraphs.length).split('\n');
+      const sections = [];
+      let cur = '';
+      for (const line of lines) {
+        if (cur && cur.length + line.length > FORMAT_SECTION_CHARS) { sections.push(cur); cur = ''; }
+        cur += (cur ? '\n' : '') + line;
+      }
+      if (cur) sections.push(cur);
+      const notes = [];
+      for (let k = 0; k < sections.length && !stopRequested; k++) {
+        const requestId = 'format-' + card.doc.id.slice(0, 8) + '-' + k + '-' + Date.now().toString(36);
+        liveRequests.add(requestId);
+        const res = await send({ type: 'typo:aiBridge', action: 'formatCheck', requestId, payload: { timeoutMs: AI_TIMEOUT_MS, document: {
+          title: card.doc.name, transcript: sections[k], stats, instruction: instruction || '', decisions: decisions(),
+          ruleFindings: ruleFindings.map(f => ({ at: f.at, issue: f.issue }))
+        } } });
+        liveRequests.delete(requestId);
+        if (!res || !res.ok) {
+          if (res && res.error === 'external_features_disabled') { notes.push('AI 기능이 꺼져 있어 규칙 점검만 했습니다'); break; }
+          notes.push('구간 ' + (k + 1) + ' 판단 실패(' + (res && (res.message || res.error) || '오류') + ')');
+          continue;
+        }
+        if (res.note) notes.push(res.note);
+        collectQuestions(res.questions);
+        for (const f of res.findings || []) {
+          const ptext = paraText(f.at);
+          if (f.source && ptext.includes(f.source)) {
+            // 글자만 바꾸면 되는 것은 일반 제안처럼 [적용]으로 고칠 수 있게 한다
+            const hint = hintOf(f.at) + Math.max(0, ptext.indexOf(f.source));
+            edits.push({ src: f.source, dst: f.replacement || '', reason: f.issue + (f.suggestion ? ' · ' + f.suggestion : ''), category: f.category, hint, refs: refsOf(f.issue + ' ' + f.suggestion) });
+          } else {
+            rows.push(Object.assign({ rule: false, category: f.category, issue: f.issue, suggestion: f.suggestion, at: f.at, text: ptext.slice(0, 80), fix: f.fix || null, refs: refsOf(f.issue + ' ' + f.suggestion) }, placeOf(f.at, f.quote)));
+          }
+        }
+        msg.entry.format = rows.slice();
+        renderFormatRows(msg, card, rows);
+        flush('규칙 ' + ruleFindings.length + '곳 · AI ' + Math.max(0, rows.length + edits.length - ruleFindings.length) + '곳 · 구간 ' + (k + 1) + '/' + sections.length);
+      }
+      if (edits.length) {
+        msg.entry.edits = edits;
+        renderEdits(msg, card, edits, false);
+        card.counts.proposed += edits.length;
+        updateMeta(card);
+      }
+      flush((notes.length ? notes.slice(0, 3).join(' ') + '\n' : '') + '서식·표기 지적 ' + rows.length + '곳' + (edits.length ? ' · 글자로 바로 고칠 수 있는 것 ' + edits.length + '곳([적용])' : ''));
+      return rows.length + edits.length;
+    } finally {
+      setWorking(card, null);
+    }
+  }
+
+  async function runFormatCheck(instruction) {
+    if (busy) return;
+    const targets = cards.filter(c => c.pick.checked);
+    if (!targets.length) {
+      systemMsg('점검할 문서를 하나 이상 고르세요', true);
+      return;
+    }
+    userMsg('서식 점검' + (instruction ? '\n' + instruction : ''));
+    runQuestions = [];
+    currentTurn = 'turn-' + Date.now().toString(36);
+    const turn = currentTurn;
+    stopRequested = false;
+    setBusy(true);
+    for (const c of targets) { c.pinned = true; clearTimeout(c.unloadTimer); }
+    const agents = Math.min(Number($('g-conc').value) || 3, targets.length);
+    let next = 0;
+    let total = 0;
+    let finished = 0;
+    setProgress(0, targets.length);
+    await Promise.all(Array.from({ length: agents }, async (_, a) => {
+      while (next < targets.length && !stopRequested) {
+        const card = targets[next++];
+        if (card.unloaded) loadCard(card);
+        total += await formatCheckDoc(card, a, instruction);
+        setProgress(++finished, targets.length);
+      }
+    }));
+    for (const c of targets) { c.pinned = false; scheduleUnload(c); }
+    history.push({ instruction: '서식 점검' + (instruction ? ': ' + instruction.slice(0, 200) : ''), result: '지적 ' + total + '곳', notes: [], changes: [] });
+    history = history.slice(-HISTORY_TURNS);
+    if (sessionId) chrome.storage.local.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
+    const endMsg = systemMsg((stopRequested ? '멈췄습니다 · ' : '서식 점검 끝 · ') + '지적 ' + total + '곳');
+    if (pendingEdits(turn).length) {
+      logEntries[logEntries.length - 1].turnApply = turn;
+      attachTurnApply(endMsg, turn);
+      saveLog();
+    }
+    currentTurn = '';
+    setBusy(false);
+    showRunQuestions({ kind: 'format', extra: instruction || '' });
   }
 
   function squashText(t) {
@@ -1463,7 +1911,49 @@
     return pool;
   }
 
+  // ---------- 대상 문서 칩 ----------
+  // 채팅 입력창 위에 문서마다 칩을 두고, 켜진 칩(=칸 머리의 체크)이 에이전트가 맡을 문서다.
+  function renderTargets() {
+    const box = $('g-targets');
+    if (!box) return;
+    box.textContent = '';
+    const on = cards.filter(c => c.pick.checked).length;
+    const all = el('button', 'g-target g-target-all' + (on === cards.length ? ' g-on' : ''), '@all');
+    all.type = 'button';
+    all.title = on === cards.length ? '전부 빼기' : '전부 넣기';
+    all.addEventListener('click', () => setAllPicks(on !== cards.length));
+    box.appendChild(all);
+    for (const c of cards) {
+      const chip = el('button', 'g-target' + (c.pick.checked ? ' g-on' : ''), c.doc.name || c.doc.id);
+      chip.type = 'button';
+      chip.title = (c.doc.name || '') + (c.pick.checked ? ' · 눌러서 빼기' : ' · 눌러서 넣기');
+      chip.addEventListener('click', () => {
+        c.pick.checked = !c.pick.checked;
+        saveLog();
+        renderTargets();
+      });
+      box.appendChild(chip);
+    }
+  }
+
+  function setAllPicks(on) {
+    for (const c of cards) c.pick.checked = on;
+    saveLog();
+    renderTargets();
+  }
+
+  // 입력창에 @all(@전체)을 쓰면 전부 선택, 그 말을 지우면 전부 해제
+  const ALL_MENTION = /@(all|전체)(?![\w가-힣])/i;
+  let hadAllMention = false;
+  function watchAllMention(input) {
+    const has = ALL_MENTION.test(input.value);
+    if (has && !hadAllMention) setAllPicks(true);
+    else if (!has && hadAllMention) setAllPicks(false);
+    hadAllMention = has;
+  }
+
   function persistDocs() {
+    renderTargets();
     session.docs = cards.map(c => c.doc);
     $('g-sub').textContent = '문서 ' + cards.length + '개';
     document.title = '격자 보기 · 문서 ' + cards.length + '개';
@@ -1737,23 +2227,120 @@
     for (const c of cards) c.readyPromise = waitReady(c).then(ok => { trace('ready', c.doc.name + ' ' + ok); return ok; });
     for (const c of cards) observeCard(c);
 
-    const presets = $('g-presets');
-    for (const [label, text] of PRESETS) {
-      const chip = el('button', 'g-chip', label);
-      chip.type = 'button';
-      chip.title = text;
-      chip.addEventListener('click', () => runInstruction(text));
-      presets.appendChild(chip);
-    }
     const input = $('g-input');
+    // ---------- / 명령 ----------
+    // 기능 템플릿은 입력창에 /를 쳐서 부른다. 고른 명령은 입력창 안에 버튼 모양 꼬리표로 들어가고 여러 개 쌓을 수 있다.
+    // 보내면(⌘Enter) 꼬리표 명령을 차례로 실행하고, 입력창에 쓴 말은 추가 지시로 함께 넘긴다.
+    const COMMANDS = [
+      { name: '서식 점검', desc: '요소별 서식·표기 일관성, 첨자, 코너로 뺄 본문', kind: 'format' },
+      { name: '댓글 반영', desc: '문서에 남은 댓글·제안을 골라 반영', kind: 'review' }
+    ].concat(PRESETS.map(([label, text]) => ({ name: label, desc: text, kind: 'text', text })));
+    const slash = $('g-slash');
+    const pills = $('g-cmds');
+    let picked = [];
+    let slashItems = [];
+    let slashIndex = 0;
+    const squash = t => String(t || '').replace(/\s+/g, '').toLowerCase();
+    // 커서 바로 앞의 "/검색어"
+    const slashQuery = () => {
+      const before = input.value.slice(0, input.selectionStart == null ? input.value.length : input.selectionStart);
+      const m = /(^|\s)\/(\S*)$/.exec(before);
+      return m ? { q: m[2], from: before.length - m[2].length - 1 } : null;
+    };
+    const hideSlash = () => { slash.hidden = true; slashItems = []; };
+    const renderPills = () => {
+      pills.textContent = '';
+      pills.hidden = !picked.length;
+      for (const c of picked) {
+        const pill = el('span', 'g-cmd-pill');
+        pill.title = c.desc;
+        const x = el('button', 'g-cmd-x', '×');
+        x.type = 'button';
+        x.title = '빼기';
+        x.addEventListener('click', () => { picked = picked.filter(p => p !== c); renderPills(); input.focus(); });
+        pill.append(el('span', '', '/' + c.name), x);
+        pills.appendChild(pill);
+      }
+    };
+    const pickCommand = cmd => {
+      const sq = slashQuery();
+      if (sq) {
+        const end = sq.from + 1 + sq.q.length;
+        input.value = input.value.slice(0, sq.from) + input.value.slice(end);
+        input.setSelectionRange(sq.from, sq.from);
+      }
+      if (!picked.includes(cmd)) picked.push(cmd);
+      hideSlash();
+      renderPills();
+      input.focus();
+    };
+    const renderSlash = () => {
+      const sq = slashQuery();
+      if (!sq) return hideSlash();
+      const q = squash(sq.q);
+      slashItems = COMMANDS.filter(c => !picked.includes(c) && (!q || squash(c.name).includes(q)));
+      if (!slashItems.length) return hideSlash();
+      slashIndex = Math.min(slashIndex, slashItems.length - 1);
+      slash.textContent = '';
+      slashItems.forEach((c, i) => {
+        const row = el('div', 'g-slash-item' + (i === slashIndex ? ' g-current' : ''));
+        row.append(el('span', 'g-slash-name', '/' + c.name), el('span', 'g-slash-desc', c.desc));
+        row.addEventListener('mousedown', ev => { ev.preventDefault(); pickCommand(c); });
+        slash.appendChild(row);
+      });
+      slash.hidden = false;
+    };
+    // 꼬리표 명령 실행: 글 지시 템플릿은 한 번의 지시로 묶고, 서식 점검·댓글 반영은 그다음에 차례로
+    const runPicked = async (cmds, extra) => {
+      const texts = cmds.filter(c => c.kind === 'text');
+      if (texts.length) await runInstruction(texts.map(c => c.text).join('\n') + (extra ? '\n' + extra : ''));
+      if (cmds.some(c => c.kind === 'format')) await runFormatCheck(extra);
+      if (cmds.some(c => c.kind === 'review')) {
+        if (extra && !texts.length) reviewInstruction = extra;
+        $('g-review').click();
+      }
+    };
     $('g-compose').addEventListener('submit', ev => {
       ev.preventDefault();
-      const text = input.value.trim();
-      if (!text || busy) return;
+      if (busy) return;
+      // @all은 문서 선택용이라 에이전트에게 보내는 지시에서는 뺀다
+      const text = input.value.replace(new RegExp(ALL_MENTION.source, 'gi'), '').trim();
+      const cmds = picked.slice();
+      if (!text && !cmds.length) return;
       input.value = '';
-      runInstruction(text);
+      hadAllMention = false;
+      picked = [];
+      renderPills();
+      hideSlash();
+      if (cmds.length) runPicked(cmds, text);
+      else runInstruction(text);
     });
+    input.addEventListener('input', () => { watchAllMention(input); slashIndex = 0; renderSlash(); });
+    input.addEventListener('click', renderSlash);
+    input.addEventListener('blur', () => setTimeout(hideSlash, 150));
+    renderTargets();
     input.addEventListener('keydown', ev => {
+      if (!slash.hidden && slashItems.length) {
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          slashIndex = (slashIndex + (ev.key === 'ArrowDown' ? 1 : -1) + slashItems.length) % slashItems.length;
+          renderSlash();
+          return;
+        }
+        if ((ev.key === 'Enter' && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) || ev.key === 'Tab') {
+          ev.preventDefault();
+          pickCommand(slashItems[slashIndex]);
+          return;
+        }
+        if (ev.key === 'Escape') { hideSlash(); return; }
+      }
+      // 빈 입력창에서 Backspace는 마지막 꼬리표를 뺀다
+      if (ev.key === 'Backspace' && picked.length && input.selectionStart === 0 && input.selectionEnd === 0) {
+        ev.preventDefault();
+        picked.pop();
+        renderPills();
+        return;
+      }
       if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
         ev.preventDefault();
         $('g-compose').requestSubmit();

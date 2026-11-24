@@ -2769,17 +2769,54 @@ async function generateLengthAdjustment(body) {
 const PROOFREAD_CHUNK_MAX_CHARS = 12000;
 const PROOFREAD_CHUNK_MAX_FINDINGS = 40;
 
+// ---------- 애매한 선택은 묻기 ----------
+// 같은 대상을 두고 그럴듯한 방식이 둘 이상이면(용어 표기 A/B, 코너 이름, 대소문자 등) AI가 고르지 말고 질문으로 돌려준다.
+// 편집자가 답한 결정(decisions)은 이후 요청마다 함께 보내 다시 묻지 않고 그대로 따르게 한다.
+const MAX_QUESTIONS = 8;
+
+function decisionsLines(decisions) {
+  const list = (Array.isArray(decisions) ? decisions : []).map(d => String(d || '').trim()).filter(Boolean).slice(0, 40);
+  if (!list.length) return [];
+  return ['Editor decisions already made for this manuscript (follow them strictly, never ask about these again):', ...list.map(d => '- ' + d.slice(0, 300))];
+}
+
+function askInsteadLines() {
+  return [
+    '- If the right choice is genuinely ambiguous — two or more plausible conventions are each used in the manuscript (e.g. term spelling A vs B, corner name A vs B, capitalization of original terms, bracket style) and no editor decision covers it — do NOT pick one and do NOT make findings for it. Instead add a question: "questions":[{"topic":"short topic","question":"one Korean sentence","options":["A","B"]}]. Options are the concrete forms to choose from (2-4). Ask at most ' + MAX_QUESTIONS + ' questions, only important ones.'
+  ];
+}
+
+export function parseQuestions(response) {
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(String(response || ''));
+  } catch (_) {
+    parsed = null;
+  }
+  const out = [];
+  for (const q of parsed && Array.isArray(parsed.questions) ? parsed.questions : []) {
+    const question = String(q && q.question || '').trim();
+    const options = (Array.isArray(q && q.options) ? q.options : []).map(o => String(o || '').trim()).filter(Boolean).slice(0, 4);
+    if (!question || options.length < 2) continue;
+    out.push({ topic: String(q.topic || '').trim().slice(0, 80) || question.slice(0, 40), question: question.slice(0, 300), options: options.map(o => o.slice(0, 120)) });
+    if (out.length >= MAX_QUESTIONS) break;
+  }
+  return out;
+}
+
 export function buildProofreadChunkPrompt(document) {
   const text = String(document.text || '').slice(0, PROOFREAD_CHUNK_MAX_CHARS);
   const instruction = String(document.instruction || '').trim().slice(0, 2000);
   return [
     'You are a Korean IT-book copy editor working on ONE section of a manuscript, as one of several editing agents.',
-    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}]}. No markdown.',
+    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"questions":[]}. No markdown.',
+    ...decisionsLines(document.decisions),
     instruction
       ? 'The editor-in-chief asked (follow this; it overrides the default focus below, but never touch code, identifiers, URLs): <<<' + instruction + '>>>'
       : 'Task: general proofreading of this section.',
     ...chunkHistoryLines(document.history),
     '- note: one short Korean sentence telling the editor-in-chief what you did in this section (e.g. "존댓말 3곳을 통일했습니다"). If nothing to change, say so briefly.',
+    ...askInsteadLines(),
     untrustedManuscriptDataInstructions(),
     projectSpecificRuleInstructions(),
     manuscriptNotationInstructions(),
@@ -2878,6 +2915,7 @@ async function generateProofreadChunk(body) {
     provider,
     note: parseProofreadChunkNote(run.response),
     findings: parseProofreadChunkFindings(run.response, text.slice(0, PROOFREAD_CHUNK_MAX_CHARS)),
+    questions: parseQuestions(run.response),
     elapsedMs: run.elapsedMs
   };
 }
@@ -2979,6 +3017,108 @@ async function generateReviewComments(body) {
     decisions: parseReviewDecisions(run.response, items),
     elapsedMs: run.elapsedMs
   };
+}
+
+// ---------- 서식 점검 ----------
+// 문단마다 [요소 스타일 크기 글꼴] 꼬리표가 붙은 요약본을 보고, 요소별 표기·서식의 일관성과
+// 코너 분류·흐름 같은 판단이 필요한 문제를 찾는다. 규칙으로 이미 잡은 것은 stats로 함께 받는다.
+const FORMAT_CHECK_MAX_CHARS = 14000;
+const FORMAT_CHECK_MAX_FINDINGS = 40;
+const FORMAT_CATEGORIES = ['서식', '표기', '코너', '첨자', '흐름', '기타'];
+
+export function buildFormatCheckPrompt(document) {
+  const transcript = String(document.transcript || '').slice(0, FORMAT_CHECK_MAX_CHARS);
+  const instruction = String(document.instruction || '').trim().slice(0, 1500);
+  return [
+    'You are the production editor of a Korean IT book. Check formatting and notation CONSISTENCY of one section of a Google Docs manuscript.',
+    'Return only one JSON object: {"note":"...","findings":[{"at":123,"category":"...","issue":"...","suggestion":"...","source":"...","replacement":"..."}],"questions":[]}. No markdown.',
+    ...decisionsLines(document.decisions),
+    instruction ? 'The editor-in-chief added (follow this): <<<' + instruction + '>>>' : '',
+    untrustedManuscriptDataInstructions(),
+    '',
+    'Each manuscript line is one paragraph: "#<id> [<element> <style> <size> <font> <box/table> <list>] text". Elements: h1-h5 headings, body, code (consecutive code lines collapsed), fence (``` line), note (NOTE/팁), prompt, ai (AI answer), corner (paragraph starting with a [bracket title]), title.',
+    'House conventions of this publisher (judge against these, and against what the manuscript itself does most often):',
+    '- Notes/tips start with <NOTE> and use a smaller font than body text. Arrows are always ➝.',
+    '- Code blocks are wrapped in ``` fences and use one monospace font and one size throughout.',
+    '- Prompts the reader types to an AI are marked [프롬프트]; AI answers are wrapped as [ai] ... [/ai]. The same marker spelling everywhere.',
+    '- Corners (side boxes) start with a bracket title like [1:1 코칭] 제목 or [경고]. Each corner type must match its nature (warning vs coaching vs tip), and the same type must be named and formatted the same way every time.',
+    '- Headings follow the paragraph style preset (제목1 25pt, 제목2 16pt, 제목3 14pt, 제목4 12pt, 제목5 10pt; body 10pt).',
+    '- Superscript/subscript must be correct (exponents, units like cm², footnote marks); Korean text must not be superscripted.',
+    '- In the transcript, ^(x) means x is ALREADY superscript and _(x) means ALREADY subscript. Do not report those as missing.',
+    '- This publisher writes the original-language term as superscript right after the Korean term (원어 병기), e.g. 경계^(asymptotical), 스택^(stack). That is correct house style — only report it when the same kind of term is written differently elsewhere (plain parentheses vs superscript, capitalization).',
+    'Find:',
+    '- the same element written or formatted in different ways (markers, brackets, sizes, fonts, box vs no box);',
+    '- corners whose title/type does not fit their content, or mixed naming for the same kind of corner;',
+    '- body passages that break the flow and are low in importance — suggest moving them into a fitting corner (category 흐름);',
+    '- broken superscript/subscript and notation slips.',
+    'Rules:',
+    '- at is the paragraph id (#number) where the problem is. quote: the exact 2-30 characters inside that paragraph where the problem is, copied from the transcript text without the ^( ) _( ) marks (always give it).',
+    '- category: one of ' + FORMAT_CATEGORIES.join(', ') + '.',
+    '- issue and suggestion: one short Korean sentence each.',
+    '- If the fix is a pure text change inside that paragraph (e.g. a marker spelling), also give source (copied exactly from that paragraph, 2-40 chars) and replacement.',
+    '- If the fix is a formatting change of the whole paragraph, give fix: {"type":"fontSize","value":10} or {"type":"fontFamily","value":"Arimo"} (use sizes/fonts that the manuscript itself uses for that element). For superscript/subscript, give fix: {"type":"script","kind":"sup"|"sub","text":"2","on":true|false} where text is the exact characters inside that paragraph and on=false means remove the script. Otherwise omit fix (e.g. moving content into a corner needs a human).',
+    '- Do not report the items already listed in RULE_FINDINGS. Do not report spelling/grammar (other tools do that).',
+    `- At most ${FORMAT_CHECK_MAX_FINDINGS} findings, most important first. If nothing is wrong, return {"findings":[]}.`,
+    '- note: one short Korean sentence on the overall consistency of this section.',
+    ...askInsteadLines(),
+    '',
+    'Manuscript-wide statistics (all sections):',
+    JSON.stringify(document.stats || {}).slice(0, 3000),
+    'RULE_FINDINGS (already reported):',
+    JSON.stringify((Array.isArray(document.ruleFindings) ? document.ruleFindings : []).slice(0, 40)).slice(0, 3000),
+    '',
+    '<<<TOYTYPE_FORMAT_TRANSCRIPT',
+    transcript,
+    'TOYTYPE_FORMAT_TRANSCRIPT'
+  ].filter(line => line !== '').join('\n');
+}
+
+export function parseFormatFindings(response) {
+  let parsed = null;
+  try {
+    parsed = extractJsonObject(String(response || ''));
+  } catch (_) {
+    parsed = null;
+  }
+  const out = [];
+  for (const f of parsed && Array.isArray(parsed.findings) ? parsed.findings : []) {
+    const at = Number(f && f.at);
+    const issue = String(f && f.issue || '').trim();
+    if (!Number.isInteger(at) || at < 0 || !issue) continue;
+    const category = FORMAT_CATEGORIES.includes(f.category) ? f.category : '기타';
+    const item = { at, category, issue: issue.slice(0, 300), suggestion: String(f.suggestion || '').slice(0, 300) };
+    const quote = String(f.quote || '').replace(/[\^_]\(([^)]*)\)/g, '$1').trim();
+    if (quote && quote.length <= 60) item.quote = quote;
+    const source = String(f.source || '');
+    const replacement = typeof f.replacement === 'string' ? f.replacement : '';
+    if (source && source !== replacement) {
+      item.source = source.slice(0, 200);
+      item.replacement = replacement.slice(0, 200);
+    }
+    const fix = f.fix && typeof f.fix === 'object' ? f.fix : null;
+    if (fix && fix.type === 'fontSize' && Number(fix.value) >= 6 && Number(fix.value) <= 40) item.fix = { type: 'fontSize', value: Number(fix.value) };
+    else if (fix && fix.type === 'fontFamily' && /^[\w .-]{2,40}$/.test(String(fix.value || ''))) item.fix = { type: 'fontFamily', value: String(fix.value) };
+    else if (fix && fix.type === 'script' && (fix.kind === 'sup' || fix.kind === 'sub') && String(fix.text || '').length >= 1 && String(fix.text).length <= 20) {
+      item.fix = { type: 'script', kind: fix.kind, text: String(fix.text), on: fix.on !== false };
+    }
+    out.push(item);
+    if (out.length >= FORMAT_CHECK_MAX_FINDINGS) break;
+  }
+  return out;
+}
+
+async function generateFormatCheck(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const document = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!String(document.transcript || '').trim()) throw new HttpError(400, 'document.transcript is required');
+  const run = await runProvider(provider, buildFormatCheckPrompt(document), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) {
+    throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  }
+  return { ok: true, provider, note: parseProofreadChunkNote(run.response), findings: parseFormatFindings(run.response), questions: parseQuestions(run.response), elapsedMs: run.elapsedMs };
 }
 
 const DIAGRAM_OCR_SCRIPT = path.join(PROJECT_ROOT, 'tools', 'ocr_text_boxes.swift');
@@ -3970,6 +4110,10 @@ async function route(req, res) {
   }
   if (url.pathname === '/terms' || url.pathname === '/ai/terms') {
     await sendLoggedAiJson(res, 'Local terms', body, generateTermConsistency);
+    return;
+  }
+  if (url.pathname === '/ai/format-check') {
+    await sendLoggedAiJson(res, 'AI format check', body, generateFormatCheck);
     return;
   }
   if (url.pathname === '/ai/review-comments') {

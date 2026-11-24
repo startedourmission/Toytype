@@ -4128,6 +4128,19 @@
     return { handled };
   }
 
+  // 위첨자 ⌘. / 아래첨자 ⌘, (윈도우는 Ctrl) — 선택 영역의 첨자를 켜고 끈다
+  async function styleToggleScript(kind) {
+    const target = styleKeyboardTarget();
+    if (!target) throw new Error('Docs 키보드 입력 대상을 찾지 못했습니다');
+    try { target.focus(); } catch (e) {}
+    const mac = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+    const key = kind === 'sub' ? ',' : '.';
+    const code = kind === 'sub' ? 188 : 190;
+    const handled = styleSynthKey(target, 'keydown', key, code, 0, mac ? { metaKey: true } : { ctrlKey: true });
+    await delay(300);
+    return { handled };
+  }
+
   function stylePresetOp(data) {
     const op = data && data.op;
     if (op === 'menu') return styleRunHeadingMenuCommand(String(data.label || ''), data.update === true);
@@ -4140,6 +4153,8 @@
     if (op === 'typeText') return styleTypePlainText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();
     if (op === 'undo') return styleSendUndo();
+    // 요청 메시지의 kind는 메시지 종류 표시라 첨자 종류는 scriptKind로 받는다
+    if (op === 'scriptToggle') return styleToggleScript(data.scriptKind === 'sub' ? 'sub' : 'sup');
     return Promise.reject(new Error('unknown style preset op: ' + op));
   }
 

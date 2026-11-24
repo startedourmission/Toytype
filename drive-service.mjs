@@ -261,6 +261,14 @@ export function handleDriveMessage(msg, sendResponse, sender) {
     // 개발판 진단: 저장된 격자 세션 요약(본문은 빼고 개수만)
     if ('update_url' in chrome.runtime.getManifest()) { sendResponse({ ok: false }); return; }
     chrome.storage.local.get(null).then(all => {
+      if (msg.latestLog) {
+        // 개발판 진단: 가장 최근에 쓴 격자 대화의 채팅 기록(마지막 몇 개 메시지)
+        const sessions = Object.keys(all).filter(k => /^grid:[\w-]+$/.test(k)).sort((a, b) => (all[b].touchedAt || 0) - (all[a].touchedAt || 0));
+        const key = sessions[0];
+        const log = key && all[key + ':log'];
+        sendResponse({ ok: true, key, docs: key ? all[key].docs : [], entries: log ? log.entries.slice(-Number(msg.latestLog || 6)) : [] });
+        return;
+      }
       const out = Object.keys(all).filter(k => k.startsWith('grid:')).map(k => {
         const v = all[k];
         if (k.endsWith(':log')) return [k, 'entries', v && v.entries ? v.entries.length : -1];
