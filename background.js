@@ -511,7 +511,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'typo:gridFrameReport') {
     gridFrameReports.unshift(Object.assign({ at: Date.now(), frameUrl: String(sender && sender.url || '').slice(0, 120) }, msg.report || {}));
-    gridFrameReports.length = Math.min(gridFrameReports.length, 20);
+    gridFrameReports.length = Math.min(gridFrameReports.length, 120);
     sendResponse({ ok: true });
     return;
   }

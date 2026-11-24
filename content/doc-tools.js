@@ -144,6 +144,30 @@
     return { src: s, dst: d, start: at, end: at + s.length };
   }
 
+  // 통째 삭제(dst가 비어 있음)는 덮어 입력할 글자가 없다. 문서 본문에서 이웃 글자를 빌려 함께 덮는다.
+  // - 문단 전체 삭제: 앞 문단 끝 글자 + 줄바꿈 + 문단을 그 끝 글자로 덮는다 (앞 문단 서식이 남는다)
+  // - 문장 삭제: 뒤 글자(줄 끝이면 앞 글자)를 함께 덮고, 앞뒤가 모두 공백이면 공백 하나를 같이 지운다
+  function coverDeletion(text, src, start) {
+    text = String(text || '');
+    src = String(src || '');
+    start = Number(start);
+    if (!src || !Number.isFinite(start) || text.slice(start, start + src.length) !== src) return null;
+    const end = start + src.length;
+    const before = text[start - 1] || '';
+    const after = text[end] || '';
+    const solid = c => !!c && c !== '\n';
+    if ((before === '\n' || !before) && (after === '\n' || !after)) {
+      if (solid(text[start - 2]) && before === '\n') return { src: text[start - 2] + '\n' + src, dst: text[start - 2], start: start - 2 };
+      if (after === '\n' && solid(text[end + 1])) return { src: src + '\n' + text[end + 1], dst: text[end + 1], start };
+      return null;
+    }
+    if (before === ' ' && after === ' ') return { src: ' ' + src + ' ', dst: ' ', start: start - 1 };
+    if (solid(after)) return { src: src + after, dst: after, start };
+    if (before === ' ' && solid(text[start - 2])) return { src: text[start - 2] + ' ' + src, dst: text[start - 2], start: start - 2 };
+    if (solid(before)) return { src: before + src, dst: before, start: start - 1 };
+    return null;
+  }
+
   // DOCX export에서 댓글과 제안(변경 내용 추적)을 뽑는다. 구글 문서는 본문을 캔버스에 그려서
   // 댓글이 걸린 문구(앵커)와 앞뒤 문맥은 화면 DOM에 없다 — export의 commentRange·w:ins·w:del에서 읽는다.
   // Parser: 브라우저는 DOMParser, Node 테스트는 @xmldom/xmldom의 DOMParser를 넘긴다.
@@ -583,6 +607,7 @@
     formatTranscript,
     parseDocxReview,
     minimalEdit,
+    coverDeletion,
     normalizeTocLine,
     isFenceLine,
     isBadTocText,

@@ -159,3 +159,24 @@ test('서식 점검(HTML): 끝에 붙는 댓글 본문은 빼고, 고칠 방법(
   assert.deepEqual(size.fix, { type: 'fontSize', value: 10 });
   assert.deepEqual(f.find(x => /화살표/.test(x.issue)).edit, { src: '->', dst: '➝' });
 });
+
+test('통째 삭제: 문서의 이웃 글자를 빌려 덮어 입력할 글자를 만든다', () => {
+  const apply = (text, c) => text.slice(0, c.start) + c.dst + text.slice(c.start + c.src.length);
+  const cases = [
+    ['앞 문장. 지울 문장. 뒷 문장.', '지울 문장.', '앞 문장. 뒷 문장.'],         // 앞뒤 공백 → 공백 하나 남김
+    ['앞 문장.지울 문장.\n다음', '지울 문장.', '앞 문장.\n다음'],                // 줄 끝 → 앞 글자로 덮음
+    ['앞 문단\n지울 문단 전체\n다음 문단', '지울 문단 전체', '앞 문단\n다음 문단'], // 문단 통째 → 앞 문단 끝 글자+줄바꿈
+    ['지울 첫 문단\n다음 문단', '지울 첫 문단', '다음 문단'],                     // 첫 문단 → 다음 문단 첫 글자
+    ['힌트: 이것 끝', '힌트: ', '이것 끝']                                        // 뒤 글자로 덮음
+  ];
+  for (const [text, src, want] of cases) {
+    const c = T.coverDeletion(text, src, text.indexOf(src));
+    assert.ok(c && c.dst, src);
+    assert.equal(apply(text, c), want);
+    // minimalEdit을 거쳐도 덮을 글자가 남는다
+    const m = T.minimalEdit(c.src, c.dst, c.start);
+    assert.ok(m.dst.length > 0 && m.src.length > m.dst.length);
+    assert.equal(apply(text, m), want);
+  }
+  assert.equal(T.coverDeletion('다른 글', '없는 글', 0), null);
+});

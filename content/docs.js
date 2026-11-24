@@ -13,7 +13,8 @@
     isBadTocText,
     parseMarkdownExportHeadings,
     formatExtractedToc,
-    minimalEdit
+    minimalEdit,
+    coverDeletion
   } = globalThis.ToytypeDocTools;
   const DEFAULT_SETTINGS = {
     schemaVersion: 1,
@@ -6488,7 +6489,13 @@
   }
 
   function applyResolvedFindingFromContent(resolved, options) {
-    const finding = resolved.finding;
+    let finding = resolved.finding;
+    // 통째 삭제는 이웃 글자를 빌려 함께 덮어야 적용된다
+    if (finding && finding.src && !finding.dst) {
+      const text = options && typeof options.knownBeforeText === 'string' ? options.knownBeforeText : cachedText;
+      const cover = coverDeletion(text, finding.src, finding.start);
+      if (cover) finding = Object.assign({}, finding, cover, { end: cover.start + cover.src.length });
+    }
     // 달라지는 글자만 덮어써서 범위 안 위첨자·아래첨자 등 서식을 지킨다
     const narrow = Number.isFinite(Number(finding.start)) && Number(finding.end) - Number(finding.start) === String(finding.src || '').length
       ? minimalEdit(finding.src, finding.dst, finding.start)

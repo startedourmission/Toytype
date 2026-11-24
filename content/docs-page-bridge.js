@@ -1,6 +1,56 @@
 (function () {
   'use strict';
 
+  // 격자 칸 안에서만: 구글 문서가 커서·입력 상자를 보이려고 부르는 scrollIntoView·focus가 바깥 격자 페이지
+  // 스크롤까지 당긴다(같은 출처라 막히지 않는다). 그러면 격자가 밀리고 보이게 된 칸들이 줄줄이 다시 로드된다.
+  // 호출 직후 같은 틱에 바깥 조상 상자들의 스크롤을 되돌려, 화면이 그려지기 전에 원위치시킨다.
+  (function guardGridScroll() {
+    let host = null;
+    try {
+      if (window.parent !== window && window.parent.location.pathname.indexOf('/document/toytype-grid') === 0) host = window.frameElement;
+    } catch (_) { host = null; }
+    if (!host) return;
+    const ancestors = () => {
+      const list = [];
+      for (let p = host.parentElement; p; p = p.parentElement) list.push(p);
+      return list;
+    };
+    const wrap = (proto, name) => {
+      const orig = proto && proto[name];
+      if (typeof orig !== 'function' || orig.__ttGridGuard) return;
+      const guarded = function () {
+        const list = ancestors();
+        const pos = list.map(p => [p.scrollTop, p.scrollLeft]);
+        try {
+          return orig.apply(this, arguments);
+        } finally {
+          for (let i = 0; i < list.length; i++) {
+            if (list[i].scrollTop !== pos[i][0]) list[i].scrollTop = pos[i][0];
+            if (list[i].scrollLeft !== pos[i][1]) list[i].scrollLeft = pos[i][1];
+          }
+        }
+      };
+      guarded.__ttGridGuard = true;
+      proto[name] = guarded;
+    };
+    const patch = win => {
+      try {
+        wrap(win.Element.prototype, 'scrollIntoView');
+        wrap(win.Element.prototype, 'scrollIntoViewIfNeeded');
+        wrap(win.HTMLElement.prototype, 'focus');
+      } catch (_) { /* 다른 출처 프레임 */ }
+    };
+    patch(window);
+    // 입력을 받는 숨은 iframe 같은 같은 출처 자식 프레임도 감싼다(프레임 문서가 바뀌면 다시)
+    const patchFrames = () => {
+      for (const f of document.querySelectorAll('iframe')) {
+        try { if (f.contentWindow && f.contentWindow.document) patch(f.contentWindow); } catch (_) { /* 다른 출처 */ }
+      }
+    };
+    patchFrames();
+    setInterval(patchFrames, 1500);
+  })();
+
   function debugLogsEnabled() {
     try {
       return window.ToytypeDebug === true || window.localStorage.getItem('toytype:debug') === '1';

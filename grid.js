@@ -216,12 +216,32 @@
       pos = [el.scrollTop, el.scrollLeft];
     });
   }
+  // [위치]·#문단 링크처럼 사람이 칸으로 가라고 한 이동. 스크롤 고정이 되돌리지 않게 의도로 표시하고,
+  // 부드러운 스크롤은 도중에 다른 스크롤 보정에 끊기므로 바로 옮긴다.
+  function revealCard(card) {
+    const grid = $('g-grid');
+    const g = grid.getBoundingClientRect();
+    const r = card.root.getBoundingClientRect();
+    let top = grid.scrollTop;
+    if (r.top < g.top) top += r.top - g.top - 8;
+    else if (r.bottom > g.bottom) top += Math.min(r.top - g.top - 8, r.bottom - g.bottom + 8);
+    let left = grid.scrollLeft;
+    if (r.left < g.left) left += r.left - g.left - 8;
+    else if (r.right > g.right) left += Math.min(r.left - g.left - 8, r.right - g.right + 8);
+    markIntent();
+    grid.scrollTo({ top: Math.max(0, top), left: Math.max(0, left), behavior: 'auto' });
+    // 다른 작업이 붙잡아 둔 위치보다 사람의 이동이 우선 — 붙잡을 위치를 새 위치로 바꾼다
+    if (held) held.grid = [grid.scrollTop, grid.scrollLeft];
+  }
   const HOLD_OPS = new Set(['applyEdit', 'formatFix', 'docosAct', 'docosList', 'tabInfo', 'select', 'agentCursor', 'agentCursorRemove', 'probe', 'getText', 'digest']);
 
   // 내려 둔 칸에 일을 시키면 먼저 다시 불러온다 — 에이전트는 안 보이는 칸도 다룰 수 있어야 한다
   async function rpc(card, op, args, timeoutMs) {
     const hold = HOLD_OPS.has(op);
     if (hold) holdScroll();
+    // 작업 중에는 화면 밖이어도 칸을 그리게 한다(그리기를 건너뛴 편집기는 일부 동작이 멈출 수 있다)
+    const lightOp = op === 'ping' || op === 'digest';
+    if (!lightOp) { card.opDepth = (card.opDepth || 0) + 1; card.root.classList.add('g-op'); }
     let res;
     try {
       // 칸을 다시 불러오는 동안에도 격자 위치를 붙잡는다
@@ -229,6 +249,7 @@
       res = await rawRpc(card, op, args, timeoutMs);
     } finally {
       if (hold) releaseScroll();
+      if (!lightOp && --card.opDepth <= 0) { card.opDepth = 0; card.root.classList.remove('g-op'); }
     }
     if (!card.visible && op !== 'ping') scheduleUnload(card);
     return res;
@@ -342,16 +363,19 @@
   let syncRunning = false;
 
   // ---------- 안 보이는 칸 내려 두기 ----------
-  // 칸마다 편집기 하나라 무겁다. 화면 밖에 UNLOAD_AFTER_MS 넘게 있던 칸은 편집기를 내리고, 다시 보이면 불러온다.
-  // 에이전트가 맡은 칸(pinned)은 화면 밖이어도 내리지 않는다.
-  const UNLOAD_AFTER_MS = 10000;
+  // 칸마다 편집기 하나라 무겁다. 하지만 편집기를 다시 불러오는 비용이 띄워 두는 비용보다 훨씬 크므로,
+  // 화면 밖으로 나갔다고 바로 내리지 않는다. 띄운 편집기가 MAX_LIVE_FRAMES를 넘을 때만, 화면 밖에
+  // UNLOAD_AFTER_MS 넘게 있던 칸부터(가장 오래 안 본 칸부터) 내린다. 에이전트가 맡은 칸(pinned)은 내리지 않는다.
+  const UNLOAD_AFTER_MS = 30000;
   // 동시에 편집기를 띄워 두는 칸 수 상한. 넘으면 화면 밖 칸부터 바로 내린다(에이전트가 맡은 칸은 제외)
   const MAX_LIVE_FRAMES = 9;
 
   function trimLiveFrames() {
     const live = cards.filter(c => !c.unloaded);
     if (live.length <= MAX_LIVE_FRAMES) return;
-    const spare = live.filter(c => !c.visible && !c.pinned && !c.applying && !c.root.classList.contains('g-working'))
+    const now = Date.now();
+    // 방금 화면 밖으로 나간 칸은 다시 돌아올 수 있으니 남겨 둔다
+    const spare = live.filter(c => !c.visible && !c.pinned && !c.applying && !c.root.classList.contains('g-working') && now - (c.lastSeen || 0) >= UNLOAD_AFTER_MS)
       .sort((a, b) => (a.lastSeen || 0) - (b.lastSeen || 0));
     for (const c of spare.slice(0, live.length - MAX_LIVE_FRAMES)) unloadCard(c);
   }
@@ -382,7 +406,7 @@
   function scheduleUnload(card) {
     clearTimeout(card.unloadTimer);
     if (card.visible) return;
-    card.unloadTimer = setTimeout(() => { if (!card.visible) unloadCard(card); }, UNLOAD_AFTER_MS);
+    card.unloadTimer = setTimeout(() => { if (!card.visible) trimLiveFrames(); }, UNLOAD_AFTER_MS);
   }
 
   function observeCard(card) {
@@ -395,7 +419,11 @@
           if (card.visible) {
             card.lastSeen = Date.now();
             clearTimeout(card.unloadTimer);
-            if (card.unloaded) loadCard(card);
+            // 잠깐 스쳐 보인 칸까지 불러오지 않게, 잠시 보인 채로 있어야 불러온다
+            if (card.unloaded) {
+              clearTimeout(card.loadTimer);
+              card.loadTimer = setTimeout(() => { if (card.visible && card.unloaded) loadCard(card); }, 400);
+            }
             trimLiveFrames();
           } else {
             card.lastSeen = Date.now();
@@ -430,7 +458,8 @@
   }
 
   async function syncCard(card) {
-    if (!card.ready || card.unloaded || card.root.classList.contains('g-working')) return;
+    // 원본 탭과 맞춰 보기는 보이는 칸만 한다. 화면 밖 칸은 다시 보일 때 맞춘다
+    if (!card.ready || card.unloaded || !card.visible || card.root.classList.contains('g-working')) return;
     const origin = await send({ type: 'typo:gridOriginDigest', docId: card.doc.id });
     if (!origin.ok) { card.sync = null; return; }
     const mine = await rpc(card, 'digest', {}, 8000);
@@ -724,7 +753,7 @@
       const second = edit.state === 'applied' ? edit.src : edit.dst;
       show.disabled = true;
       // 그 문서 칸을 격자에서 보이게 하고, 내려 둔 칸이면 불러오는 동안 그렇다고 알린다
-      card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      revealCard(card);
       const prevState = edit.stateEl.textContent;
       const waiting = card.unloaded || !card.ready;
       if (waiting) edit.stateEl.textContent = '문서 불러오는 중…';
@@ -1339,7 +1368,7 @@
           syncAuthor();
         });
         row.addEventListener('click', () => {
-          it.card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          revealCard(it.card);
           for (const r of row.parentElement.querySelectorAll('.g-review-item.g-current')) r.classList.remove('g-current');
           row.classList.add('g-current');
           rpc(it.card, 'docosFocus', { sig: { index: it.index, type: it.type, author: it.author, body: it.body } }, 15000);
@@ -1440,7 +1469,7 @@
       a.type = 'button';
       a.title = '문서에서 이 문단으로 이동';
       a.addEventListener('click', () => {
-        card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        revealCard(card);
         rpc(card, 'locate', { src: ref.find, hint: ref.hint || 0 }, 15000);
       });
       node.appendChild(a);
@@ -1474,7 +1503,7 @@
         const go = el('button', 'g-link', '위치');
         go.type = 'button';
         go.addEventListener('click', async () => {
-          card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          revealCard(card);
           const res = await rpc(card, 'locate', { src: r.find, hint: r.hint || 0 }, 15000);
           if (!res.ok) state.textContent = '문서에서 찾지 못함';
           else if (res.approx) state.textContent = '이 문단을 찾지 못해 근처로 갔습니다';
@@ -1776,7 +1805,7 @@
         go.type = 'button';
         go.title = done ? '문서에서 반영한 곳으로 이동' : '문서에서 이 댓글·제안으로 이동';
         go.addEventListener('click', async () => {
-          card.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          revealCard(card);
           // 남은 카드는 카드를 눌러 이동하고, 처리돼 카드가 없으면 본문 문구로 찾는다
           let res = !done && r.sig ? await rpc(card, 'docosFocus', { sig: r.sig }, 15000) : { ok: false };
           if (!res.ok && r.find) res = await rpc(card, 'locate', { src: r.find, hint: r.hint || 0 }, 15000);

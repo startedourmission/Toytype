@@ -80,6 +80,8 @@ body {
 .g-card-open { padding: 1px 8px; }
 .g-card-full[aria-pressed="true"] { background: #e8f0fe; border-color: #aecbfa; color: #174ea6; }
 .g-frame-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+/* 화면 밖 칸은 그리기를 건너뛴다(편집기는 살아 있어 바로 돌아온다). 에이전트가 일하거나 칸에 작업을 보내는 중이면 그린다 */
+.g-card:not(.g-working):not(.g-op) .g-frame-wrap { content-visibility: auto; contain-intrinsic-size: auto 400px; }
 .g-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
 /* 화면 밖에 오래 있던 칸은 편집기를 내려 둔다 */
 .g-sleep { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: #f8f9fa; color: var(--muted); font-size: 12px; }
