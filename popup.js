@@ -30,11 +30,7 @@ const PROVIDERS = [
 ];
 
 // 카테고리 색 계열 — content/highlight.css의 밑줄 색과 맞춘다.
-const CAT_COLOR_CLASS = {
-  convert: 'cat-red', spelling: 'cat-red', final: 'cat-red',
-  plural: 'cat-purple', honorific: 'cat-purple',
-  space1: 'cat-orange', space2: 'cat-orange', space3: 'cat-orange'
-};
+const CAT_COLOR_CLASS = { fix: 'cat-red', prefer: 'cat-orange', context: 'cat-purple' };
 
 const $app = document.getElementById('app');
 

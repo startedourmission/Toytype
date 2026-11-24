@@ -1229,6 +1229,7 @@ function manuscriptNotationInstructions() {
 - Use "➝" as the only arrow symbol in generated or replacement text. Do not use "->", "→", "⇒", or "=>".
 - Wrap buttons, menu items that must be clicked, and keyboard shortcuts/keys in square brackets. Examples: [확인], [Code 탭], [Enter], [⌘S].
 - For Mac keyboard shortcuts, use "⌥" for Option and "⌘" for Command. Do not spell those modifier keys as Option, 옵션, Command, 커맨드, or Cmd in replacement text.
+- Superscript and subscript are character formatting, not text. The manuscript text you receive is plain text, so an exponent already formatted as superscript looks like "n2", "i2", "O(N2)", "4N", "0.52". Never propose edits that only change how exponents/indices are shown: do not insert Unicode superscript/subscript characters (², ³, ⁿ, ᴺ, ᵏ, ₁ …) or caret notation (^2, ^N), and do not rewrite such expressions. Formatting is checked separately.
 - For Toytype JSON rules, sourceText must still be copied exactly from the document even when it violates these notation rules. Apply these rules to replacementText, generated insertion text, and notes.`;
 }
 
@@ -1463,6 +1464,11 @@ function compactToytypeJson(json, documentText) {
     const seen = new Set();
     for (const rule of cat.rules) {
       const original = [String(rule[0]), String(rule[1])];
+      // 첨자는 서식이다 — 유니코드 첨자·^로 바꾸는 규칙은 버린다(이미 위첨자인 곳도 일반 글자로 보여 중복된다)
+      if (introducesScriptChars(original[0], original[1])) {
+        dropped++;
+        continue;
+      }
       const options = rule.length === 3 && validRuleOptions(rule[2]) ? cloneRuleOptions(rule[2]) : null;
       const compact = compactRule(original[0], original[1], text);
       if (!compact) {
@@ -2809,13 +2815,16 @@ export function buildProofreadChunkPrompt(document) {
   const instruction = String(document.instruction || '').trim().slice(0, 2000);
   return [
     'You are a Korean IT-book copy editor working on ONE section of a manuscript, as one of several editing agents.',
-    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"questions":[]}. No markdown.',
+    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"rejectRules":[],"share":[],"questions":[]}. No markdown.',
     ...decisionsLines(document.decisions),
+    ...teamPlanLines(document.plan),
+    ...teamBoardLines(document.team),
     instruction
       ? 'The editor-in-chief asked (follow this; it overrides the default focus below, but never touch code, identifiers, URLs): <<<' + instruction + '>>>'
       : 'Task: general proofreading of this section.',
     ...chunkHistoryLines(document.history),
     '- note: one short Korean sentence telling the editor-in-chief what you did in this section (e.g. "존댓말 3곳을 통일했습니다"). If nothing to change, say so briefly.',
+    '- share: 0-3 short Korean lines for the OTHER agents working on other sections, only when you settled a convention they must follow for consistency (e.g. "‘자료 구조’는 ‘자료구조’로 붙여 씀", "문제 절은 ‘문제 N’ 줄로 시작함"). Do not repeat team notes or rules you were given. Usually empty.',
     ...askInsteadLines(),
     untrustedManuscriptDataInstructions(),
     projectSpecificRuleInstructions(),
@@ -2826,18 +2835,295 @@ export function buildProofreadChunkPrompt(document) {
     '- replacement is the corrected text for that exact source.',
     '- reason: one short Korean sentence.',
     '- category: one of 비문, 윤문, 맞춤법, 용어, 사실, 기타.',
-    '- Simple spelling and spacing are already handled by a deterministic rule engine. Focus on 비문, awkward phrasing, unclear sentences, wrong technical statements, inconsistent terms.',
+    '- Simple spelling and spacing are handled by the deterministic rule engine candidates below (when given). Your own findings focus on 비문, awkward phrasing, unclear sentences, wrong technical statements, inconsistent terms.',
     '- Skip code, identifiers, URLs, file paths, and command lines.',
     '- Do not rewrite whole paragraphs. If nothing needs fixing, return {"findings":[]}.',
     `- At most ${PROOFREAD_CHUNK_MAX_FINDINGS} findings, most important first.`,
     '',
+    ...ruleCandidateLines(document.ruleCandidates),
+    ...ruleFixedLines(document.ruleFixed),
+    ...firstMentionLines(document.firstMentions, document.unreadChapters),
     'Section metadata:',
-    JSON.stringify({ title: document.title || '', section: (Number(document.chunkIndex) || 0) + 1, sections: Number(document.chunkCount) || 1 }),
+    JSON.stringify({ title: document.title || '', section: (Number(document.chunkIndex) || 0) + 1, sections: Number(document.chunkCount) || 1, heading: String(document.heading || '').slice(0, 120) }),
     '',
     '<<<TOYTYPE_DOCUMENT_TEXT',
     text,
     'TOYTYPE_DOCUMENT_TEXT'
   ].join('\n');
+}
+
+// ---------- 에이전트 팀: 계획·규칙·공유 게시판 ----------
+// 편집장 지시를 받으면 먼저 계획(손댈 구간 고르기, 모두가 따를 작업 요령·규칙)을 세우고, 일관성이 중요한 지시는
+// 원고 전체를 훑어 규칙을 먼저 정한다. 각 에이전트는 다른 구간 에이전트에게 알릴 약속을 share로 게시판에 올리고,
+// 이후 에이전트는 게시판을 받아 그대로 따른다.
+const PLAN_MAX_SECTIONS = 400;
+const SURVEY_MAX_CHARS = 60000;
+const TEAM_MAX_NOTES = 24;
+
+function teamPlanLines(plan) {
+  if (!plan || typeof plan !== 'object') return [];
+  const out = [];
+  const brief = String(plan.brief || '').trim();
+  if (brief) out.push('Team plan from the lead (shared by every agent; follow it): ' + brief.slice(0, 800));
+  const rules = (Array.isArray(plan.rules) ? plan.rules : []).map(r => String(r || '').trim()).filter(Boolean).slice(0, 20);
+  if (rules.length) out.push('Shared rules for this job (apply them consistently in your section):', ...rules.map(r => '- ' + r.slice(0, 240)));
+  return out;
+}
+
+function teamBoardLines(team) {
+  const notes = (Array.isArray(team) ? team : []).slice(-TEAM_MAX_NOTES)
+    .map(n => ({ from: String(n && n.from || '').slice(0, 60), note: String(n && n.note || '').trim().slice(0, 240) }))
+    .filter(n => n.note);
+  if (!notes.length) return [];
+  return [
+    'Team board — conventions other agents already settled in other sections (follow them for consistency; editor decisions and shared rules win over these; if two notes conflict, ask a question instead of choosing):',
+    ...notes.map(n => '- [' + n.from + '] ' + n.note)
+  ];
+}
+
+// 토이타입 맞춤법 규칙 엔진이 이 구간에서 잡은 후보. 대부분 맞지만 기계적 일치라 오탐이 섞인다.
+// 에이전트는 오탐 id만 rejectRules로 돌려주고, 나머지는 격자가 그대로 수정으로 올린다.
+const RULE_CANDIDATES_MAX = 120;
+function ruleCandidateLines(list) {
+  const items = (Array.isArray(list) ? list : []).slice(0, RULE_CANDIDATES_MAX).map(r => ({
+    id: Number(r && r.id) || 0,
+    source: String(r && r.source || '').slice(0, 60),
+    replacement: String(r && r.replacement || '').slice(0, 60),
+    context: String(r && r.context || '').slice(0, 120)
+  })).filter(r => r.source);
+  if (!items.length) return [];
+  return [
+    'RULE_CANDIDATES: the Toytype spelling/spacing rule engine matched these in this section (⟦⟧ marks the match in context). They are accepted by default and will be applied by the editor tool, so do NOT repeat them in findings.',
+    'Return "rejectRules":[ids] listing ONLY false positives: matches inside code, identifiers, URLs, commands, quoted program output, proper nouns or product names, or where the original wording is clearly intended or the replacement would make the sentence wrong. When unsure, do not reject.',
+    '<<<TOYTYPE_RULE_CANDIDATES',
+    JSON.stringify(items),
+    'TOYTYPE_RULE_CANDIDATES',
+    ''
+  ];
+}
+
+// ---------- 규칙 결과 거르기 ----------
+// 문서 하나에서 규칙 엔진이 잡은 후보를 한 번에 판단한다: 무시(오탐) / 질문(애매) / 나머지는 반영.
+const RULE_TRIAGE_MAX = 400;
+
+export function buildRuleTriagePrompt(input) {
+  const items = (Array.isArray(input.candidates) ? input.candidates : []).slice(0, RULE_TRIAGE_MAX).map(r => ({
+    id: Number(r && r.id) || 0,
+    level: r && (r.level === 'context' || r.level === 'fix') ? r.level : 'prefer',
+    source: String(r && r.source || '').slice(0, 60),
+    replacement: String(r && r.replacement || '').slice(0, 60),
+    context: String(r && r.context || '').slice(0, 100)
+  })).filter(r => r.source);
+  return [
+    'You are a Korean IT-book copy editor reviewing matches from a deterministic rule engine (Toytype rules) in one manuscript document.',
+    'Each candidate shows the matched text marked with ⟦⟧ inside its context, the rule replacement, and its level:',
+    '- level "fix": a definite spelling/spacing error. Apply it; only ignore a true false positive (see ignore). Never ask about these.',
+    '- level "prefer": house style / usual improvement. Review it: apply when it fits, ignore false positives, ask when it is genuinely the editor\'s call.',
+    '- level "context": correct only in some contexts (e.g. 아래→다음 only when it points to content that follows; 동일한→같은; 경우에→때에; ~를 통해→~를 사용해). Apply only when this context clearly fits and the sentence stays natural and keeps its meaning; ignore when it clearly does not fit; ask when you cannot tell.',
+    'Return only one JSON object, no markdown: {"ignore":[ids],"questions":[{"topic":"...","question":"...","options":["A","B"],"ids":[ids]}]}',
+    '- ignore: false positives — the match is inside code, identifiers, URLs, commands, file paths, program output, a proper noun or product name, a quoted original, or the replacement would make the sentence wrong or change its meaning; plus "context" candidates whose context does not fit.',
+    '- questions: only for "prefer"/"context" candidates whose choice is genuinely the editor\'s (both forms acceptable and the house style unclear, or a context you cannot judge). Group all candidates of the same issue under one question and list their ids. Options are the concrete forms. At most ' + MAX_QUESTIONS + ' questions, usually 0-3. Decide everything else yourself.',
+    '- Every candidate not in ignore or in a question is applied automatically, so be sure about what you leave in.',
+    ...decisionsLines(input.decisions),
+    untrustedManuscriptDataInstructions(),
+    '',
+    'Document: ' + String(input.title || '').slice(0, 120),
+    '<<<TOYTYPE_RULE_CANDIDATES',
+    JSON.stringify(items),
+    'TOYTYPE_RULE_CANDIDATES'
+  ].join('\n');
+}
+
+export function parseRuleTriage(response, ids) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const known = new Set((ids || []).map(Number));
+  const pick = list => Array.from(new Set((Array.isArray(list) ? list : []).map(Number).filter(n => known.has(n))));
+  const questions = [];
+  for (const q of Array.isArray(parsed.questions) ? parsed.questions : []) {
+    const question = String(q && q.question || '').trim();
+    const options = (Array.isArray(q && q.options) ? q.options : []).map(o => String(o || '').trim()).filter(Boolean).slice(0, 4);
+    const qids = pick(q && q.ids);
+    if (!question || options.length < 2 || !qids.length) continue;
+    questions.push({ topic: String(q.topic || '').trim().slice(0, 80) || question.slice(0, 40), question: question.slice(0, 300), options: options.map(o => o.slice(0, 120)), ids: qids });
+    if (questions.length >= MAX_QUESTIONS) break;
+  }
+  return { ignore: pick(parsed.ignore), questions };
+}
+
+async function generateRuleTriage(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const input = body.document && typeof body.document === 'object' ? body.document : {};
+  const ids = (Array.isArray(input.candidates) ? input.candidates : []).slice(0, RULE_TRIAGE_MAX).map(r => Number(r && r.id) || 0);
+  if (!ids.length) return { ok: true, provider, ignore: [], questions: [] };
+  const run = await runProvider(provider, buildRuleTriagePrompt(input), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  const out = parseRuleTriage(run.response, ids);
+  if (!out) throw new HttpError(502, 'AI rule triage was not valid JSON');
+  return { ok: true, provider, ignore: out.ignore, questions: out.questions, elapsedMs: run.elapsedMs };
+}
+
+// 첫 언급: 원어 병기와 첫 소개는 책 전체에서 처음 나올 때만 한다
+function firstMentionLines(list, unread) {
+  const items = (Array.isArray(list) ? list : []).slice(0, 60).map(x => ({
+    term: String(x && x.term || '').slice(0, 40), en: String(x && x.en || '').slice(0, 60), where: String(x && x.where || '').slice(0, 60)
+  })).filter(x => x.en);
+  const missing = (Array.isArray(unread) ? unread : []).map(x => String(x || '').slice(0, 60)).filter(Boolean).slice(0, 30);
+  const out = [
+    'First-mention rule (book-wide): an original-term gloss (원어 병기 — written as superscript, so in plain text the English sticks right after the Korean, e.g. "해시 테이블hash table", or in parentheses) and first-time introductions ("~라고 합니다", "~란 …을 말합니다", a definition) belong only at the FIRST mention of the term in the whole book.',
+    '- If this section glosses or introduces again a term listed in FIRST_MENTIONS (already done earlier), propose removing the repeated gloss (source = the term with its gloss, replacement = the term alone) or tightening the repeated introduction. Category 용어.',
+    '- Do not add glosses yourself (they need superscript formatting). If an important term clearly appears here for the first time in the book without a gloss, mention it in note.'
+  ];
+  if (items.length) out.push('<<<FIRST_MENTIONS (term, gloss, where it was first introduced)', JSON.stringify(items), 'FIRST_MENTIONS');
+  if (missing.length) out.push('- These earlier chapters could not be read, so first mentions there are unknown: ' + missing.join(', ') + '. Do not remove glosses only because they might exist there; if it matters for this section, say so briefly in note.');
+  out.push('');
+  return out;
+}
+
+// 규칙이 이미 고치는 곳. 구간 에이전트가 같은 수정을 다시 내지 않게 알린다.
+function ruleFixedLines(list) {
+  const items = (Array.isArray(list) ? list : []).map(x => String(x || '').slice(0, 80)).filter(Boolean).slice(0, 60);
+  if (!items.length) return [];
+  return ['Already fixed by the rule engine in this section (do NOT propose these again, and do not make findings that overlap them):', ...items.map(x => '- ' + x)];
+}
+
+export function parseRejectRules(response) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  return Array.from(new Set((parsed && Array.isArray(parsed.rejectRules) ? parsed.rejectRules : []).map(Number).filter(Number.isInteger))).slice(0, RULE_CANDIDATES_MAX);
+}
+
+export function parseShareNotes(response) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  return (parsed && Array.isArray(parsed.share) ? parsed.share : [])
+    .map(x => String(x || '').trim()).filter(Boolean).slice(0, 3).map(x => x.slice(0, 240));
+}
+
+export function buildPlanWorkPrompt(input) {
+  const instruction = String(input.instruction || '').trim().slice(0, 2000);
+  let count = 0;
+  const docs = (Array.isArray(input.docs) ? input.docs : []).map(d => ({
+    doc: String(d && d.id || ''),
+    title: String(d && d.title || '').slice(0, 120),
+    sections: (Array.isArray(d && d.sections) ? d.sections : []).filter(() => count++ < PLAN_MAX_SECTIONS).map(x => ({
+      i: Number(x && x.i) || 0,
+      chars: Number(x && x.chars) || 0,
+      head: String(x && x.head || '').slice(0, 80),
+      preview: String(x && x.preview || '').slice(0, 200)
+    }))
+  }));
+  return [
+    'You are the lead editor of a small team of AI copy-editing agents working on a Korean IT book manuscript.',
+    'The editor-in-chief gave an instruction. Before the agents start, plan the job from the outline below (each section has its first line and a short preview).',
+    'Return only one JSON object, no markdown:',
+    '{"scope":"targeted|all|whole","targets":[{"doc":"<doc id>","sections":[0,2]}],"brief":"...","needsSurvey":false,"note":"...","questions":[]}',
+    '- scope "targeted": the instruction only concerns some sections (e.g. 문제 절, 실습 코너, 특정 장). List exactly those in targets. Be inclusive when unsure about a section.',
+    '- scope "all": every section needs work, each section can be handled independently.',
+    '- scope "whole": the result must be consistent across the whole manuscript (term unification, notation/style unification, renaming a corner everywhere). Agents still split the work, but rules must be settled first.',
+    '- targets is required for "targeted" and ignored otherwise.',
+    '- needsSurvey: true when the agents first need to know which forms the manuscript actually uses before choosing (e.g. "용어 통일", "표기 통일", "코너 이름 맞추기"). Usually true for "whole".',
+    '- brief: 1-3 Korean sentences every agent receives: what exactly to change, how to recognize the target, what to leave alone.',
+    '- note: one short Korean sentence for the editor-in-chief describing the plan (e.g. "문제 절 12곳만 손봅니다").',
+    '- questions: ask the editor-in-chief BEFORE work starts about every choice that is theirs to make and that the instruction leaves open — which form to unify to (A vs B), how far the scope goes (e.g. delete only the hint sentence or the whole hint box/heading too), whether to touch borderline cases. Format: "questions":[{"topic":"short topic","question":"one Korean sentence","options":["A","B"]}] with 2-4 concrete options. Do not ask about anything an editor decision already settles, or about things agents can decide themselves. At most ' + MAX_QUESTIONS + ', usually 0-3.',
+    ...decisionsLines(input.decisions),
+    ...chunkHistoryLines(input.history),
+    untrustedManuscriptDataInstructions(),
+    '',
+    'Instruction: <<<' + instruction + '>>>',
+    '',
+    '<<<TOYTYPE_OUTLINE',
+    JSON.stringify(docs),
+    'TOYTYPE_OUTLINE'
+  ].join('\n');
+}
+
+export function parsePlanWork(response, input) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const scope = ['targeted', 'all', 'whole'].includes(parsed.scope) ? parsed.scope : 'all';
+  const known = new Map((Array.isArray(input && input.docs) ? input.docs : []).map(d => [String(d.id), new Set((d.sections || []).map(x => Number(x.i)))]));
+  const targets = [];
+  for (const t of Array.isArray(parsed.targets) ? parsed.targets : []) {
+    const ids = known.get(String(t && t.doc || ''));
+    if (!ids) continue;
+    const sections = Array.from(new Set((Array.isArray(t.sections) ? t.sections : []).map(Number).filter(n => ids.has(n)))).sort((a, b) => a - b);
+    if (sections.length) targets.push({ doc: String(t.doc), sections });
+  }
+  return {
+    scope: scope === 'targeted' && !targets.length ? 'targeted' : scope,
+    targets: scope === 'targeted' ? targets : [],
+    brief: String(parsed.brief || '').trim().slice(0, 800),
+    needsSurvey: parsed.needsSurvey === true || scope === 'whole',
+    note: String(parsed.note || '').trim().slice(0, 300)
+  };
+}
+
+async function generatePlanWork(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const input = body.document && typeof body.document === 'object' ? body.document : {};
+  if (!String(input.instruction || '').trim()) throw new HttpError(400, 'document.instruction is required');
+  const run = await runProvider(provider, buildPlanWorkPrompt(input), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  const plan = parsePlanWork(run.response, input);
+  if (!plan) throw new HttpError(502, 'AI plan was not valid JSON');
+  return { ok: true, provider, plan, questions: parseQuestions(run.response), elapsedMs: run.elapsedMs };
+}
+
+export function buildSurveyRulesPrompt(input) {
+  const instruction = String(input.instruction || '').trim().slice(0, 2000);
+  let left = SURVEY_MAX_CHARS;
+  const docs = (Array.isArray(input.docs) ? input.docs : []).map(d => {
+    const text = String(d && d.text || '').slice(0, Math.max(0, left));
+    left -= text.length;
+    return { title: String(d && d.title || '').slice(0, 120), text };
+  }).filter(d => d.text);
+  return [
+    'You are the lead editor of a team of AI copy-editing agents working on a Korean IT book manuscript.',
+    'Before the agents split the manuscript into sections, read the whole text and settle the conventions they must all follow for this instruction, so every section ends up consistent.',
+    'Return only one JSON object, no markdown: {"rules":["..."],"questions":[],"note":"..."}',
+    '- rules: up to 20 short Korean lines, each a concrete convention (e.g. "‘자료 구조’ → ‘자료구조’로 통일", "코너 이름은 [1:1 코칭]으로 통일"). Only conventions clearly supported by the manuscript or the instruction.',
+    '- When the manuscript uses two or more plausible forms for the same thing and neither the instruction nor an editor decision settles it, do NOT pick one: add a question instead.',
+    ...askInsteadLines(),
+    '- note: one short Korean sentence for the editor-in-chief (e.g. "용어 규칙 6개를 정했습니다").',
+    ...decisionsLines(input.decisions),
+    ...teamPlanLines(input.plan),
+    untrustedManuscriptDataInstructions(),
+    projectSpecificRuleInstructions(),
+    '',
+    'Instruction: <<<' + instruction + '>>>',
+    '',
+    ...docs.flatMap(d => ['<<<TOYTYPE_DOCUMENT_TEXT title=' + JSON.stringify(d.title), d.text, 'TOYTYPE_DOCUMENT_TEXT'])
+  ].join('\n');
+}
+
+export function parseSurveyRules(response) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  return {
+    rules: (parsed && Array.isArray(parsed.rules) ? parsed.rules : []).map(r => String(r || '').trim()).filter(Boolean).slice(0, 20).map(r => r.slice(0, 240)),
+    note: parsed && typeof parsed.note === 'string' ? parsed.note.trim().slice(0, 300) : ''
+  };
+}
+
+async function generateSurveyRules(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const input = body.document && typeof body.document === 'object' ? body.document : {};
+  const run = await runProvider(provider, buildSurveyRulesPrompt(input), settings, {
+    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 300000), 5000, settings.requestTimeoutMs)
+  });
+  if (!run.ok) throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+  const out = parseSurveyRules(run.response);
+  return { ok: true, provider, rules: out.rules, note: out.note, questions: parseQuestions(run.response), elapsedMs: run.elapsedMs };
 }
 
 // 같은 격자 세션의 앞선 지시와 결과 요약. 새로 시작한 에이전트도 대화 흐름을 이어 가게 한다.
@@ -2858,6 +3144,15 @@ function chunkHistoryLines(history) {
   ];
 }
 
+// 원문에 없던 유니코드 위·아래 첨자 문자나 ^ 표기를 새로 넣는 수정인가
+const SCRIPT_CHARS = /[\u00b2\u00b3\u00b9\u2070-\u209c\u1d2c-\u1d6a\u1d9b-\u1dbf]/g;
+export function introducesScriptChars(src, dst) {
+  const chars = t => String(t || '').match(SCRIPT_CHARS) || [];
+  const had = chars(src);
+  const carets = t => (String(t || '').match(/\^/g) || []).length;
+  return chars(dst).some(c => !had.includes(c)) || chars(dst).length > had.length || carets(dst) > carets(src);
+}
+
 export function parseProofreadChunkFindings(response, text) {
   const source = String(text || '');
   let parsed = null;
@@ -2873,6 +3168,7 @@ export function parseProofreadChunkFindings(response, text) {
     const src = String(item && item.source || '');
     const dst = String(item && item.replacement || '');
     if (!src || src === dst || !source.includes(src)) continue; // 원문에 없는 문구는 버린다
+    if (introducesScriptChars(src, dst)) continue; // 첨자는 서식이다 — 유니코드 첨자·^로 바꾸는 수정은 버린다
     const key = src + '\u0001' + dst;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -2916,6 +3212,8 @@ async function generateProofreadChunk(body) {
     note: parseProofreadChunkNote(run.response),
     findings: parseProofreadChunkFindings(run.response, text.slice(0, PROOFREAD_CHUNK_MAX_CHARS)),
     questions: parseQuestions(run.response),
+    share: parseShareNotes(run.response),
+    rejectRules: parseRejectRules(run.response),
     elapsedMs: run.elapsedMs
   };
 }
@@ -3091,7 +3389,7 @@ export function parseFormatFindings(response) {
     if (quote && quote.length <= 60) item.quote = quote;
     const source = String(f.source || '');
     const replacement = typeof f.replacement === 'string' ? f.replacement : '';
-    if (source && source !== replacement) {
+    if (source && source !== replacement && !introducesScriptChars(source, replacement)) {
       item.source = source.slice(0, 200);
       item.replacement = replacement.slice(0, 200);
     }
@@ -3556,6 +3854,76 @@ function scaleAnnotateSpec(spec, factor) {
   return Object.assign({}, spec, {
     items: spec.items.map(it => (Array.isArray(it.rect) ? Object.assign({}, it, { rect: it.rect.map(r) }) : it))
   });
+}
+
+// ---------- 도해 안 글자 점검 ----------
+// 원고의 그림·그리기 한 장을 OCR(가능하면)과 이미지로 읽고, 그 안 글자의 오탈자·띄어쓰기·용어 불일치를 찾는다.
+// 그림 속 글자는 문서에서 바로 고칠 수 없으니 지적만 돌려준다.
+export function buildFigureTextPrompt(input) {
+  const lines = (input.ocr && Array.isArray(input.ocr.lines) ? input.ocr.lines : []).map(l => String(l && l.text || '').trim()).filter(Boolean).slice(0, 200);
+  return [
+    'You are a Korean IT-book copy editor checking the TEXT INSIDE one figure (diagram, screenshot or drawing) of a manuscript.',
+    input.canSeeImage ? 'The figure image is attached. OCR lines (may contain recognition errors) are given as a hint.' : 'You cannot see the image; use the OCR lines (they may contain recognition errors).',
+    'Return only one JSON object, no markdown: {"text":"short summary of the figure text","findings":[{"found":"text as it appears in the figure","suggestion":"corrected text","reason":"one short Korean sentence"}]}',
+    '- Report only real problems in the figure text: Korean spelling/spacing errors, typos, wrong loanword spelling, terms that differ from how the surrounding manuscript writes them, wrong arrows/notation per the manuscript rules, obvious factual or label mistakes.',
+    '- Do NOT report OCR misreadings: if a line looks garbled only because of OCR and the image shows it correctly, skip it. When you cannot see the image, report only issues you are confident are in the figure itself.',
+    '- Do not report text in code screenshots or terminal output unless it is clearly a typo in Korean labels. Do not comment on layout, colors or style.',
+    '- At most 15 findings. If nothing is wrong, return {"findings":[]}.',
+    ...decisionsLines(input.decisions),
+    untrustedManuscriptDataInstructions(),
+    projectSpecificRuleInstructions(),
+    manuscriptNotationInstructions(),
+    '',
+    'Document: ' + String(input.title || '').slice(0, 120) + ' · figure #' + (Number(input.index) || 0),
+    '<<<TOYTYPE_SURROUNDING_TEXT',
+    String(input.context || '').slice(0, 1500),
+    'TOYTYPE_SURROUNDING_TEXT',
+    input.imagePath ? 'Figure image file: ' + input.imagePath : '',
+    '<<<TOYTYPE_OCR_LINES',
+    JSON.stringify(lines),
+    'TOYTYPE_OCR_LINES'
+  ].join('\n');
+}
+
+export function parseFigureFindings(response) {
+  let parsed = null;
+  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const findings = [];
+  for (const f of Array.isArray(parsed.findings) ? parsed.findings : []) {
+    const found = String(f && f.found || '').trim();
+    const suggestion = String(f && f.suggestion || '').trim();
+    if (!found || found === suggestion) continue;
+    findings.push({ found: found.slice(0, 200), suggestion: suggestion.slice(0, 200), reason: String(f.reason || '').trim().slice(0, 300) });
+    if (findings.length >= 15) break;
+  }
+  return { text: String(parsed.text || '').trim().slice(0, 300), findings };
+}
+
+async function generateFigureTextCheck(body) {
+  const settings = mergeSettings(body.settings);
+  const provider = normalizeProvider(body.provider, settings.provider);
+  const input = body.document && typeof body.document === 'object' ? body.document : {};
+  const image = decodeDiagramImage(input.image);
+  if (!image) throw new HttpError(400, 'document.image is required');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toytype-figure-'));
+  try {
+    const imagePath = path.join(tmpDir, 'figure.' + image.ext);
+    fs.writeFileSync(imagePath, image.data);
+    const ocr = await runDiagramOcr(imagePath, settings);
+    const canSeeImage = provider !== 'grok';
+    if (!canSeeImage && !(ocr && ocr.lines && ocr.lines.length)) return { ok: true, provider, text: '', findings: [], ocrLines: 0, skipped: 'no_text' };
+    const run = await runProvider(provider, buildFigureTextPrompt(Object.assign({}, input, { ocr, canSeeImage, imagePath: canSeeImage ? imagePath : '' })), settings, {
+      imagePaths: canSeeImage ? [imagePath] : [],
+      timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 240000), 5000, settings.requestTimeoutMs)
+    });
+    if (!run.ok) throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
+    const out = parseFigureFindings(run.response);
+    if (!out) throw new HttpError(502, 'AI figure check was not valid JSON');
+    return { ok: true, provider, text: out.text, findings: out.findings, ocrLines: ocr && ocr.lines ? ocr.lines.length : null, elapsedMs: run.elapsedMs };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 // macOS Vision OCR. swift가 없거나 실패하면 null을 돌려주고 AI가 이미지만 보고 판단한다.
@@ -4118,6 +4486,22 @@ async function route(req, res) {
   }
   if (url.pathname === '/ai/review-comments') {
     await sendLoggedAiJson(res, 'AI review comments', body, generateReviewComments);
+    return;
+  }
+  if (url.pathname === '/ai/figure-text-check') {
+    await sendLoggedAiJson(res, 'AI figure text check', body, generateFigureTextCheck);
+    return;
+  }
+  if (url.pathname === '/ai/rule-triage') {
+    await sendLoggedAiJson(res, 'AI rule triage', body, generateRuleTriage);
+    return;
+  }
+  if (url.pathname === '/ai/plan-work') {
+    await sendLoggedAiJson(res, 'AI plan work', body, generatePlanWork);
+    return;
+  }
+  if (url.pathname === '/ai/survey-rules') {
+    await sendLoggedAiJson(res, 'AI survey rules', body, generateSurveyRules);
     return;
   }
   if (url.pathname === '/ai/proofread-chunk') {

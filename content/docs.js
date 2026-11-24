@@ -18,24 +18,18 @@
   } = globalThis.ToytypeDocTools;
   const DEFAULT_SETTINGS = {
     schemaVersion: 1,
-    docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
-    genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
+    docsCategories:    { fix: true, prefer: true, context: true },
+    genericCategories: { fix: true, prefer: false, context: false },
     disabledOrigins:   [],
     tocMaxLevel: 4, // 목차 추출에 포함할 최대 헤딩 레벨 (1~5)
     copyOnSelect: true, // 오탈자 선택 시 교정어 클립보드 자동 복사
     charPresetDirectInsert: false, // 특수문자 프리셋을 클립보드 복사 대신 문서에 바로 입력
     externalFeaturesEnabled: false // 로컬 브리지/외부 CLI가 필요한 기능은 기본 비활성화
   };
-  const CATEGORY_ORDER = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
-  const FALLBACK_LABELS = {
-    convert: '표기 변환', spelling: '맞춤법', plural: '존대와 복수', honorific: '높임말 서술어',
-    space1: '조사 앞 공백', space2: '붙여쓰기', space3: '값 붙이기', final: '맨마지막'
-  };
-  const CAT_COLOR = {
-    convert: 'red', spelling: 'red', final: 'red',
-    plural: 'purple', honorific: 'purple',
-    space1: 'orange', space2: 'orange', space3: 'orange'
-  };
+  // 규칙 범주는 확실한 정도로 나눈다: 확정(무조건 고침) · 권장(대개 고침) · 맥락(앞뒤를 보고 판단)
+  const CATEGORY_ORDER = ['fix', 'prefer', 'context'];
+  const FALLBACK_LABELS = { fix: '확정 교정', prefer: '권장 표기', context: '맥락 판단' };
+  const CAT_COLOR = { fix: 'red', prefer: 'orange', context: 'purple' };
   const SCAN_LIMIT = 500;
   const FETCH_MIN_INTERVAL = 10000; // export 남발 방지 rate limit
   const FETCH_TIMEOUT = 15000;

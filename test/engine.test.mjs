@@ -10,7 +10,7 @@ require('../engine.js'); // CJS 평가 → globalThis.TypoEngine 생성 (D8: pac
 const E = globalThis.TypoEngine;
 
 const rulesJson = JSON.parse(readFileSync(new URL('../rules.json', import.meta.url), 'utf8'));
-const ALL_IDS = ['convert', 'spelling', 'plural', 'honorific', 'space1', 'space2', 'space3', 'final'];
+const ALL_IDS = ['fix', 'prefer', 'context'];
 
 function synth(categories) {
   return { version: 'test-0', source: 'test', categories };
@@ -56,7 +56,7 @@ test('T11b 불량 rulesJson: init throw, 기존 상태 비오염', () => {
   assert.equal(E.isReady(), false); // 실패한 init은 상태를 바꾸지 않는다
 });
 
-test('T1 rules.json 구조: 정본 카테고리 8개, 모든 규칙은 [string,string]', () => {
+test('T1 rules.json 구조: 정본 카테고리 3개(확정·권장·맥락), 모든 규칙은 [string,string]', () => {
   assert.equal(typeof rulesJson.version, 'string');
   const ids = rulesJson.categories.map((c) => c.id);
   assert.deepEqual([...ids].sort(), [...ALL_IDS].sort());
@@ -145,14 +145,14 @@ test('init 반환값·categories()·version', () => {
   assert.deepEqual(cats.map((c) => c.ruleCount), rulesJson.categories.map((c) => c.rules.length));
   assert.ok(cats.every((c) => c.enabled === true));
 
-  E.init(rulesJson, ['spelling']); // 재호출 = 전체 리빌드
-  for (const c of E.categories()) assert.equal(c.enabled, c.id === 'spelling');
+  E.init(rulesJson, ['fix']); // 재호출 = 전체 리빌드
+  for (const c of E.categories()) assert.equal(c.enabled, c.id === 'fix');
 });
 
-test('T2 실데이터: 갯수 검출 (중복 src 동률은 카테고리 순서로 convert)', () => {
+test('T2 실데이터: 갯수 검출 (확정 교정)', () => {
   initAll();
   const { findings } = E.scan('갯수를 세어보자');
-  assert.deepEqual(findings[0], { start: 0, end: 2, src: '갯수', dst: '개수', cat: 'convert' });
+  assert.deepEqual(findings[0], { start: 0, end: 2, src: '갯수', dst: '개수', cat: 'fix' });
   assert.ok(srcs(E.scan('갯수를 셀 때')).includes('갯수'));
 });
 
@@ -162,7 +162,7 @@ test('T3 실데이터: space1 선행 공백 포함 매칭', () => {
   assert.ok(f, "' 부터' 미검출");
   assert.equal(f.start, 2); // 공백 위치
   assert.equal(f.end, 5);
-  assert.equal(f.cat, 'space1');
+  assert.equal(f.cat, 'fix');
   assert.equal(f.dst, '부터');
 });
 
@@ -170,7 +170,7 @@ test('실데이터: 타겟·초기 값·할때 검출', () => {
   initAll();
   let f = E.scan('타겟 고객').findings.find((x) => x.src === '타겟');
   assert.ok(f, "'타겟' 미검출");
-  assert.deepEqual(f, { start: 0, end: 2, src: '타겟', dst: '타깃', cat: 'spelling' });
+  assert.deepEqual(f, { start: 0, end: 2, src: '타겟', dst: '타깃', cat: 'fix' });
 
   f = E.scan('초기 값 설정').findings.find((x) => x.src === '초기 값');
   assert.ok(f, "'초기 값' 미검출");
@@ -179,7 +179,7 @@ test('실데이터: 타겟·초기 값·할때 검출', () => {
   f = E.scan('할때').findings.find((x) => x.src === '할때');
   assert.ok(f, "'할때' 미검출");
   assert.equal(f.dst, '할 때');
-  assert.equal(f.cat, 'convert'); // convert·plural·space1·space2 중복 → 카테고리 순서 우선
+  assert.equal(f.cat, 'fix');
 });
 
 test('실데이터: 요구사항 표기로 통일', () => {

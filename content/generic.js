@@ -8,8 +8,8 @@
 
   const DEFAULT_SETTINGS = {
     schemaVersion: 1,
-    docsCategories:    { convert: true, spelling: true, plural: true,  honorific: true,  space1: true,  space2: true,  space3: true,  final: true  },
-    genericCategories: { convert: true, spelling: true, plural: false, honorific: false, space1: false, space2: false, space3: false, final: false },
+    docsCategories:    { fix: true, prefer: true, context: true },
+    genericCategories: { fix: true, prefer: false, context: false },
     disabledOrigins:   [],
     highlightEnabled:  false // 기본은 끔 — 켜면 본문에 밑줄을 긋는다. 검사와 목록/배지는 설정과 무관하게 돈다
   };
