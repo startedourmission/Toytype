@@ -176,17 +176,34 @@
   }
   function releaseScroll() {
     // 구글 문서가 조금 늦게 스크롤을 부르기도 해서 잠깐 더 붙잡았다 놓는다
-    setTimeout(() => { if (--holdDepth === 0) held = null; }, 600);
+    setTimeout(() => { if (--holdDepth === 0) held = null; }, 2000);
   }
   // 사람이 스크롤·클릭·키를 쓴 직후가 아니면, 에이전트가 일하는 동안 생긴 스크롤은 되돌린다
   let lastUserIntent = 0;
-  for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
-    window.addEventListener(type, () => { lastUserIntent = Date.now(); }, { capture: true, passive: true });
-  }
+  // 버튼 클릭([적용] 등)은 스크롤 의도가 아니다. 그걸 의도로 치면 적용 중 문서가 당긴 스크롤이 그대로 통과해
+  // 격자가 밀리고, 보이게 된 칸들이 줄줄이 다시 로드된다. 휠·터치·스크롤바 잡기·스크롤 키만 의도로 친다.
+  const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ']);
+  const markIntent = () => { lastUserIntent = Date.now(); };
+  window.addEventListener('wheel', markIntent, { capture: true, passive: true });
+  window.addEventListener('touchmove', markIntent, { capture: true, passive: true });
+  window.addEventListener('pointerdown', ev => {
+    // 스크롤바를 잡으면 대상이 스크롤 상자 자신이다
+    if (ev.target && (ev.target.id === 'g-grid' || ev.target.id === 'g-log')) markIntent();
+  }, { capture: true, passive: true });
+  window.addEventListener('keydown', ev => {
+    const t = ev.target;
+    const typing = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
+    if (!typing && SCROLL_KEYS.has(ev.key)) markIntent();
+  }, { capture: true, passive: true });
   function guardHeld(el, key) {
     let pos = [el.scrollTop, el.scrollLeft];
+    let lastTrace = 0;
     el.addEventListener('scroll', () => {
       const userMoved = Date.now() - lastUserIntent < 1500;
+      if (key === 'grid' && Date.now() - lastTrace > 300) {
+        lastTrace = Date.now();
+        trace('gridScroll', JSON.stringify({ top: el.scrollTop, held: held ? held.grid[0] : null, busy: !!busy, userMoved, active: document.activeElement && document.activeElement.tagName }));
+      }
       if (held && !userMoved) {
         const want = key === 'grid' ? held.grid : [held.log, el.scrollLeft];
         if (el.scrollTop !== want[0] || el.scrollLeft !== want[1]) { el.scrollTop = want[0]; el.scrollLeft = want[1]; }
@@ -199,18 +216,16 @@
       pos = [el.scrollTop, el.scrollLeft];
     });
   }
-  const HOLD_OPS = new Set(['applyEdit', 'select', 'agentCursor', 'agentCursorRemove', 'probe', 'getText', 'digest']);
+  const HOLD_OPS = new Set(['applyEdit', 'formatFix', 'docosAct', 'docosList', 'tabInfo', 'select', 'agentCursor', 'agentCursorRemove', 'probe', 'getText', 'digest']);
 
   // 내려 둔 칸에 일을 시키면 먼저 다시 불러온다 — 에이전트는 안 보이는 칸도 다룰 수 있어야 한다
   async function rpc(card, op, args, timeoutMs) {
-    if (op !== 'ping' && card.unloaded) {
-      const ok = await ensureLoaded(card);
-      if (!ok) return { ok: false, error: 'not_ready' };
-    }
     const hold = HOLD_OPS.has(op);
     if (hold) holdScroll();
     let res;
     try {
+      // 칸을 다시 불러오는 동안에도 격자 위치를 붙잡는다
+      if (op !== 'ping' && card.unloaded && !(await ensureLoaded(card))) return { ok: false, error: 'not_ready' };
       res = await rawRpc(card, op, args, timeoutMs);
     } finally {
       if (hold) releaseScroll();
@@ -1358,7 +1373,7 @@
     extra.value = reviewInstruction;
     extra.addEventListener('input', () => { reviewInstruction = extra.value; });
     extra.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && !go.disabled) { ev.preventDefault(); go.click(); }
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && !ev.isComposing && ev.keyCode !== 229 && !go.disabled) { ev.preventDefault(); go.click(); }
     });
     go.addEventListener('click', () => {
       const picked = new Set(chosen);
@@ -2320,6 +2335,8 @@
     input.addEventListener('blur', () => setTimeout(hideSlash, 150));
     renderTargets();
     input.addEventListener('keydown', ev => {
+      // 한글 조합 중 Enter는 크롬이 keydown을 두 번 보낸다(조합 확정 + 실제 Enter). 조합 중 것은 버린다
+      if (ev.isComposing || ev.keyCode === 229) return;
       if (!slash.hidden && slashItems.length) {
         if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
           ev.preventDefault();

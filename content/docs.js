@@ -1274,7 +1274,8 @@
     for (const type of ['keydown', 'keypress', 'keyup']) {
       ta.addEventListener(type, ev => {
         ev.stopPropagation();
-        if (type === 'keydown' && ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+        // 한글 조합 중 ⌘Enter는 keydown이 두 번 와서 도해가 두 개 생겼다. 조합 중·자동 반복 것은 버린다
+        if (type === 'keydown' && ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && !ev.isComposing && ev.keyCode !== 229 && !ev.repeat) {
           ev.preventDefault();
           handleAiDiagramAddon('prompt', { prompt: ta.value });
         }
