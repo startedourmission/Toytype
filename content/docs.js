@@ -5471,7 +5471,7 @@
 
   function bridgeRestartCommand() {
     const port = Number.isFinite(Number(bridgeStatus.port)) ? Math.floor(Number(bridgeStatus.port)) : DEFAULT_BRIDGE_PORT;
-    return 'node tools/toytype_ai_bridge_ctl.mjs restart --port ' + port;
+    return 'npm run bridge:restart' + (port === DEFAULT_BRIDGE_PORT ? '' : ' -- --port ' + port);
   }
 
   function syncBridgeStatusWatcher() {

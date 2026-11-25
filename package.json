@@ -6,6 +6,8 @@
     "test": "node --test",
     "setup": "node tools/install_native_host.mjs",
     "setup:remove": "node tools/install_native_host.mjs --uninstall",
+    "bridge:restart": "node tools/toytype_native_host.mjs --restart",
+    "bridge:status": "node tools/toytype_native_host.mjs --status",
     "package:store": "node tools/package_store.mjs",
     "rules:check": "node tools/rules_tool.mjs check",
     "rules:format": "node tools/rules_tool.mjs format"

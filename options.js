@@ -164,7 +164,8 @@ function updateBridgeCommand() {
   const url = (els.bridgeUrl.value || DEFAULT_AI.bridgeUrl).replace(/\/+$/, '');
   const match = url.match(/:(\d+)$/);
   const port = match ? match[1] : '17644';
-  els.bridgeCommand.textContent = 'node tools/toytype_ai_bridge.mjs --port ' + port;
+  // 브리지는 npm run setup으로 등록한 상주 프로그램이 띄운다 — 다시 켤 때도 같은 명령 하나만 쓴다(README와 같음)
+  els.bridgeCommand.textContent = 'npm run bridge:restart' + (port === '17644' ? '' : ' -- --port ' + port);
 }
 
 function fillUploadJsonExample() {
@@ -235,7 +236,7 @@ function formatStatus(res) {
     return lines.join('\n');
   }
   if (res.error === 'bridge_unavailable' || res.error === 'extension_message_failed') {
-    return '브리지 연결 실패\n\n설정된 브리지 URL에서 응답이 없습니다. 아래 명령으로 로컬 브리지를 먼저 실행하세요.\n\n' + els.bridgeCommand.textContent;
+    return '브리지 연결 실패\n\n설정된 브리지 URL에서 응답이 없습니다. Toytype 폴더에서 아래 명령으로 브리지를 다시 켜세요.\n\n' + els.bridgeCommand.textContent;
   }
   if (res.error === 'bridge_timeout') {
     return '브리지 요청 시간 초과';

@@ -184,8 +184,9 @@ function sendNative(action) {
 }
 
 function nativeHostInstallCommand() {
-  if (IS_SAFARI) return 'node tools/toytype_native_host.mjs --connect --port ' + bridgePort();
-  return 'node tools/install_native_host.mjs';
+  const port = Number(bridgePort());
+  if (IS_SAFARI) return 'npm run bridge:restart' + (port === 17644 ? '' : ' -- --port ' + port);
+  return 'npm run setup';
 }
 
 async function connectBridge() {

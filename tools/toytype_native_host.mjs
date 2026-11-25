@@ -171,6 +171,20 @@ async function connect(port) {
   return { ok: true, alreadyRunning: false, installed: true, health, port, plistPath: PLIST_PATH };
 }
 
+// 새 코드로 다시 띄운다. connect는 이미 떠 있으면 그대로 두므로, 상주 브리지를 내리고
+// 터미널에서 따로 띄운 브리지가 포트를 잡고 있으면 그것도 끈 뒤 다시 올린다.
+async function restart(port) {
+  if (isLoaded()) launchctl(['bootout', serviceTarget()]);
+  const pids = () => String(spawnSync('/usr/sbin/lsof', ['-ti', 'tcp:' + port, '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout || '')
+    .split(/\s+/).map(Number).filter(pid => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+  for (const pid of pids()) {
+    try { process.kill(pid, 'SIGTERM'); } catch (_) { /* 이미 끝남 */ }
+  }
+  for (let i = 0; i < 25 && pids().length; i++) await new Promise(r => setTimeout(r, 120));
+  if (pids().length) return { ok: false, error: 'port_in_use', message: port + ' 포트를 다른 프로세스가 놓지 않습니다: ' + pids().join(', '), port };
+  return connect(port);
+}
+
 async function status(port) {
   const health = await probeHealth(port);
   return {
@@ -199,6 +213,7 @@ async function handle(message) {
   const rawPort = Number(message && message.port);
   const port = Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536 ? rawPort : DEFAULT_PORT;
   if (action === 'connect') return connect(port);
+  if (action === 'restart') return restart(port);
   if (action === 'status') return status(port);
   if (action === 'disconnect') return disconnect();
   if (action === 'ping') return { ok: true, pong: true, node: process.version, bridgePath: BRIDGE_PATH };
@@ -252,8 +267,8 @@ function main() {
 // 터미널에서도 동일한 LaunchAgent를 등록할 수 있게 일반 CLI를 제공한다.
 export function parseCliArgs(args) {
   const [command, ...rest] = args;
-  if (!['--connect', '--status', '--disconnect'].includes(command)) {
-    throw new Error('Usage: node tools/toytype_native_host.mjs [--connect|--status|--disconnect] [--port 17644]');
+  if (!['--connect', '--restart', '--status', '--disconnect'].includes(command)) {
+    throw new Error('Usage: node tools/toytype_native_host.mjs [--connect|--restart|--status|--disconnect] [--port 17644]');
   }
   if (rest.length && (rest.length !== 2 || rest[0] !== '--port')) {
     throw new Error('Expected --port followed by a port number.');

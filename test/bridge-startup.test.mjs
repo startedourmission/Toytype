@@ -7,6 +7,7 @@ import { parseCliArgs } from '../tools/toytype_native_host.mjs';
 
 test('LaunchAgent CLI accepts supported actions and rejects invalid ports before side effects', () => {
   assert.deepEqual(parseCliArgs(['--connect']), { action: 'connect', port: 17644 });
+  assert.deepEqual(parseCliArgs(['--restart']), { action: 'restart', port: 17644 });
   assert.deepEqual(parseCliArgs(['--status', '--port', '18000']), { action: 'status', port: 18000 });
   assert.deepEqual(parseCliArgs(['--disconnect']), { action: 'disconnect', port: 17644 });
   for (const args of [[], ['--unknown'], ['--connect', '--port'], ['--connect', '--port', '0'],
@@ -57,7 +58,7 @@ test('Safari shows the LaunchAgent command without calling the Chrome native hos
   assert.equal(p.nativeCalls(), 0);
   assert.equal(p.run('bridgeState.state'), 'error');
   assert.equal(p.run('nativeHostReady'), false);
-  assert.equal(p.run('nativeHostInstallCommand()'), 'node tools/toytype_native_host.mjs --connect --port 18000');
+  assert.equal(p.run('nativeHostInstallCommand()'), 'npm run bridge:restart -- --port 18000');
   assert.match(p.run('statusText'), /Safari/);
 });
 
@@ -73,5 +74,5 @@ test('Chrome keeps native host startup', async () => {
   await p.run('connectBridge()');
   assert.equal(p.nativeCalls(), 1);
   assert.equal(p.run('bridgeState.state'), 'ok');
-  assert.equal(p.run('nativeHostInstallCommand()'), 'node tools/install_native_host.mjs');
+  assert.equal(p.run('nativeHostInstallCommand()'), 'npm run setup');
 });

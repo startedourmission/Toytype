@@ -37,5 +37,5 @@ AI 교정, 사실 검증, 격자 보기의 에이전트 같은 AI 기능은 내 
 ### 잘 안 될 때
 
 - **버블이 안 보이거나 버튼이 반응하지 않음** — 확장을 새로 넣었거나 다시 불러온 뒤에는 열려 있던 Docs·Drive 탭을 새로고침(⌘R)합니다.
-- **AI 연결이 [꺼짐]으로 나옴** — 팝업의 [연결]을 누릅니다. 그래도 안 되면 `Toytype` 폴더에서 `node tools/toytype_ai_bridge_ctl.mjs restart --port 17644`를 실행합니다. 로그는 `~/.toytype/logs/bridge.log`에 있습니다.
-- **Safari** — Safari는 위 3번 등록을 쓰지 못합니다. `Toytype` 폴더에서 `node tools/toytype_native_host.mjs --connect --port 17644`를 한 번 실행하세요.
+- **AI 연결이 [꺼짐]으로 나옴 · 코드를 받은 뒤 새 기능이 안 먹힘** — `Toytype` 폴더에서 `npm run bridge:restart`를 실행합니다. 상주 브리지를 새 코드로 다시 띄웁니다(터미널은 닫아도 됩니다). 상태는 `npm run bridge:status`, 로그는 `~/.toytype/logs/bridge.log`에 있습니다.
+- **Safari** — Safari는 위 3번 등록을 쓰지 못합니다. `Toytype` 폴더에서 `npm run bridge:restart`를 한 번 실행하세요.
