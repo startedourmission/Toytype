@@ -96,6 +96,8 @@
   let history = [];
   let cards = [];
   let busy = false;
+  // 전체 적용이 도는 동안만 [전체 적용]·[이 대화 모두 적용]을 꺼 둔다(에이전트 작업 중에도 적용은 된다)
+  let applyingAll = false;
   let stopRequested = false;
   // [멈춤]은 그때 대기 중이던 적용만 취소한다 — 멈춘 뒤에 새로 누른 [적용]은 그대로 실행돼야 한다
   let stopGen = 0;
@@ -658,10 +660,14 @@
         again.textContent = entry.started ? '시작했습니다' : answered < entry.items.length ? '남은 질문 ' + (entry.items.length - answered) + '개에 답하세요' : '답한 대로 시작';
         return;
       }
-      again.disabled = !answered || busy;
-      // 작업 중에 답하면 남은 구간에 바로 들어가므로, 다시 처리는 작업이 끝난 뒤에 누를 수 있다
-      again.textContent = busy && live ? '답은 남은 구간에 바로 반영됩니다 · 끝나면 다시 처리할 수 있어요'
-        : answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
+      // 넘긴 답은 고칠 게 없으므로 정한 답만 센다
+      const decided = entry.items.filter(q => q.answer && q.answer !== '(넘김)').length;
+      const followText = !!(entry.followUp && entry.followUp.instruction);
+      again.disabled = !(followText ? decided : answered) || busy;
+      // 작업 중에 답하면 남은 구간에 바로 들어가므로, 이미 끝난 구간 반영은 작업이 끝난 뒤에 누를 수 있다
+      again.textContent = busy && live ? '답은 남은 구간에 바로 반영됩니다 · 끝나면 끝난 구간에도 반영할 수 있어요'
+        : followText ? (decided ? '정한 ' + decided + '개를 원고에 반영' : answered ? '모두 넘겼습니다' : '답을 고르세요')
+          : answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
     };
     m.syncQuestion = sync;
     for (const q of entry.items) {
@@ -727,7 +733,14 @@
       if (pre) { entry.started = true; saveLog(); }
       if (f.kind === 'format') runFormatCheck(f.extra || '');
       else if (f.kind === 'spell') runSpellCheck(f.extra || '', { answered: pre });
-      else if (f.instruction) runInstruction(f.instruction, { answered: pre });
+      else if (pre && f.instruction) runInstruction(f.instruction, { answered: true });
+      else if (f.instruction) {
+        // 작업 중·끝난 뒤 질문: 원래 지시(전체 교정 등)를 처음부터 다시 돌리지 않고, 정한 것만 원고에 맞춘다
+        const picked = entry.items.filter(q => q.answer && q.answer !== '(넘김)');
+        if (!picked.length) { again.disabled = false; return; }
+        runInstruction('편집자가 방금 정한 것에 맞춰 원고를 고쳐 줘. 이 결정과 어긋나는 곳만 고치고, 그 밖의 교정은 하지 마.\n'
+          + picked.map(q => '· ' + (q.topic || q.question) + ': ' + q.answer).join('\n'));
+      }
     });
     m.appendChild(again);
     sync();
@@ -1525,7 +1538,6 @@
       all.type = 'button';
       all.msgEdits = { card, edits };
       all.addEventListener('click', () => {
-        if (busy) return;
         all.disabled = true;
         Promise.all(edits.filter(e => e.state === 'proposed' || e.state === 'failed').map(e => queueApply(card, e)))
           .then(updateApplyAll);
@@ -1560,30 +1572,32 @@
     const n = pendingEdits().length;
     btn.hidden = n === 0;
     btn.textContent = '전체 적용 ' + n;
-    btn.disabled = busy;
+    // 적용은 문서마다 줄을 세워 차례로 하므로 에이전트가 도는 중에도 누를 수 있다
+    btn.disabled = applyingAll;
     for (const b of document.querySelectorAll('.g-turn-apply')) {
       const k = pendingEdits(b.dataset.turn).length;
       b.hidden = k === 0;
       b.textContent = '이 대화 모두 적용 ' + k;
-      b.disabled = busy;
+      b.disabled = applyingAll;
     }
     for (const b of document.querySelectorAll('.g-msg-apply')) {
       const k = b.msgEdits ? b.msgEdits.edits.filter(e => e.item && (e.state === 'proposed' || e.state === 'failed')).length : 0;
       b.hidden = k === 0;
       b.textContent = '모두 적용 (' + k + '개)';
-      b.disabled = busy;
     }
   }
 
   async function applyAllPending(turn) {
     const todo = pendingEdits(typeof turn === 'string' ? turn : '');
-    if (!todo.length || busy) return;
-    const btn = $('g-apply-all');
-    btn.disabled = true;
+    if (!todo.length || applyingAll) return;
+    applyingAll = true;
+    updateApplyAll();
     systemMsg('아직 적용 안 된 ' + todo.length + '곳을 전부 적용합니다', false, false);
     // 문서마다 적용 줄이 따로 있어 문서끼리는 동시에, 한 문서 안에서는 차례로 돈다
     await Promise.all(todo.map(({ card, edit }) => queueApply(card, edit)));
-    const left = pendingEdits().length;
+    // 작업 중이면 그사이 새 제안이 생기므로, 이번에 맡은 것만 센다
+    const left = todo.filter(({ edit }) => edit.state === 'proposed' || edit.state === 'failed').length;
+    applyingAll = false;
     systemMsg('전체 적용 끝 · ' + (todo.length - left) + '곳 적용' + (left ? ' · 남은 ' + left + '곳은 실패나 멈춤' : ''), left > 0, false);
     updateApplyAll();
   }
