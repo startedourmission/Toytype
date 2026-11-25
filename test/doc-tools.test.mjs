@@ -55,6 +55,8 @@ test('최소 바꾸기: 같은 앞뒤를 덜어 서식이 있는 글자를 덮�
   assert.deepEqual(T.minimalEdit('x2 의 의', 'x2 의', 10), { src: '의 의', dst: '의', start: 13, end: 16 });
   // 앞머리 삭제: "따라서 "를 지우면서 뒤 글자 t를 함께 덮는다
   assert.deepEqual(T.minimalEdit('따라서 top이 -1인 경우', 'top이 -1인 경우', 0), { src: '따라서 t', dst: 't', start: 0, end: 5 });
+  // 위첨자 병기 지우기: 뒤 글자('을')가 아니라 앞 글자('블')를 빌려 덮는다 — 뒤 글자가 위첨자로 바뀌지 않게
+  assert.deepEqual(T.minimalEdit('테이블hash table을', '테이블을', 0), { src: '블hash table', dst: '블', start: 2, end: 13 });
   // 순수 삽입은 첨자가 아닐 법한 이웃 글자를 함께 덮는다(오른쪽 '다'를 고름, 왼쪽 숫자 2는 피함)
   assert.deepEqual(T.minimalEdit('n2다', 'n2이다', 0), { src: '다', dst: '이다', start: 2, end: 3 });
   // 같으면 그대로
@@ -164,7 +166,8 @@ test('통째 삭제: 문서의 이웃 글자를 빌려 덮어 입력할 글자�
   const apply = (text, c) => text.slice(0, c.start) + c.dst + text.slice(c.start + c.src.length);
   const cases = [
     ['앞 문장. 지울 문장. 뒷 문장.', '지울 문장.', '앞 문장. 뒷 문장.'],         // 앞뒤 공백 → 공백 하나 남김
-    ['앞 문장.지울 문장.\n다음', '지울 문장.', '앞 문장.\n다음'],                // 줄 끝 → 앞 글자로 덮음
+    ['앞 문장.지울 문장.\n다음', '지울 문장.', '앞 문장.\n다음'],                // 앞 글자로 덮음
+    ['해시 테이블hash table을 쓴다', 'hash table', '해시 테이블을 쓴다'],        // 병기 삭제 → 앞 글자로 덮음
     ['앞 문단\n지울 문단 전체\n다음 문단', '지울 문단 전체', '앞 문단\n다음 문단'], // 문단 통째 → 앞 문단 끝 글자+줄바꿈
     ['지울 첫 문단\n다음 문단', '지울 첫 문단', '다음 문단'],                     // 첫 문단 → 다음 문단 첫 글자
     ['힌트: 이것 끝', '힌트: ', '이것 끝']                                        // 뒤 글자로 덮음
@@ -178,5 +181,7 @@ test('통째 삭제: 문서의 이웃 글자를 빌려 덮어 입력할 글자�
     assert.ok(m.dst.length > 0 && m.src.length > m.dst.length);
     assert.equal(apply(text, m), want);
   }
+  // 병기 삭제는 앞 글자로 시작하는 선택이어야 한다(선택 첫 글자의 서식을 따르므로)
+  assert.deepEqual(T.coverDeletion('테이블hash table을', 'hash table', 3), { src: '블hash table', dst: '블', start: 2 });
   assert.equal(T.coverDeletion('다른 글', '없는 글', 0), null);
 });

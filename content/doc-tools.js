@@ -127,8 +127,15 @@
     let d = dst.slice(p, dst.length - q);
     let at = start + p;
     // 순수 삽입(덮을 글자 없음)이나 순수 삭제(넣을 글자 없음)는 문서에 글자를 "입력"하는 방식으로 처리할 수 없다.
-    // 이웃 글자 하나를 같이 덮어 입력할 글자가 생기게 한다. 첨자일 가능성이 낮은 이웃(한글·공백·문장부호)을 고른다.
-    if (!s || !d) {
+    // 이웃 글자 하나를 같이 덮어 입력할 글자가 생기게 한다. 덮어 쓴 글자는 선택 첫 글자의 서식을 따른다.
+    // - 삭제: 앞 글자를 빌린다. 선택이 그 앞 글자로 시작하니 다시 친 글자가 제 서식을 지킨다.
+    //   뒤 글자를 빌리면 지우는 글자(예: 위첨자 병기)의 서식을 물려받아 뒤 글자가 위첨자가 된다.
+    // - 삽입: 첨자일 가능성이 낮은 이웃(한글·공백·문장부호)을 고른다.
+    if (!d && s && p > 0 && src[p - 1] !== '\n') {
+      s = src[p - 1] + s;
+      d = src[p - 1];
+      at -= 1;
+    } else if (!s || !d) {
       const right = q > 0 ? src[src.length - q] : '';
       const left = p > 0 ? src[p - 1] : '';
       const plain = c => !!c && !/[A-Za-z0-9]/.test(c);
@@ -161,10 +168,11 @@
       if (after === '\n' && solid(text[end + 1])) return { src: src + '\n' + text[end + 1], dst: text[end + 1], start };
       return null;
     }
+    // 덮어 쓴 글자는 선택 첫 글자의 서식을 따르므로 앞 글자를 먼저 빌린다(뒤 글자를 빌리면 지우는 글의 서식을 물려받는다)
     if (before === ' ' && after === ' ') return { src: ' ' + src + ' ', dst: ' ', start: start - 1 };
-    if (solid(after)) return { src: src + after, dst: after, start };
     if (before === ' ' && solid(text[start - 2])) return { src: text[start - 2] + ' ' + src, dst: text[start - 2], start: start - 2 };
     if (solid(before)) return { src: before + src, dst: before, start: start - 1 };
+    if (solid(after)) return { src: src + after, dst: after, start };
     return null;
   }
 

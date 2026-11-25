@@ -659,8 +659,11 @@
         return;
       }
       again.disabled = !answered || busy;
-      again.textContent = answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
+      // 작업 중에 답하면 남은 구간에 바로 들어가므로, 다시 처리는 작업이 끝난 뒤에 누를 수 있다
+      again.textContent = busy && live ? '답은 남은 구간에 바로 반영됩니다 · 끝나면 다시 처리할 수 있어요'
+        : answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
     };
+    m.syncQuestion = sync;
     for (const q of entry.items) {
       const box = el('div', 'g-q');
       box.appendChild(el('div', 'g-q-text', q.question));
@@ -958,6 +961,8 @@
     $('g-stop').hidden = !on;
     $('g-conc').disabled = on;
     for (const chip of document.querySelectorAll('.g-chip')) chip.disabled = on;
+    // 질문 카드 버튼은 작업 중에 꺼 두므로, 작업이 끝나면 다시 계산한다
+    for (const q of document.querySelectorAll('.g-msg-question')) if (q.syncQuestion) q.syncQuestion();
   }
 
   function setProgress(done, total) {
@@ -972,11 +977,9 @@
   }
 
   // ---------- 맞춤법 규칙(토이타입 규칙 엔진) ----------
-  // 격자 칸은 가볍게 띄우느라 규칙 검사를 하지 않는다. /맞춤법(룰베이스)가 규칙 결과를 AI로 걸러 수정으로 올리고,
-  // 일반 교정 지시는 구간 에이전트에게 규칙이 잡은 곳을 참고로만 준다(에이전트가 맞는 것만 자기 수정으로 낸다).
+  // 격자 칸은 가볍게 띄우느라 규칙 검사를 하지 않는다. 기계적 검사는 /맞춤법(룰베이스)만 한다.
+  // 일반 지시(전체 교정 등)는 규칙 결과를 쓰지 않는다 — 에이전트는 프롬프트의 하우스 표기 규칙만 따른다.
   const RULE_CANDIDATES_MAX = 120;
-  // 이런 말이 든 지시(전체 교정 등)는 구간 에이전트에게 규칙이 잡은 곳을 참고로 준다
-  const RULE_HINT_RE = /교정|맞춤법|오탈자|오타|띄어쓰기/;
   let rulesReady = null;
   function ensureRules() {
     if (rulesReady) return rulesReady;
@@ -1417,7 +1420,7 @@
     // 팀장 단계: 지시와 목차를 보고 손댈 구간을 고르고, 모두가 따를 작업 요령을 정한다.
     // 일관성이 중요한 지시면 원고를 먼저 훑어 규칙을 정하고, 애매한 건 손대기 전에 묻는다.
     const team = { plan: null, board: [] };
-    // 기계적 맞춤법 검사는 /맞춤법(룰베이스)로 따로 한다. 교정 지시면 구간 에이전트에게 규칙이 잡은 곳을 참고로만 준다(runChunk)
+    // 기계적 맞춤법 검사는 /맞춤법(룰베이스)로 따로 한다. 일반 지시는 규칙 결과를 쓰지 않는다
     const [plan, mentions] = queues.length && !stopRequested
       ? await Promise.all([planWork(instruction, queues), collectFirstMentions(queues).catch(() => new Map())])
       : [null, new Map()];
@@ -1516,6 +1519,19 @@
   }
 
   function renderEdits(msg, card, edits, auto) {
+    // 메시지(에이전트 한 구간) 단위 [모두 적용] — 이 메시지에서 아직 적용 안 된 제안만 적용한다
+    if (!auto && edits.length > 1) {
+      const all = el('button', 'g-apply-all g-rule-apply g-msg-apply', '');
+      all.type = 'button';
+      all.msgEdits = { card, edits };
+      all.addEventListener('click', () => {
+        if (busy) return;
+        all.disabled = true;
+        Promise.all(edits.filter(e => e.state === 'proposed' || e.state === 'failed').map(e => queueApply(card, e)))
+          .then(updateApplyAll);
+      });
+      msg.bubble.appendChild(all);
+    }
     const list = el('div', 'g-edits');
     for (const edit of edits) list.appendChild(buildEditItem(card, edit, auto));
     msg.bubble.appendChild(list);
@@ -1549,6 +1565,12 @@
       const k = pendingEdits(b.dataset.turn).length;
       b.hidden = k === 0;
       b.textContent = '이 대화 모두 적용 ' + k;
+      b.disabled = busy;
+    }
+    for (const b of document.querySelectorAll('.g-msg-apply')) {
+      const k = b.msgEdits ? b.msgEdits.edits.filter(e => e.item && (e.state === 'proposed' || e.state === 'failed')).length : 0;
+      b.hidden = k === 0;
+      b.textContent = '모두 적용 (' + k + '개)';
       b.disabled = busy;
     }
   }
@@ -1655,10 +1677,6 @@
     rpc(card, 'agentCursor', { agent: cursor, start: chunk.start }, 8000);
     const msg = agentMsg(agent, name + ' · ' + where + ' · ' + firstLine(card.text.slice(chunk.start, chunk.end)));
     const chunkText = card.text.slice(chunk.start, chunk.end);
-    // 교정 지시면 규칙 엔진이 잡은 곳을 참고로 준다 — 맥락상 맞는 것만 에이전트가 자기 수정으로 낸다
-    const hints = RULE_HINT_RE.test(instruction)
-      ? (await ruleCandidates(chunkText)).map(r => ({ source: r.src, replacement: r.dst, context: r.context }))
-      : [];
     const requestId = 'grid-' + card.doc.id.slice(0, 8) + '-' + idx + '-' + Date.now().toString(36);
     liveRequests.add(requestId);
     let res = await send({
@@ -1678,7 +1696,6 @@
           team: task.team ? task.team.board.slice(-24) : [],
           heading: firstLine(chunkText),
           ...firstMentionsFor(task, task.team && task.team.mentions && task.team.mentions.get(card.doc.id)),
-          ruleCandidates: hints,
           chunkIndex: idx,
           chunkCount: count
         }

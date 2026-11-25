@@ -2838,12 +2838,11 @@ export function buildProofreadChunkPrompt(document) {
     '- Default stance: leave the author\'s text alone. Beyond what the editor-in-chief explicitly asked, flag only clear, objective errors a careful editor would certainly fix: definite 비문 (broken grammar — subject/predicate mismatch, wrong particle or ending, missing or duplicated words that make the sentence wrong), wrong technical statements, inconsistent terms, real typos. When in doubt, skip it.',
     '- Do NOT do 윤문: no rewording for style, tone, rhythm, conciseness, or "more natural" phrasing, and do not touch sentences that are merely long, plain, slightly awkward, or could be phrased better — unless the editor-in-chief explicitly asked for polishing (다듬기, 윤문, 자연스럽게 등).',
     '- Most sections need 0-5 findings; a long list means you are over-editing. Only an explicit bulk task (e.g. unifying sentence endings) justifies many findings.',
-    '- For simple spelling/spacing/notation, follow the RULE_HINTS below when given instead of generic spacing advice; do not hunt for spacing fixes the hints do not cover.',
+    '- Do not do mechanical spelling/spacing/notation sweeps — a separate rule-based tool handles those. Fix a spelling or spacing slip only when it is an obvious typo, and then follow the house rules above over generic spacing advice.',
     '- Skip code, identifiers, URLs, file paths, and command lines.',
     '- Do not rewrite whole paragraphs. If nothing needs fixing, return {"findings":[]}.',
     `- At most ${PROOFREAD_CHUNK_MAX_FINDINGS} findings, most important first.`,
     '',
-    ...ruleCandidateLines(document.ruleCandidates),
     ...firstMentionLines(document.firstMentions, document.unreadChapters),
     'Section metadata:',
     JSON.stringify({ title: document.title || '', section: (Number(document.chunkIndex) || 0) + 1, sections: Number(document.chunkCount) || 1, heading: String(document.heading || '').slice(0, 120) }),
@@ -2880,29 +2879,6 @@ function teamBoardLines(team) {
   return [
     'Team board — conventions other agents already settled in other sections (follow them for consistency; editor decisions and shared rules win over these; if two notes conflict, ask a question instead of choosing):',
     ...notes.map(n => '- [' + n.from + '] ' + n.note)
-  ];
-}
-
-// 토이타입 맞춤법 규칙 엔진이 이 구간에서 잡은 곳. 교정 지시 때 에이전트에게 참고로만 준다.
-// 기계적 일치라 오탐이 섞이므로, 에이전트가 맥락상 맞는 것만 자기 수정(findings)으로 낸다.
-// 규칙 결과를 그대로 올리는 기계적 검사는 격자의 /맞춤법(룰베이스)가 따로 한다.
-const RULE_CANDIDATES_MAX = 120;
-function ruleCandidateLines(list) {
-  const items = (Array.isArray(list) ? list : []).slice(0, RULE_CANDIDATES_MAX).map(r => ({
-    source: String(r && r.source || '').slice(0, 60),
-    replacement: String(r && r.replacement || '').slice(0, 60),
-    context: String(r && r.context || '').slice(0, 120)
-  })).filter(r => r.source);
-  if (!items.length) return [];
-  return [
-    'RULE_HINTS: the Toytype house spelling/spacing/notation rules matched these spots in this section (⟦⟧ marks the match in context). They are reference only — nothing is applied automatically.',
-    '- For each hint that is right in context, include it in your findings (category 맞춤법; widen source with neighboring characters so it is unique). These house rules win over generic Korean spacing advice.',
-    '- Skip false positives: matches inside code, identifiers, URLs, commands, quoted program output, proper nouns or product names, or where the original wording is clearly intended or the replacement would make the sentence wrong.',
-    '- Hints count toward the findings limit; when short on room, keep 비문 and factual fixes first.',
-    '<<<TOYTYPE_RULE_HINTS',
-    JSON.stringify(items),
-    'TOYTYPE_RULE_HINTS',
-    ''
   ];
 }
 
