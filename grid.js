@@ -77,14 +77,16 @@
   const RPC_TIMEOUT_MS = 30000;
   const READY_TIMEOUT_MS = 90000;
   const PRESETS = [
-    ['전체 교정', '이 원고를 교정해 줘. 비문, 어색한 문장, 잘못된 기술 설명, 용어 혼용을 고쳐 줘.'],
+    ['전체 교정', '이 원고를 교정해 줘. 확실히 틀린 것만 고쳐 줘: 명백한 비문, 잘못된 기술 설명, 용어 혼용, 오탈자. 문체·어감 손질(윤문)은 하지 마.'],
     ['합니다체 통일', '본문 서술을 합니다체로 통일해 줘. 인용·예시 대화·코드는 그대로 둬.'],
-    ['비문만', '문법적으로 틀린 문장(비문)만 최소한으로 고쳐 줘.'],
+    ['비문만', '문법적으로 확실히 틀린 문장(비문)만 최소한으로 고쳐 줘. 애매하면 두고 넘어가.'],
     ['용어 표기 통일', '같은 용어가 다른 표기로 섞인 곳을 가장 많이 쓴 표기로 통일해 줘.'],
     ['문장 다듬기', '뜻은 그대로 두고 길고 어색한 문장만 짧고 자연스럽게 다듬어 줘.']
   ];
 
   const HISTORY_TURNS = 6;
+  // 윤문(문체·어감 손질)을 맡기는 지시
+  const POLISH_RE = /다듬|윤문|자연스럽|매끄럽|간결/;
 
   const $ = id => document.getElementById(id);
   let session = null;
@@ -1701,7 +1703,9 @@
       saveLog();
       return 0;
     }
-    const edits = (res.findings || []).map(f => ({
+    // 윤문은 다듬어 달라고 한 지시에서만 받는다 — 그 밖의 지시에서 AI가 낸 윤문은 버린다
+    const polish = POLISH_RE.test(instruction.replace(/윤문[^.\n]{0,4}(하지|말|빼|금지)/g, ''));
+    const edits = (res.findings || []).filter(f => polish || f.category !== '윤문').map(f => ({
       src: f.source, dst: f.replacement, reason: f.reason, category: f.category,
       hint: chunk.start + (Number(f.offset) || 0)
     }));
