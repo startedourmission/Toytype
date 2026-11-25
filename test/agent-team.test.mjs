@@ -46,14 +46,12 @@ test('구간 에이전트: 팀 계획·게시판을 받고 share를 돌려준다
   assert.deepEqual(parseShareNotes('x'), []);
 });
 
-test('맞춤법 규칙 후보: 프롬프트에 들어가고 오탐 id만 돌려받는다', async () => {
-  const { parseRejectRules } = await import('../tools/toytype_ai_bridge.mjs');
+test('맞춤법 규칙 힌트: 교정 지시 때 참고로만 들어가고 자동 반영 약속은 없다', () => {
   const p = buildProofreadChunkPrompt({ text: '됬다', ruleCandidates: [{ id: 0, source: '됬', replacement: '됐', context: '⟦됬⟧다' }] });
-  assert.match(p, /RULE_CANDIDATES/);
-  assert.match(p, /"rejectRules"/);
-  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /TOYTYPE_RULE_CANDIDATES/);
-  assert.deepEqual(parseRejectRules(JSON.stringify({ rejectRules: [3, '1', 3, 'x'] })), [3, 1]);
-  assert.deepEqual(parseRejectRules('nope'), []);
+  assert.match(p, /TOYTYPE_RULE_HINTS/);
+  assert.match(p, /reference only/);
+  assert.doesNotMatch(p, /rejectRules/);
+  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /TOYTYPE_RULE_HINTS/);
 });
 
 test('규칙 거르기: 무시·질문 id를 아는 후보로만 받는다', async () => {

@@ -2815,7 +2815,7 @@ export function buildProofreadChunkPrompt(document) {
   const instruction = String(document.instruction || '').trim().slice(0, 2000);
   return [
     'You are a Korean IT-book copy editor working on ONE section of a manuscript, as one of several editing agents.',
-    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"rejectRules":[],"share":[],"questions":[]}. No markdown.',
+    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"share":[],"questions":[]}. No markdown.',
     ...decisionsLines(document.decisions),
     ...teamPlanLines(document.plan),
     ...teamBoardLines(document.team),
@@ -2835,13 +2835,12 @@ export function buildProofreadChunkPrompt(document) {
     '- replacement is the corrected text for that exact source.',
     '- reason: one short Korean sentence.',
     '- category: one of 비문, 윤문, 맞춤법, 용어, 사실, 기타.',
-    '- Simple spelling and spacing are handled by the deterministic rule engine candidates below (when given). Your own findings focus on 비문, awkward phrasing, unclear sentences, wrong technical statements, inconsistent terms.',
+    '- Focus on 비문, awkward phrasing, unclear sentences, wrong technical statements, inconsistent terms. For simple spelling/spacing/notation, follow the RULE_HINTS below when given instead of generic spacing advice; do not hunt for spacing fixes the hints do not cover.',
     '- Skip code, identifiers, URLs, file paths, and command lines.',
     '- Do not rewrite whole paragraphs. If nothing needs fixing, return {"findings":[]}.',
     `- At most ${PROOFREAD_CHUNK_MAX_FINDINGS} findings, most important first.`,
     '',
     ...ruleCandidateLines(document.ruleCandidates),
-    ...ruleFixedLines(document.ruleFixed),
     ...firstMentionLines(document.firstMentions, document.unreadChapters),
     'Section metadata:',
     JSON.stringify({ title: document.title || '', section: (Number(document.chunkIndex) || 0) + 1, sections: Number(document.chunkCount) || 1, heading: String(document.heading || '').slice(0, 120) }),
@@ -2881,23 +2880,25 @@ function teamBoardLines(team) {
   ];
 }
 
-// 토이타입 맞춤법 규칙 엔진이 이 구간에서 잡은 후보. 대부분 맞지만 기계적 일치라 오탐이 섞인다.
-// 에이전트는 오탐 id만 rejectRules로 돌려주고, 나머지는 격자가 그대로 수정으로 올린다.
+// 토이타입 맞춤법 규칙 엔진이 이 구간에서 잡은 곳. 교정 지시 때 에이전트에게 참고로만 준다.
+// 기계적 일치라 오탐이 섞이므로, 에이전트가 맥락상 맞는 것만 자기 수정(findings)으로 낸다.
+// 규칙 결과를 그대로 올리는 기계적 검사는 격자의 /맞춤법(룰베이스)가 따로 한다.
 const RULE_CANDIDATES_MAX = 120;
 function ruleCandidateLines(list) {
   const items = (Array.isArray(list) ? list : []).slice(0, RULE_CANDIDATES_MAX).map(r => ({
-    id: Number(r && r.id) || 0,
     source: String(r && r.source || '').slice(0, 60),
     replacement: String(r && r.replacement || '').slice(0, 60),
     context: String(r && r.context || '').slice(0, 120)
   })).filter(r => r.source);
   if (!items.length) return [];
   return [
-    'RULE_CANDIDATES: the Toytype spelling/spacing rule engine matched these in this section (⟦⟧ marks the match in context). They are accepted by default and will be applied by the editor tool, so do NOT repeat them in findings.',
-    'Return "rejectRules":[ids] listing ONLY false positives: matches inside code, identifiers, URLs, commands, quoted program output, proper nouns or product names, or where the original wording is clearly intended or the replacement would make the sentence wrong. When unsure, do not reject.',
-    '<<<TOYTYPE_RULE_CANDIDATES',
+    'RULE_HINTS: the Toytype house spelling/spacing/notation rules matched these spots in this section (⟦⟧ marks the match in context). They are reference only — nothing is applied automatically.',
+    '- For each hint that is right in context, include it in your findings (category 맞춤법; widen source with neighboring characters so it is unique). These house rules win over generic Korean spacing advice.',
+    '- Skip false positives: matches inside code, identifiers, URLs, commands, quoted program output, proper nouns or product names, or where the original wording is clearly intended or the replacement would make the sentence wrong.',
+    '- Hints count toward the findings limit; when short on room, keep 비문 and factual fixes first.',
+    '<<<TOYTYPE_RULE_HINTS',
     JSON.stringify(items),
-    'TOYTYPE_RULE_CANDIDATES',
+    'TOYTYPE_RULE_HINTS',
     ''
   ];
 }
@@ -2982,19 +2983,6 @@ function firstMentionLines(list, unread) {
   if (missing.length) out.push('- These earlier chapters could not be read, so first mentions there are unknown: ' + missing.join(', ') + '. Do not remove glosses only because they might exist there; if it matters for this section, say so briefly in note.');
   out.push('');
   return out;
-}
-
-// 규칙이 이미 고치는 곳. 구간 에이전트가 같은 수정을 다시 내지 않게 알린다.
-function ruleFixedLines(list) {
-  const items = (Array.isArray(list) ? list : []).map(x => String(x || '').slice(0, 80)).filter(Boolean).slice(0, 60);
-  if (!items.length) return [];
-  return ['Already fixed by the rule engine in this section (do NOT propose these again, and do not make findings that overlap them):', ...items.map(x => '- ' + x)];
-}
-
-export function parseRejectRules(response) {
-  let parsed = null;
-  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
-  return Array.from(new Set((parsed && Array.isArray(parsed.rejectRules) ? parsed.rejectRules : []).map(Number).filter(Number.isInteger))).slice(0, RULE_CANDIDATES_MAX);
 }
 
 export function parseShareNotes(response) {
@@ -3213,7 +3201,6 @@ async function generateProofreadChunk(body) {
     findings: parseProofreadChunkFindings(run.response, text.slice(0, PROOFREAD_CHUNK_MAX_CHARS)),
     questions: parseQuestions(run.response),
     share: parseShareNotes(run.response),
-    rejectRules: parseRejectRules(run.response),
     elapsedMs: run.elapsedMs
   };
 }

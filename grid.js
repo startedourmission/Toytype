@@ -60,7 +60,7 @@
       <form class="g-compose" id="g-compose">
         <div class="g-compose-main">
         <div class="g-cmds" id="g-cmds" hidden></div>
-        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/서식 점검, /전체 교정 …)"></textarea>
+        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/맞춤법(룰베이스), /서식 점검, /전체 교정 …)"></textarea>
         </div>
         <button type="submit" class="g-send" id="g-send" title="보내기 (⌘Enter)" aria-label="보내기">↑</button>
       </form>
@@ -721,6 +721,7 @@
       const f = entry.followUp || {};
       if (pre) { entry.started = true; saveLog(); }
       if (f.kind === 'format') runFormatCheck(f.extra || '');
+      else if (f.kind === 'spell') runSpellCheck(f.extra || '', { answered: pre });
       else if (f.instruction) runInstruction(f.instruction, { answered: pre });
     });
     m.appendChild(again);
@@ -969,9 +970,11 @@
   }
 
   // ---------- 맞춤법 규칙(토이타입 규칙 엔진) ----------
-  // 격자 칸은 가볍게 띄우느라 규칙 검사를 하지 않으므로, 구간을 맡은 에이전트에게 규칙이 잡은 후보를 넘긴다.
-  // 에이전트는 오탐(코드·고유명사·인용·의도된 표현)만 골라 빼고, 나머지는 모두 수정으로 올린다.
+  // 격자 칸은 가볍게 띄우느라 규칙 검사를 하지 않는다. /맞춤법(룰베이스)가 규칙 결과를 AI로 걸러 수정으로 올리고,
+  // 일반 교정 지시는 구간 에이전트에게 규칙이 잡은 곳을 참고로만 준다(에이전트가 맞는 것만 자기 수정으로 낸다).
   const RULE_CANDIDATES_MAX = 120;
+  // 이런 말이 든 지시(전체 교정 등)는 구간 에이전트에게 규칙이 잡은 곳을 참고로 준다
+  const RULE_HINT_RE = /교정|맞춤법|오탈자|오타|띄어쓰기/;
   let rulesReady = null;
   function ensureRules() {
     if (rulesReady) return rulesReady;
@@ -1316,6 +1319,70 @@
     return { rules: Array.isArray(res.rules) ? res.rules : [], note: res.note || '', questions: res.questions || [] };
   }
 
+  // 문서 본문을 칸 안의 편집기에서 직접 읽어 구간으로 나눈다(적용할 때 쓰는 위치와 같은 기준)
+  async function readQueues(targets) {
+    const queues = [];
+    for (const card of targets.filter(c => c.ready)) {
+      const res = await rpc(card, 'getText', {}, 30000);
+      if (!res.ok) {
+        systemMsg(card.doc.name + ' 본문을 읽지 못했습니다', true);
+        continue;
+      }
+      card.text = res.text;
+      const chunks = buildChunks(res.text);
+      queues.push(chunks.map((chunk, idx) => ({ card, chunk, idx, count: chunks.length })));
+    }
+    return queues;
+  }
+
+  // /맞춤법(룰베이스): 규칙 엔진으로 기계적으로 검사하고, AI는 결과를 거르기만 한다(오탐 무시·애매하면 질문).
+  // 일반 지시(전체 교정 등)는 이 단계를 거치지 않는다.
+  async function runSpellCheck(extra, opts) {
+    const answered = !!(opts && opts.answered);
+    if (busy) return;
+    const targets = cards.filter(c => c.pick.checked);
+    if (!targets.length) { systemMsg('검사할 문서를 하나 이상 고르세요', true); return; }
+    if (!answered) userMsg('맞춤법(룰베이스)' + (extra ? '\n' + extra : ''));
+    runQuestions = [];
+    askedThisRun = new Set();
+    currentTurn = 'turn-' + Date.now().toString(36);
+    const turn = currentTurn;
+    stopRequested = false;
+    setBusy(true);
+    const auto = $('g-auto').checked;
+    const agents = Number($('g-conc').value) || 3;
+    for (const c of targets) { c.pinned = true; clearTimeout(c.unloadTimer); if (c.unloaded) loadCard(c); }
+    const notReady = targets.filter(c => !c.ready);
+    if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)', false, false);
+    await Promise.all(notReady.map(c => c.readyPromise));
+    const finish = () => { currentTurn = ''; unpinTargets(targets); setBusy(false); };
+    const queues = await readQueues(targets);
+    await scanRules(queues);
+    if (queues.length && !stopRequested) await triageRules(queues, agents);
+    if (stopRequested) { systemMsg('멈췄습니다.'); finish(); return; }
+    // 애매해서 보류한 규칙은 반영하기 전에 묻는다. 답하면 그 결정대로 다시 거른다
+    if (runQuestions.length && !answered) {
+      systemMsg('맞춤법(룰베이스) · 정할 것이 ' + runQuestions.length + '개 있습니다. 답하면 그대로 반영합니다.');
+      finish();
+      showRunQuestions({ kind: 'spell', extra: extra || '', preflight: true });
+      return;
+    }
+    postRuleEdits(queues, auto);
+    if (auto) await Promise.all(targets.map(c => c.applyChain));
+    const total = logEntries.filter(e => e.t === 'agent' && e.turn === turn && Array.isArray(e.edits)).reduce((n, e) => n + e.edits.length, 0);
+    history.push({ instruction: '맞춤법(룰베이스)' + (extra ? ': ' + extra.slice(0, 200) : ''), result: '규칙 수정 ' + total + '곳', notes: [], changes: [] });
+    history = history.slice(-HISTORY_TURNS);
+    if (sessionId) chrome.storage.local.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
+    const endMsg = systemMsg('맞춤법(룰베이스) 끝 · 고칠 곳 ' + total + '개');
+    if (pendingEdits(turn).length) {
+      logEntries[logEntries.length - 1].turnApply = turn;
+      attachTurnApply(endMsg, turn);
+      saveLog();
+    }
+    finish();
+    showRunQuestions({ kind: 'spell', extra: extra || '' });
+  }
+
   // opts.answered: 시작 전 질문에 답하고 다시 시작한 것 — 또 묻지 않고(새 질문은 끝에 모아) 바로 작업한다
   async function runInstruction(instruction, opts) {
     const answered = !!(opts && opts.answered);
@@ -1344,26 +1411,14 @@
     if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)', false, false);
     await Promise.all(notReady.map(c => c.readyPromise));
 
-    // 문서 본문을 칸 안의 편집기에서 직접 읽는다(적용할 때 쓰는 위치와 같은 기준)
-    const queues = [];
-    for (const card of targets.filter(c => c.ready)) {
-      const res = await rpc(card, 'getText', {}, 30000);
-      if (!res.ok) {
-        systemMsg(card.doc.name + ' 본문을 읽지 못했습니다', true);
-        continue;
-      }
-      card.text = res.text;
-      const chunks = buildChunks(res.text);
-      queues.push(chunks.map((chunk, idx) => ({ card, chunk, idx, count: chunks.length })));
-    }
+    const queues = await readQueues(targets);
     // 팀장 단계: 지시와 목차를 보고 손댈 구간을 고르고, 모두가 따를 작업 요령을 정한다.
     // 일관성이 중요한 지시면 원고를 먼저 훑어 규칙을 정하고, 애매한 건 손대기 전에 묻는다.
     const team = { plan: null, board: [] };
-    // 규칙 검사는 바로 하고, AI가 그 결과를 거르는 일과 팀장 계획을 동시에 돌린다
-    await scanRules(queues);
-    const [plan, , mentions] = queues.length && !stopRequested
-      ? await Promise.all([planWork(instruction, queues), triageRules(queues, agents), collectFirstMentions(queues).catch(() => new Map())])
-      : [null, null, new Map()];
+    // 기계적 맞춤법 검사는 /맞춤법(룰베이스)로 따로 한다. 교정 지시면 구간 에이전트에게 규칙이 잡은 곳을 참고로만 준다(runChunk)
+    const [plan, mentions] = queues.length && !stopRequested
+      ? await Promise.all([planWork(instruction, queues), collectFirstMentions(queues).catch(() => new Map())])
+      : [null, new Map()];
     team.mentions = mentions;
     {
       // 첫 언급 확인 범위를 알린다 — 못 읽은 이전 장이 있으면 이름을 밝힌다
@@ -1403,27 +1458,12 @@
       // 원고 전체 일관성이 필요한데 문서가 한 번에 볼 만큼 짧으면 나누지 않고 한 에이전트가 통째로 본다
       if (plan.scope === 'whole') planned = planned.map(q => mergeWholeDoc(q));
     }
-    if (!plan && runQuestions.length && !answered && !stopRequested) {
-      // 계획 없이도 규칙 거르기에서 질문이 나왔으면 먼저 묻는다
-      systemMsg('시작 전에 정할 것이 ' + runQuestions.length + '개 있습니다. 답하면 그대로 시작합니다.');
-      currentTurn = '';
-      unpinTargets(targets);
-      setBusy(false);
-      showRunQuestions({ kind: 'text', instruction, preflight: true });
-      return;
-    }
     if (stopRequested) {
       systemMsg('멈췄습니다.');
       currentTurn = '';
       unpinTargets(targets);
       setBusy(false);
       return;
-    }
-    // 거른 규칙 수정을 올린다. 합쳐진 구간(통째 보기)도 원래 구간의 규칙 수정을 그대로 넘겨받는다
-    postRuleEdits(queues, auto);
-    for (const q of planned) for (const t of q) if (!t.ruleEdits) {
-      const src = queues.find(x => x[0].card === t.card) || [];
-      t.ruleEdits = src.flatMap(x => x.ruleEdits || []);
     }
     const tasks = [];
     for (let round = 0; planned.some(q => round < q.length); round++) {
@@ -1613,7 +1653,10 @@
     rpc(card, 'agentCursor', { agent: cursor, start: chunk.start }, 8000);
     const msg = agentMsg(agent, name + ' · ' + where + ' · ' + firstLine(card.text.slice(chunk.start, chunk.end)));
     const chunkText = card.text.slice(chunk.start, chunk.end);
-    const rules = task.ruleEdits || [];
+    // 교정 지시면 규칙 엔진이 잡은 곳을 참고로 준다 — 맥락상 맞는 것만 에이전트가 자기 수정으로 낸다
+    const hints = RULE_HINT_RE.test(instruction)
+      ? (await ruleCandidates(chunkText)).map(r => ({ source: r.src, replacement: r.dst, context: r.context }))
+      : [];
     const requestId = 'grid-' + card.doc.id.slice(0, 8) + '-' + idx + '-' + Date.now().toString(36);
     liveRequests.add(requestId);
     let res = await send({
@@ -1633,7 +1676,7 @@
           team: task.team ? task.team.board.slice(-24) : [],
           heading: firstLine(chunkText),
           ...firstMentionsFor(task, task.team && task.team.mentions && task.team.mentions.get(card.doc.id)),
-          ruleFixed: Array.from(new Set((task.ruleEdits || []).flatMap(e => String(e.reason || '').replace(/^규칙: /, '').split(', ')))),
+          ruleCandidates: hints,
           chunkIndex: idx,
           chunkCount: count
         }
@@ -1662,12 +1705,8 @@
       src: f.source, dst: f.replacement, reason: f.reason, category: f.category,
       hint: chunk.start + (Number(f.offset) || 0)
     }));
-    // 규칙이 이미 고치는 자리와 겹치는 AI 수정, 이전 지시에서 이미 올린 같은 수정은 뺀다
-    const ruleSpans = (task.ruleEdits || []).map(e => [e.hint, e.hint + e.src.length]);
-    for (let i = edits.length - 1; i >= 0; i--) {
-      const e = edits[i];
-      if (ruleSpans.some(([x, y]) => e.hint < y && x < e.hint + e.src.length) || alreadyProposed(card, e)) edits.splice(i, 1);
-    }
+    // 이전 지시(/맞춤법(룰베이스) 포함)에서 이미 올린 같은 수정은 뺀다
+    for (let i = edits.length - 1; i >= 0; i--) if (alreadyProposed(card, edits[i])) edits.splice(i, 1);
     task.note = res.note || '';
     collectQuestions(res.questions);
     // 작업 중에 나온 질문은 끝까지 기다리지 않고 바로 띄운다 — 답하면 결정이 되어 아직 안 한 구간 요청에 들어간다
@@ -2917,6 +2956,7 @@
     // 기능 템플릿은 입력창에 /를 쳐서 부른다. 고른 명령은 입력창 안에 버튼 모양 꼬리표로 들어가고 여러 개 쌓을 수 있다.
     // 보내면(⌘Enter) 꼬리표 명령을 차례로 실행하고, 입력창에 쓴 말은 추가 지시로 함께 넘긴다.
     const COMMANDS = [
+      { name: '맞춤법(룰베이스)', desc: '토이타입 규칙으로 기계적 검사 · AI는 오탐만 거름', kind: 'spell' },
       { name: '서식 점검', desc: '요소별 서식·표기 일관성, 첨자, 코너로 뺄 본문', kind: 'format' },
       { name: '댓글 반영', desc: '문서에 남은 댓글·제안을 골라 반영', kind: 'review' },
       { name: '도해 점검', desc: '그림·그리기 안 글자의 오탈자·용어를 점검 (지적만)', kind: 'figure' }
@@ -2980,6 +3020,7 @@
     const runPicked = async (cmds, extra) => {
       const texts = cmds.filter(c => c.kind === 'text');
       if (texts.length) await runInstruction(texts.map(c => c.text).join('\n') + (extra ? '\n' + extra : ''));
+      if (cmds.some(c => c.kind === 'spell')) await runSpellCheck(texts.length ? '' : extra);
       if (cmds.some(c => c.kind === 'format')) await runFormatCheck(extra);
       if (cmds.some(c => c.kind === 'figure')) await runFigureCheck(extra);
       if (cmds.some(c => c.kind === 'review')) {
