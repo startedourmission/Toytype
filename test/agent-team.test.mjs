@@ -44,8 +44,7 @@ test('구간 교정: 계획·규칙을 받고, 게시판·share는 없다', () =
 test('구간 교정: 규칙 후보를 받지 않고, 기계적 맞춤법·윤문을 하지 말라고 한다', () => {
   const p = buildProofreadChunkPrompt({ text: '됬다', ruleCandidates: [{ id: 0, source: '됬', replacement: '됐', context: '⟦됬⟧다' }] });
   assert.doesNotMatch(p, /RULE_HINTS|RULE_CANDIDATES|rejectRules/);
-  assert.match(p, /Do not do mechanical spelling/);
-  assert.match(p, /Do NOT do 윤문/);
+  assert.match(p, /No 윤문 unless asked/);
 });
 
 test('첨자는 서식: 유니코드 첨자·^로 바꾸는 구간 수정은 버린다', async () => {
@@ -76,4 +75,70 @@ test('도해 점검: OCR 줄과 주변 글이 프롬프트에 들어가고 지�
   const out = parseFigureFindings(JSON.stringify({ text: '스택', findings: [{ found: '데이타', suggestion: '데이터', reason: '외래어 표기' }, { found: 'a', suggestion: 'a' }] }));
   assert.deepEqual(out.findings.map(f => f.found), ['데이타']);
   assert.equal(parseFigureFindings('x'), null);
+});
+
+test('구간 메모: 고칠 곳 없다는 말은 비우고, 알릴 거리는 남긴다', async () => {
+  const { parseProofreadChunkNote, buildProofreadChunkPrompt } = await import('../tools/toytype_ai_bridge.mjs');
+  for (const n of ['고칠 곳이 없습니다.', '수정할 부분이 없습니다', '이 구간에는 고칠 것이 딱히 없습니다.']) {
+    assert.equal(parseProofreadChunkNote(JSON.stringify({ note: n })), '', n);
+  }
+  const keep = '‘해시 테이블’이 처음 나오는데 원어 병기가 없습니다.';
+  assert.equal(parseProofreadChunkNote(JSON.stringify({ note: keep })), keep);
+  assert.equal(parseProofreadChunkNote(JSON.stringify({ note: '존댓말 3곳을 통일했습니다.' })), '존댓말 3곳을 통일했습니다.');
+  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /"note"/);
+});
+
+test('구간 결함 표시: 원문에 있는 인용만 받아 위치를 짚는다', async () => {
+  const { parseProofreadChunkFlags } = await import('../tools/toytype_ai_bridge.mjs');
+  const text = '09 다음 트리를 보고 답하세요.\n*\n출력 결과\n';
+  const out = parseProofreadChunkFlags(JSON.stringify({ flags: [
+    { quote: '다음 트리를 보고', issue: '그림 2: 노드 값 7이 본문과 다름' },
+    { quote: '없는 문구', issue: 'x' },
+    { quote: '출력 결과', issue: '' }
+  ] }), text);
+  assert.deepEqual(out, [{ quote: '다음 트리를 보고', issue: '그림 2: 노드 값 7이 본문과 다름', offset: 3 }]);
+});
+
+test('질문: 작업 방식을 묻는 질문은 버리고 원고 내용 선택만 남긴다', async () => {
+  const { parseQuestions } = await import('../tools/toytype_ai_bridge.mjs');
+  const out = parseQuestions(JSON.stringify({ questions: [
+    { question: '코드나 출력 결과에서 오류를 찾으면 원고를 직접 고칠까요, 아니면 위치와 수정안만 표시해 둘까요?', options: ['확실한 오류는 직접 수정', '모두 표시만 하고 수정안 제시'] },
+    { question: '워밍업 문항이 비어 있는 곳은 에이전트가 내용을 새로 채울까요?', options: ['새로 작성', '빈 곳만 표시'] },
+    { question: '그림 설명과 값이 맞는지만 점검하면 될까요?', options: ['대조만', '빠진 곳까지'] },
+    { topic: '자료구조', question: '‘자료 구조’와 ‘자료구조’ 중 어느 쪽으로 통일할까요?', options: ['자료구조', '자료 구조'] }
+  ] }));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].topic, '자료구조');
+});
+
+test('구간 교정: 지시에 그림이 있으면 붙인 그림 목록을 프롬프트에 넣는다', async () => {
+  const { buildProofreadChunkPrompt } = await import('../tools/toytype_ai_bridge.mjs');
+  const p = buildProofreadChunkPrompt({ text: '다음 트리를 보세요.\n*\n그림 3-1 이진 트리', instruction: '그림이 본문과 맞는지 봐 줘', figureInfo: [{ n: 3, before: '다음 트리를 보세요.', after: '그림 3-1 이진 트리' }] });
+  assert.match(p, /FIGURES: the figure images/);
+  assert.match(p, /image 1 = 그림 3/);
+  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /FIGURES:/);
+});
+
+test('뽑은 글자 한계: 없다·비었다는 지적과 개체 자리(*)를 건드리는 수정은 버린다', async () => {
+  const { parseProofreadChunkFlags, parseProofreadChunkFindings, buildProofreadChunkPrompt } = await import('../tools/toytype_ai_bridge.mjs');
+  const text = '순서도를 보세요.\n*\n출력 결과\n워밍업 문항\n';
+  const flags = parseProofreadChunkFlags(JSON.stringify({ flags: [
+    { quote: '순서도를 보세요.', issue: "순서도 그림 누락 — '*' 자리만 있음" },
+    { quote: '출력 결과', issue: '출력 결과 비어 있음 — 55' },
+    { quote: '워밍업 문항', issue: '워밍업 문항 내용 비어 있음' },
+    { quote: '순서도를 보세요.', issue: '그림 3: 본문은 55인데 그림은 50' }
+  ] }), text);
+  assert.deepEqual(flags.map(f => f.issue), ['그림 3: 본문은 55인데 그림은 50']);
+  const f = parseProofreadChunkFindings(JSON.stringify({ findings: [{ source: '보세요.\n*\n', replacement: '보세요.\n', reason: 'x', category: '기타' }] }), text);
+  assert.equal(f.length, 0);
+  assert.match(buildProofreadChunkPrompt({ text: '본문' }), /don't call anything missing or empty/);
+});
+
+test('구간 교정: 앞뒤 글을 맥락으로 받고, 지적(flags)은 그림이 있을 때만', async () => {
+  const { buildProofreadChunkPrompt } = await import('../tools/toytype_ai_bridge.mjs');
+  const p = buildProofreadChunkPrompt({ text: 'while (p) { prev = p; }', before: '간단히 하려고 예외 처리는 생략합니다.', after: '다음 절에서는' });
+  assert.match(p, /BEFORE_SECTION\n간단히 하려고/);
+  assert.match(p, /AFTER_SECTION/);
+  assert.match(p, /flags: only for problems inside attached figure images/);
+  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /BEFORE_SECTION/);
 });

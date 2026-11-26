@@ -23,7 +23,7 @@ test('구간 교정: JSON이 없으면 빈 목록', () => {
 
 test('구간 교정 프롬프트: 구간 번호와 본문을 담는다', () => {
   const prompt = buildProofreadChunkPrompt({ title: '09장', text: TEXT, chunkIndex: 2, chunkCount: 5 });
-  assert.match(prompt, /"section":3,"sections":5/);
+  assert.match(prompt, /"section":3,"of":5/);
   assert.ok(prompt.includes(TEXT));
 });
 

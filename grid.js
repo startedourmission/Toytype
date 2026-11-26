@@ -97,6 +97,10 @@
   let history = [];
   let cards = [];
   let busy = false;
+  // 작업 중에 누른 질문 카드 반영은 줄 세워 두었다가 지금 작업이 끝나면 차례로 돌린다
+  let queuedFollowUps = [];
+  // 지시(턴)마다 구간 메시지 DOM — 끝나면 요약 아래로 접어 넣는다
+  const turnEls = new Map();
   // 전체 적용이 도는 동안만 [전체 적용]·[이 대화 모두 적용]을 꺼 둔다(에이전트 작업 중에도 적용은 된다)
   let applyingAll = false;
   let stopRequested = false;
@@ -533,6 +537,7 @@
         review: Array.isArray(e.review) ? e.review.slice(0, 200) : undefined,
         format: Array.isArray(e.format) ? e.format.slice(0, 300) : undefined,
         figure: Array.isArray(e.figure) ? e.figure.slice(0, 300) : undefined,
+        flags: Array.isArray(e.flags) && e.flags.length ? e.flags : undefined,
         turn: e.turn || undefined,
         edits: (e.edits || []).map(x => ({
           src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0, refs: x.refs || undefined,
@@ -656,16 +661,17 @@
       const answered = entry.items.filter(q => q.answer).length;
       if (pre) {
         // 시작 전 질문은 모두 답(또는 넘김)해야 시작한다
-        again.disabled = answered < entry.items.length || busy || entry.started;
-        again.textContent = entry.started ? '시작했습니다' : answered < entry.items.length ? '남은 질문 ' + (entry.items.length - answered) + '개에 답하세요' : '답한 대로 시작';
+        again.disabled = answered < entry.items.length || entry.started || !!entry.queued;
+        again.textContent = entry.started ? '시작했습니다' : entry.queued ? '지금 작업이 끝나면 바로 시작합니다' : answered < entry.items.length ? '남은 질문 ' + (entry.items.length - answered) + '개에 답하세요' : '답한 대로 시작';
         return;
       }
       // 넘긴 답은 고칠 게 없으므로 정한 답만 센다
       const decided = entry.items.filter(q => q.answer && q.answer !== '(넘김)').length;
       const followText = !!(entry.followUp && entry.followUp.instruction);
-      again.disabled = !(followText ? decided : answered) || busy;
-      // 작업 중에 답하면 남은 구간에 바로 들어가므로, 이미 끝난 구간 반영은 작업이 끝난 뒤에 누를 수 있다
-      again.textContent = busy && live ? '답은 남은 구간에 바로 반영됩니다 · 끝나면 끝난 구간에도 반영할 수 있어요'
+      again.disabled = !(followText ? decided : answered) || !!entry.queued;
+      // 작업 중에 답하면 남은 구간에는 바로 들어간다. 누르면 이미 끝난 구간 반영을 줄 세워 두고, 지금 작업이 끝나면 돌린다
+      again.textContent = entry.queued ? '지금 작업이 끝나면 바로 반영합니다'
+        : busy && live && decided ? '정한 ' + decided + '개를 끝난 구간에도 반영 (작업 끝나면 실행)'
         : followText ? (decided ? '정한 ' + decided + '개를 원고에 반영' : answered ? '모두 넘겼습니다' : '답을 고르세요')
           : answered ? '답한 ' + answered + '개로 다시 처리' : '답을 고르세요';
     };
@@ -726,8 +732,8 @@
       box.appendChild(own);
       m.appendChild(box);
     }
-    again.addEventListener('click', () => {
-      if (busy) return;
+    const go = () => {
+      entry.queued = false;
       again.disabled = true;
       const f = entry.followUp || {};
       if (pre) { entry.started = true; saveLog(); }
@@ -740,6 +746,13 @@
         runInstruction('편집자가 방금 정한 것에 맞춰 원고를 고쳐 줘. 이 결정과 어긋나는 곳만 고치고, 그 밖의 교정은 하지 마.\n'
           + picked.map(q => '· ' + (q.topic || q.question) + ': ' + q.answer).join('\n'));
       }
+    };
+    again.addEventListener('click', () => {
+      if (!busy) { go(); return; }
+      // 작업 중이면 막지 않고 줄 세운다
+      entry.queued = true;
+      queuedFollowUps.push({ entry, go, sync });
+      sync();
     });
     m.appendChild(again);
     sync();
@@ -754,6 +767,85 @@
     for (const q of runQuestions) askedThisRun.add(topicKey(q));
     runQuestions = [];
     renderQuestionCard(entry);
+  }
+
+  // ---------- 지시 요약 ----------
+  // 지시가 끝나면 구간 메시지를 일일이 읽지 않아도 되게, 문서별 개수·범주, 자주 나온 수정, 확인할 것을 한 덩어리로 보여 주고
+  // 구간 메시지는 [구간별 보기]로 접는다.
+  const DEFAULT_NOTE_RE = /^고칠 곳 \d+개(를 찾았습니다\.)?$/;
+  function buildTurnSummary(turn) {
+    const entries = logEntries.filter(e => e.t === 'agent' && e.turn === turn);
+    const docs = new Map();
+    const pats = new Map();
+    const flags = [];
+    const reports = [];
+    for (const e of entries) {
+      const card = cards.find(c => c.doc.id === e.docId);
+      const name = card ? card.doc.name : String(e.who || '').split(' · ')[0];
+      const edits = e.edits || [];
+      if (!docs.has(name)) docs.set(name, { name, count: 0, applied: 0, cats: {}, flags: 0 });
+      const d = docs.get(name);
+      d.flags += (e.flags || []).length;
+      for (const x of edits) {
+        d.count++;
+        if (x.state === 'applied') d.applied++;
+        const c = x.category || '기타';
+        d.cats[c] = (d.cats[c] || 0) + 1;
+        const k = x.src + ' → ' + (x.dst || '(삭제)');
+        if (k.length <= 60) pats.set(k, (pats.get(k) || 0) + 1);
+      }
+      const where = String(e.who || '').split(' · ').slice(0, 2).join(' ');
+      const note = String(e.text || '').trim();
+      if (!note || DEFAULT_NOTE_RE.test(note) || /^(멈췄습니다|\(새로고침)/.test(note)) continue;
+      // 처리에 실패한 구간만 알린다(AI 보고는 보여 주지 않는다)
+      if (/처리하지 못했습니다/.test(note)) flags.push(where + ': ' + note);
+    }
+    return {
+      turn,
+      docs: Array.from(docs.values()).filter(d => d.count || d.flags),
+      patterns: Array.from(pats).filter(p => p[1] > 1).sort((a, b) => b[1] - a[1]).slice(0, 6),
+      flags: flags.slice(0, 12),
+      reports: reports.slice(0, 30),
+      chunks: entries.length
+    };
+  }
+
+  function renderTurnSummary(m, sum) {
+    const box = el('div', 'g-sum');
+    for (const d of sum.docs || []) {
+      const cats = Object.entries(d.cats || {}).sort((a, b) => b[1] - a[1]).map(([c, n]) => c + ' ' + n).join(' · ');
+      const row = el('div', 'g-sum-doc');
+      row.append(el('b', '', d.name), document.createTextNode(' ' + d.count + '곳' + (d.applied ? ' (적용 ' + d.applied + ')' : '') + (cats ? ' — ' + cats : '') + (d.flags ? ' · 직접 확인 ' + d.flags : '')));
+      box.appendChild(row);
+    }
+    if ((sum.patterns || []).length) {
+      box.appendChild(el('div', 'g-sum-pats', '자주 나온 수정: ' + sum.patterns.map(([p, n]) => p + ' ×' + n).join(', ')));
+    }
+    if ((sum.flags || []).length) {
+      const f = el('div', 'g-sum-flags');
+      f.appendChild(el('div', 'g-sum-label', '처리 못 한 구간 ' + sum.flags.length + '개'));
+      for (const t of sum.flags) f.appendChild(el('div', 'g-sum-flag', '· ' + t));
+      box.appendChild(f);
+    }
+    if ((sum.reports || []).length) {
+      const r = el('details', 'g-sum-more');
+      r.appendChild(el('summary', '', '구간 보고 ' + sum.reports.length + '개'));
+      for (const t of sum.reports) r.appendChild(el('div', 'g-sum-flag', '· ' + t));
+      box.appendChild(r);
+    }
+    if (box.childNodes.length) { m.classList.add('g-msg-summary'); m.appendChild(box); }
+    collapseTurn(sum.turn, m);
+  }
+
+  // 그 지시의 구간 메시지를 요약 바로 뒤 [구간별 보기]로 접는다(질문 카드는 그대로 둔다)
+  function collapseTurn(turn, after) {
+    const els = (turnEls.get(turn) || []).filter(x => x.isConnected);
+    if (!els.length) return;
+    const det = el('details', 'g-turn-chunks');
+    det.appendChild(el('summary', '', '구간별 보기 (' + els.length + '개)'));
+    for (const x of els) det.appendChild(x);
+    after.after(det);
+    turnEls.delete(turn);
   }
 
   function attachTurnApply(m, turn) {
@@ -809,6 +901,10 @@
     text.appendChild(typing);
     m.appendChild(text);
     $('g-log').appendChild(m);
+    if (entry.turn) {
+      if (!turnEls.has(entry.turn)) turnEls.set(entry.turn, []);
+      turnEls.get(entry.turn).push(m);
+    }
     scrollLog();
     return { root: m, bubble: m, text, entry };
   }
@@ -975,6 +1071,15 @@
     for (const chip of document.querySelectorAll('.g-chip')) chip.disabled = on;
     // 질문 카드 버튼은 작업 중에 꺼 두므로, 작업이 끝나면 다시 계산한다
     for (const q of document.querySelectorAll('.g-msg-question')) if (q.syncQuestion) q.syncQuestion();
+    if (on || !queuedFollowUps.length) return;
+    // 멈춤을 눌렀으면 줄 세운 반영도 취소한다
+    if (stopRequested) {
+      for (const f of queuedFollowUps) { f.entry.queued = false; f.sync(); }
+      queuedFollowUps = [];
+      return;
+    }
+    const nextUp = queuedFollowUps.shift();
+    setTimeout(() => { if (!busy) nextUp.go(); else { queuedFollowUps.unshift(nextUp); } }, 0);
   }
 
   function setProgress(done, total) {
@@ -1244,6 +1349,8 @@
       for (const q of planned) if (round < q.length) tasks.push(q[round]);
     }
     for (const t of tasks) t.team = team;
+    // 지시에 그림 얘기가 있으면 구간 안의 그림을 같이 보낸다(/도해 점검을 안 써도 그림을 본다)
+    if (FIGURE_INSTR_RE.test(instruction) && !stopRequested) await attachFigures(tasks);
     if (!tasks.length) {
       if (plan && plan.scope === 'targeted') systemMsg('계획 · 이 지시로 손댈 구간이 없다고 판단했습니다');
       currentTurn = '';
@@ -1275,16 +1382,36 @@
     if (disabled) systemMsg('AI 기능이 꺼져 있습니다 · 설정에서 [브릿지 · AI 기능 사용]을 켜고 로컬 브리지를 실행하세요', true);
     else {
       const endMsg = systemMsg((stopRequested ? '멈췄습니다 · ' : '끝 · ') + '고칠 곳 ' + total + '개' + (auto ? ' · 적용 ' + targets.reduce((n, c) => n + c.counts.applied, 0) + '개(누적)' : ''));
+      const endEntry = logEntries[logEntries.length - 1];
       if (total) {
-        logEntries[logEntries.length - 1].turnApply = turn;
+        endEntry.turnApply = turn;
         attachTurnApply(endMsg, turn);
-        saveLog();
       }
+      endEntry.summary = buildTurnSummary(turn);
+      renderTurnSummary(endMsg, endEntry.summary);
+      saveLog();
     }
     currentTurn = '';
     unpinTargets(targets);
     setBusy(false);
     if (!disabled) showRunQuestions({ kind: 'text', instruction });
+  }
+
+  function renderFlags(msg, card, flags) {
+    const list = el('div', 'g-edits');
+    for (const f of flags) {
+      const item = el('div', 'g-edit g-flag');
+      const row = el('div', 'g-edit-row');
+      row.appendChild(el('span', 'g-flag-issue', '⚠ ' + f.issue));
+      const go = el('button', 'g-link', '위치');
+      go.type = 'button';
+      go.title = '문서에서 이 자리를 선택합니다';
+      go.addEventListener('click', () => { revealCard(card); rpc(card, 'locate', { src: f.quote, hint: f.hint }, 15000); });
+      row.appendChild(go);
+      item.appendChild(row);
+      list.appendChild(item);
+    }
+    msg.bubble.appendChild(list);
   }
 
   function renderEdits(msg, card, edits, auto) {
@@ -1378,20 +1505,34 @@
           logEntries[logEntries.length - 1].turnApply = turnApply;
           attachTurnApply(m, turnApply);
         }
+        if (e.summary && e.summary.turn) {
+          logEntries[logEntries.length - 1].summary = e.summary;
+          renderTurnSummary(m, e.summary);
+        }
       }
       else if (e.t === 'user') {
         userMsg(e.text);
         inferredTurn = 'restored-' + (++userCount);
       }
       else if (e.t === 'agent') {
+        // 예전에 받은 '누락·비어 있음' 지적은 뽑은 글자의 한계로 생긴 오탐이라 버린다
+        // 그림이 아닌 지적(코드 방어 검사 등)도 버린다 — 지적은 '그림 N:'만 남긴다
+        if (Array.isArray(e.flags)) e.flags = e.flags.filter(f => /^그림\s*\d/.test(String(f && f.issue || ''))).filter(f => !/누락|비어\s*있|비었|빈\s*(곳|칸|블록|문항|자리)|없음|빠져|빠짐|빠졌|공란|자리만/.test(String(f && f.issue || '')));
+        // 수정·결함 없이 AI 보고만 있던 예전 구간 메시지는 다시 그리지 않는다
+        if (!(e.edits || []).length && !(e.flags || []).length && !e.review && !e.format && !e.figure && !/처리하지 못했습니다/.test(String(e.text || ''))) continue;
         const entry = { t: 'agent', agent: Number(e.agent) || 0, who: String(e.who || ''), text: String(e.text || ''), pending: false, docId: e.docId, edits: [], turn: e.turn || inferredTurn, review: Array.isArray(e.review) ? e.review : undefined, format: Array.isArray(e.format) ? e.format : undefined };
         logEntries.push(entry);
         const msg = agentMsg(entry.agent, entry.who, entry);
+        // 구간 교정 메시지는 예전 AI 보고 대신 개수만 보여 준다
+        if (!entry.review && !entry.format && !e.figure && ((e.edits || []).length || (e.flags || []).length) && !/처리하지 못했습니다/.test(entry.text)) {
+          entry.text = [(e.edits || []).length ? '고칠 곳 ' + e.edits.length + '개' : '', (e.flags || []).length ? '직접 확인 ' + e.flags.length + '개' : ''].filter(Boolean).join(' · ');
+        }
         msg.text.textContent = entry.text;
         const card = cards.find(c => c.doc.id === e.docId);
         if (entry.review) renderReviewRows(msg, card, entry.review);
         if (entry.format) renderFormatRows(msg, card, entry.format);
         if (Array.isArray(e.figure) && card) { entry.figure = e.figure; renderFigureRows(msg, card, e.figure); }
+        if (Array.isArray(e.flags) && card) { entry.flags = e.flags; renderFlags(msg, card, e.flags); }
         const edits = (e.edits || []).map(x => Object.assign({}, x));
         entry.edits = edits;
         if (card && edits.length) {
@@ -1456,6 +1597,9 @@
           id: card.doc.id,
           title: card.doc.name,
           text: card.text.slice(chunk.start, chunk.end),
+          // 앞뒤 글을 조금 같이 보내 맥락을 보게 한다(읽기만, 고치지 않음)
+          before: card.text.slice(Math.max(0, chunk.start - CONTEXT_BEFORE), chunk.start),
+          after: card.text.slice(chunk.end, chunk.end + CONTEXT_AFTER),
           instruction,
           history: history.slice(-HISTORY_TURNS),
           decisions: decisions(),
@@ -1463,7 +1607,8 @@
           heading: firstLine(chunkText),
           ...firstMentionsFor(task, task.team && task.team.mentions && task.team.mentions.get(card.doc.id)),
           chunkIndex: idx,
-          chunkCount: count
+          chunkCount: count,
+          figures: await chunkFigureImages(task)
         }
       }
     });
@@ -1494,13 +1639,26 @@
     }));
     // 이전 지시에서 이미 올린 같은 수정은 뺀다
     for (let i = edits.length - 1; i >= 0; i--) if (alreadyProposed(card, edits[i])) edits.splice(i, 1);
-    task.note = res.note || '';
+    task.note = '';
     collectQuestions(res.questions);
     // 작업 중에 나온 질문은 끝까지 기다리지 않고 바로 띄운다 — 답하면 결정이 되어 아직 안 한 구간 요청에 들어간다
     if (runQuestions.length && !stopRequested) showRunQuestions({ kind: 'text', instruction, live: true });
-    msg.text.textContent = res.note || (edits.length ? '고칠 곳 ' + edits.length + '개를 찾았습니다.' : '고칠 곳이 없습니다.');
+    // 구간 보고(메모)는 보여 주지 않는다 — 편집자는 수정 제안만 보고 적용할지 정한다.
+    // 손으로 고칠 결함(그림 누락 등)은 [위치]가 달린 한 줄로만 보여 준다
+    const flags = (Array.isArray(res.flags) ? res.flags : []).map(f => ({ quote: f.quote, issue: f.issue, hint: chunk.start + (Number(f.offset) || 0) }));
+    // 고칠 곳이 없는 구간은 메시지를 남기지 않는다(끝 요약에 전체 개수가 나온다)
+    if (!edits.length && !flags.length) {
+      msg.root.remove();
+      logEntries = logEntries.filter(e => e !== msg.entry);
+      saveLog();
+      task.recorded = edits;
+      rpc(card, 'agentCursorRemove', { id: cursor.id }, 3000);
+      return 0;
+    }
+    msg.text.textContent = [edits.length ? '고칠 곳 ' + edits.length + '개' : '', flags.length ? '직접 확인 ' + flags.length + '개' : ''].filter(Boolean).join(' · ');
     msg.entry.text = msg.text.textContent;
     msg.entry.edits = edits;
+    if (flags.length) { msg.entry.flags = flags; renderFlags(msg, card, flags); }
     saveLog();
     if (edits.length) {
       renderEdits(msg, card, edits, auto);
@@ -2070,6 +2228,51 @@
       if (text) lastText = text;
     });
     return figures.filter(f => /^https:\/\//.test(f.src));
+  }
+
+  // ---------- 지시 속 그림 ----------
+  const FIGURE_INSTR_RE = /그림|도해|도판|이미지|다이어그램|삽화|캡처|스크린샷|figure|diagram/i;
+  const FIGURES_PER_CHUNK = 8;
+  const CONTEXT_BEFORE = 2500;
+  const CONTEXT_AFTER = 1200;
+  // 문서마다 그림 목록을 읽어, 그림 앞 문단이 들어 있는 구간에 붙인다
+  async function attachFigures(tasks) {
+    const byCard = new Map();
+    for (const t of tasks) {
+      if (!byCard.has(t.card)) byCard.set(t.card, []);
+      byCard.get(t.card).push(t);
+    }
+    const wait = systemMsg('그림 목록 읽는 중…', false, false);
+    let total = 0;
+    let lost = 0;
+    for (const [card, list] of byCard) {
+      let figures = [];
+      try { figures = await listFigures(card); } catch (_) { lost++; continue; }
+      let from = 0;
+      figures.forEach((f, i) => {
+        const keys = [f.before.slice(-30), f.before.slice(0, 30), f.after.slice(0, 30)].filter(k => k && k.length >= 6);
+        let at = -1;
+        for (const k of keys) { at = card.text.indexOf(k, from); if (at < 0) at = card.text.indexOf(k); if (at >= 0) { at += k === f.after.slice(0, 30) ? 0 : k.length; break; } }
+        if (at < 0) return;
+        from = at;
+        const t = list.find(x => at >= x.chunk.start && at <= x.chunk.end);
+        if (!t) return;
+        (t.figures = t.figures || []).push(Object.assign({ n: i + 1 }, f));
+        total++;
+      });
+    }
+    wait.remove();
+    if (!total) systemMsg('지시에 그림이 있지만 ' + (lost ? '그림 목록을 읽지 못해' : '보낼 그림을 찾지 못해') + ' 글만 봅니다');
+  }
+
+  async function chunkFigureImages(task) {
+    const out = [];
+    for (const f of (task.figures || []).slice(0, FIGURES_PER_CHUNK)) {
+      if (stopRequested) break;
+      const img = await send({ type: 'typo:fetchImage', url: f.src });
+      if (img && img.ok) out.push({ n: f.n, dataUrl: img.dataUrl, before: f.before.slice(0, 200), after: f.after.slice(0, 200) });
+    }
+    return out;
   }
 
   async function figureCheckDoc(card, agent, instruction) {

@@ -405,3 +405,17 @@ body.g-dragging .g-card { transition: none; }
 .g-edit.g-rejected del, .g-edit.g-rejected ins { background: none; color: var(--muted); }
 .g-rule-apply { margin-bottom: 4px; }
 .g-fig-no { flex: none; margin-right: 4px; padding: 0 5px; border-radius: 4px; background: #e8eaed; color: #5f6368; font-size: 11px; }
+
+/* 지시 요약 */
+.g-sum { margin-top: 6px; padding: 6px 8px; background: #fff; border: 1px solid var(--line); border-radius: 6px; color: #3c4043; font-size: 12px; text-align: left; }
+.g-sum-doc + .g-sum-doc { margin-top: 2px; }
+.g-sum-pats { margin-top: 4px; color: #5f6368; }
+.g-sum-flags { margin-top: 6px; }
+.g-sum-label { font-weight: 700; color: #b06000; }
+.g-sum-flag { margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.g-sum-more { margin-top: 6px; }
+.g-sum-more > summary, .g-turn-chunks > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.g-turn-chunks { margin: 2px 0 8px; }
+.g-turn-chunks[open] > summary { margin-bottom: 6px; }
+.g-msg-system.g-msg-summary { align-self: stretch; max-width: none; padding: 6px 10px; border-radius: 8px; text-align: left; }
+.g-flag-issue { flex: 1; min-width: 0; color: #b06000; font-size: 12px; }
