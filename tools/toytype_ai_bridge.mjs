@@ -2814,17 +2814,15 @@ export function buildProofreadChunkPrompt(document) {
   const text = String(document.text || '').slice(0, PROOFREAD_CHUNK_MAX_CHARS);
   const instruction = String(document.instruction || '').trim().slice(0, 2000);
   return [
-    'You are a Korean IT-book copy editor working on ONE section of a manuscript, as one of several editing agents.',
-    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"share":[],"questions":[]}. No markdown.',
+    'You are a Korean IT-book copy editor working on ONE section of a manuscript, other sections are handled in parallel.',
+    'Return only one JSON object: {"note":"...","findings":[{"source":"...","replacement":"...","reason":"...","category":"..."}],"questions":[]}. No markdown.',
     ...decisionsLines(document.decisions),
     ...teamPlanLines(document.plan),
-    ...teamBoardLines(document.team),
     instruction
       ? 'The editor-in-chief asked (follow this; it overrides the default focus below, but never touch code, identifiers, URLs): <<<' + instruction + '>>>'
       : 'Task: general proofreading of this section.',
     ...chunkHistoryLines(document.history),
     '- note: one short Korean sentence telling the editor-in-chief what you did in this section (e.g. "존댓말 3곳을 통일했습니다"). If nothing to change, say so briefly.',
-    '- share: 0-3 short Korean lines for the OTHER agents working on other sections, only when you settled a convention they must follow for consistency (e.g. "‘자료 구조’는 ‘자료구조’로 붙여 씀", "문제 절은 ‘문제 N’ 줄로 시작함"). Do not repeat team notes or rules you were given. Usually empty.',
     ...askInsteadLines(),
     untrustedManuscriptDataInstructions(),
     projectSpecificRuleInstructions(),
@@ -2853,13 +2851,11 @@ export function buildProofreadChunkPrompt(document) {
   ].join('\n');
 }
 
-// ---------- 에이전트 팀: 계획·규칙·공유 게시판 ----------
-// 편집장 지시를 받으면 먼저 계획(손댈 구간 고르기, 모두가 따를 작업 요령·규칙)을 세우고, 일관성이 중요한 지시는
-// 원고 전체를 훑어 규칙을 먼저 정한다. 각 에이전트는 다른 구간 에이전트에게 알릴 약속을 share로 게시판에 올리고,
-// 이후 에이전트는 게시판을 받아 그대로 따른다.
+// ---------- 계획·규칙 ----------
+// 편집장 지시를 받으면 먼저 계획(손댈 구간 고르기, 모든 구간이 따를 작업 요령·규칙)을 세우고, 일관성이 중요한 지시는
+// 원고 전체를 훑어 규칙을 먼저 정한다. 구간은 동시에 처리하므로 일관성은 이 계획·규칙·편집자 결정으로 맞춘다.
 const PLAN_MAX_SECTIONS = 400;
 const SURVEY_MAX_CHARS = 60000;
-const TEAM_MAX_NOTES = 24;
 
 function teamPlanLines(plan) {
   if (!plan || typeof plan !== 'object') return [];
@@ -2871,81 +2867,6 @@ function teamPlanLines(plan) {
   return out;
 }
 
-function teamBoardLines(team) {
-  const notes = (Array.isArray(team) ? team : []).slice(-TEAM_MAX_NOTES)
-    .map(n => ({ from: String(n && n.from || '').slice(0, 60), note: String(n && n.note || '').trim().slice(0, 240) }))
-    .filter(n => n.note);
-  if (!notes.length) return [];
-  return [
-    'Team board — conventions other agents already settled in other sections (follow them for consistency; editor decisions and shared rules win over these; if two notes conflict, ask a question instead of choosing):',
-    ...notes.map(n => '- [' + n.from + '] ' + n.note)
-  ];
-}
-
-// ---------- 규칙 결과 거르기 ----------
-// 문서 하나에서 규칙 엔진이 잡은 후보를 한 번에 판단한다: 무시(오탐) / 질문(애매) / 나머지는 반영.
-const RULE_TRIAGE_MAX = 400;
-
-export function buildRuleTriagePrompt(input) {
-  const items = (Array.isArray(input.candidates) ? input.candidates : []).slice(0, RULE_TRIAGE_MAX).map(r => ({
-    id: Number(r && r.id) || 0,
-    level: r && (r.level === 'context' || r.level === 'fix') ? r.level : 'prefer',
-    source: String(r && r.source || '').slice(0, 60),
-    replacement: String(r && r.replacement || '').slice(0, 60),
-    context: String(r && r.context || '').slice(0, 100)
-  })).filter(r => r.source);
-  return [
-    'You are a Korean IT-book copy editor reviewing matches from a deterministic rule engine (Toytype rules) in one manuscript document.',
-    'Each candidate shows the matched text marked with ⟦⟧ inside its context, the rule replacement, and its level:',
-    '- level "fix": a definite spelling/spacing error. Apply it; only ignore a true false positive (see ignore). Never ask about these.',
-    '- level "prefer": house style / usual improvement. Review it: apply when it fits, ignore false positives, ask when it is genuinely the editor\'s call.',
-    '- level "context": correct only in some contexts (e.g. 아래→다음 only when it points to content that follows; 동일한→같은; 경우에→때에; ~를 통해→~를 사용해). Apply only when this context clearly fits and the sentence stays natural and keeps its meaning; ignore when it clearly does not fit; ask when you cannot tell.',
-    'Return only one JSON object, no markdown: {"ignore":[ids],"questions":[{"topic":"...","question":"...","options":["A","B"],"ids":[ids]}]}',
-    '- ignore: false positives — the match is inside code, identifiers, URLs, commands, file paths, program output, a proper noun or product name, a quoted original, or the replacement would make the sentence wrong or change its meaning; plus "context" candidates whose context does not fit.',
-    '- questions: only for "prefer"/"context" candidates whose choice is genuinely the editor\'s (both forms acceptable and the house style unclear, or a context you cannot judge). Group all candidates of the same issue under one question and list their ids. Options are the concrete forms. At most ' + MAX_QUESTIONS + ' questions, usually 0-3. Decide everything else yourself.',
-    '- Every candidate not in ignore or in a question is applied automatically, so be sure about what you leave in.',
-    ...decisionsLines(input.decisions),
-    untrustedManuscriptDataInstructions(),
-    '',
-    'Document: ' + String(input.title || '').slice(0, 120),
-    '<<<TOYTYPE_RULE_CANDIDATES',
-    JSON.stringify(items),
-    'TOYTYPE_RULE_CANDIDATES'
-  ].join('\n');
-}
-
-export function parseRuleTriage(response, ids) {
-  let parsed = null;
-  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const known = new Set((ids || []).map(Number));
-  const pick = list => Array.from(new Set((Array.isArray(list) ? list : []).map(Number).filter(n => known.has(n))));
-  const questions = [];
-  for (const q of Array.isArray(parsed.questions) ? parsed.questions : []) {
-    const question = String(q && q.question || '').trim();
-    const options = (Array.isArray(q && q.options) ? q.options : []).map(o => String(o || '').trim()).filter(Boolean).slice(0, 4);
-    const qids = pick(q && q.ids);
-    if (!question || options.length < 2 || !qids.length) continue;
-    questions.push({ topic: String(q.topic || '').trim().slice(0, 80) || question.slice(0, 40), question: question.slice(0, 300), options: options.map(o => o.slice(0, 120)), ids: qids });
-    if (questions.length >= MAX_QUESTIONS) break;
-  }
-  return { ignore: pick(parsed.ignore), questions };
-}
-
-async function generateRuleTriage(body) {
-  const settings = mergeSettings(body.settings);
-  const provider = normalizeProvider(body.provider, settings.provider);
-  const input = body.document && typeof body.document === 'object' ? body.document : {};
-  const ids = (Array.isArray(input.candidates) ? input.candidates : []).slice(0, RULE_TRIAGE_MAX).map(r => Number(r && r.id) || 0);
-  if (!ids.length) return { ok: true, provider, ignore: [], questions: [] };
-  const run = await runProvider(provider, buildRuleTriagePrompt(input), settings, {
-    timeoutMs: clampNumber(body.timeoutMs, Math.min(settings.requestTimeoutMs, 180000), 5000, settings.requestTimeoutMs)
-  });
-  if (!run.ok) throw new HttpError(502, 'AI provider failed', { diagnostics: providerRunPublicDiagnostics(run) });
-  const out = parseRuleTriage(run.response, ids);
-  if (!out) throw new HttpError(502, 'AI rule triage was not valid JSON');
-  return { ok: true, provider, ignore: out.ignore, questions: out.questions, elapsedMs: run.elapsedMs };
-}
 
 // 첫 언급: 원어 병기와 첫 소개는 책 전체에서 처음 나올 때만 한다
 function firstMentionLines(list, unread) {
@@ -2964,12 +2885,6 @@ function firstMentionLines(list, unread) {
   return out;
 }
 
-export function parseShareNotes(response) {
-  let parsed = null;
-  try { parsed = extractJsonObject(String(response || '')); } catch (_) { parsed = null; }
-  return (parsed && Array.isArray(parsed.share) ? parsed.share : [])
-    .map(x => String(x || '').trim()).filter(Boolean).slice(0, 3).map(x => x.slice(0, 240));
-}
 
 export function buildPlanWorkPrompt(input) {
   const instruction = String(input.instruction || '').trim().slice(0, 2000);
@@ -3179,7 +3094,6 @@ async function generateProofreadChunk(body) {
     note: parseProofreadChunkNote(run.response),
     findings: parseProofreadChunkFindings(run.response, text.slice(0, PROOFREAD_CHUNK_MAX_CHARS)),
     questions: parseQuestions(run.response),
-    share: parseShareNotes(run.response),
     elapsedMs: run.elapsedMs
   };
 }
@@ -4456,10 +4370,6 @@ async function route(req, res) {
   }
   if (url.pathname === '/ai/figure-text-check') {
     await sendLoggedAiJson(res, 'AI figure text check', body, generateFigureTextCheck);
-    return;
-  }
-  if (url.pathname === '/ai/rule-triage') {
-    await sendLoggedAiJson(res, 'AI rule triage', body, generateRuleTriage);
     return;
   }
   if (url.pathname === '/ai/plan-work') {

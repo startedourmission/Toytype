@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlanWorkPrompt, parsePlanWork, buildSurveyRulesPrompt, parseSurveyRules, buildProofreadChunkPrompt, parseShareNotes } from '../tools/toytype_ai_bridge.mjs';
+import { buildPlanWorkPrompt, parsePlanWork, buildSurveyRulesPrompt, parseSurveyRules, buildProofreadChunkPrompt } from '../tools/toytype_ai_bridge.mjs';
 
 const input = { instruction: '문제 절의 힌트를 지워', docs: [
   { id: 'd1', title: '5장', sections: [{ i: 0, head: '5.1 스택', chars: 3000 }, { i: 1, head: '문제', chars: 900 }] },
@@ -34,16 +34,11 @@ test('규칙 훑기: 원고 본문과 규칙·질문을 다룬다', () => {
   assert.deepEqual(out.rules, ['‘자료 구조’ → ‘자료구조’']);
 });
 
-test('구간 에이전트: 팀 계획·게시판을 받고 share를 돌려준다', () => {
-  const p = buildProofreadChunkPrompt({ text: '본문', instruction: '용어 통일', plan: { brief: '용어만 고침', rules: ['자료구조로 붙여 씀'] }, team: [{ from: '에이전트 2 · 5장', note: '문제 절은 “문제 N”으로 시작' }] });
+test('구간 교정: 계획·규칙을 받고, 게시판·share는 없다', () => {
+  const p = buildProofreadChunkPrompt({ text: '본문', instruction: '용어 통일', plan: { brief: '용어만 고침', rules: ['자료구조로 붙여 씀'] }, team: [{ from: 'x', note: '문제 절은 “문제 N”으로 시작' }] });
   assert.match(p, /Team plan from the lead/);
   assert.match(p, /자료구조로 붙여 씀/);
-  assert.match(p, /Team board/);
-  assert.match(p, /\[에이전트 2 · 5장\] 문제 절은/);
-  assert.match(p, /"share":\[\]/);
-  assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /Team board/);
-  assert.deepEqual(parseShareNotes(JSON.stringify({ share: ['a', '', 'b', 'c', 'd'] })), ['a', 'b', 'c']);
-  assert.deepEqual(parseShareNotes('x'), []);
+  assert.doesNotMatch(p, /Team board|"share"|문제 N/);
 });
 
 test('구간 교정: 규칙 후보를 받지 않고, 기계적 맞춤법·윤문을 하지 말라고 한다', () => {
@@ -51,22 +46,6 @@ test('구간 교정: 규칙 후보를 받지 않고, 기계적 맞춤법·윤문
   assert.doesNotMatch(p, /RULE_HINTS|RULE_CANDIDATES|rejectRules/);
   assert.match(p, /Do not do mechanical spelling/);
   assert.match(p, /Do NOT do 윤문/);
-});
-
-test('규칙 거르기: 무시·질문 id를 아는 후보로만 받는다', async () => {
-  const { buildRuleTriagePrompt, parseRuleTriage } = await import('../tools/toytype_ai_bridge.mjs');
-  const p = buildRuleTriagePrompt({ title: '5장', candidates: [{ id: 0, source: '저장 할', replacement: '저장할', context: '데이터를 ⟦저장 할⟧ 때' }] });
-  assert.match(p, /TOYTYPE_RULE_CANDIDATES/);
-  assert.match(p, /"ignore"/);
-  const out = parseRuleTriage(JSON.stringify({ ignore: [1, 9, 1], questions: [
-    { topic: '로그인', question: '로그 인/로그인 중 무엇으로?', options: ['로그인', '로그 인'], ids: [2, 7] },
-    { question: '선택지 하나', options: ['A'], ids: [0] },
-    { question: 'id 없음', options: ['A', 'B'], ids: [42] }
-  ] }), [0, 1, 2, 3]);
-  assert.deepEqual(out.ignore, [1]);
-  assert.equal(out.questions.length, 1);
-  assert.deepEqual(out.questions[0].ids, [2]);
-  assert.equal(parseRuleTriage('x', [0]), null);
 });
 
 test('첨자는 서식: 유니코드 첨자·^로 바꾸는 구간 수정은 버린다', async () => {

@@ -381,7 +381,6 @@ function aiBridgePath(action) {
     proofread: '/ai/proofread',
     proofreadChunk: '/ai/proofread-chunk',
     planWork: '/ai/plan-work',
-    ruleTriage: '/ai/rule-triage',
     figureTextCheck: '/ai/figure-text-check',
     surveyRules: '/ai/survey-rules',
     reviewComments: '/ai/review-comments',

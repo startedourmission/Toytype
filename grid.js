@@ -36,7 +36,7 @@
         <label class="g-field" title="한 줄에 놓을 문서 수"><span>열</span>
           <select id="g-cols"><option value="0">자동</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
         </label>
-        <label class="g-field" title="동시에 일하는 AI 에이전트 수"><span>인원</span>
+        <label class="g-field" title="한 번에 같이 보내는 구간 수 (많을수록 빨리 끝남)"><span>동시 처리</span>
           <select id="g-conc"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
         </label>
         <label class="g-switch" title="켜면 에이전트가 고친 곳을 문서에 바로 반영합니다. 끄면 제안만 받고 직접 승인합니다.">
@@ -60,7 +60,7 @@
       <form class="g-compose" id="g-compose">
         <div class="g-compose-main">
         <div class="g-cmds" id="g-cmds" hidden></div>
-        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/맞춤법(룰베이스), /서식 점검, /전체 교정 …)"></textarea>
+        <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/서식 점검, /전체 교정, /댓글 반영 …)"></textarea>
         </div>
         <button type="submit" class="g-send" id="g-send" title="보내기 (⌘Enter)" aria-label="보내기">↑</button>
       </form>
@@ -69,7 +69,9 @@
   </aside>
 </div>`;
 
-  const AGENT_COLORS = ['#1a73e8', '#e37400', '#188038', '#8430ce', '#d01884', '#12839b'];
+  // 에이전트는 하나로 보인다 — 여러 구간을 동시에 보내도 같은 색·같은 이름
+  const AI_COLOR = '#1a73e8';
+  const AI_NAME = 'AI';
   const DOCS_ORIGIN = 'https://docs.google.com';
   const CHUNK_MIN = 1500;
   const CHUNK_MAX = 6000;
@@ -505,7 +507,7 @@
       card.root.classList.remove('g-working');
       return;
     }
-    card.root.style.setProperty('--agent', AGENT_COLORS[agent % AGENT_COLORS.length]);
+    card.root.style.setProperty('--agent', AI_COLOR);
     card.badge.textContent = label;
     card.root.classList.add('g-working');
   }
@@ -533,7 +535,6 @@
         format: Array.isArray(e.format) ? e.format.slice(0, 300) : undefined,
         figure: Array.isArray(e.figure) ? e.figure.slice(0, 300) : undefined,
         turn: e.turn || undefined,
-        share: Array.isArray(e.share) && e.share.length ? e.share : undefined,
         edits: (e.edits || []).map(x => ({
           src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0, refs: x.refs || undefined,
           state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : x.state === 'rejected' ? 'rejected' : 'proposed',
@@ -732,7 +733,6 @@
       const f = entry.followUp || {};
       if (pre) { entry.started = true; saveLog(); }
       if (f.kind === 'format') runFormatCheck(f.extra || '');
-      else if (f.kind === 'spell') runSpellCheck(f.extra || '', { answered: pre });
       else if (pre && f.instruction) runInstruction(f.instruction, { answered: true });
       else if (f.instruction) {
         // 작업 중·끝난 뒤 질문: 원래 지시(전체 교정 등)를 처음부터 다시 돌리지 않고, 정한 것만 원고에 맞춘다
@@ -768,14 +768,14 @@
   }
 
   function systemMsg(text, error, persist) {
-    // "팀장 · ..."은 팀장(계획·규칙) 메시지로 따로 보여 준다
-    const lead = /^팀장 · /.test(String(text || ''));
+    // "계획 · ..."은 계획·규칙 메시지로 따로 보여 준다(예전 기록의 "팀장 · " 포함)
+    const lead = /^(계획|팀장) · /.test(String(text || ''));
     pushEntry({ t: 'system', text, error: !!error }, persist);
     const body = String(text || '');
     const cut = lead ? body.indexOf('\n') : -1;
     let m;
     if (cut > 0) {
-      // 팀장 메시지는 한 줄 요약만 보이고, 작업 요령·규칙은 눌러야 펼친다
+      // 계획 메시지는 한 줄 요약만 보이고, 작업 요령·규칙은 눌러야 펼친다
       m = el('details', 'g-msg g-msg-system g-msg-lead');
       m.append(el('summary', '', body.slice(0, cut)), el('div', 'g-lead-more', body.slice(cut + 1)));
     } else {
@@ -795,14 +795,15 @@
 
   function agentMsg(agent, who, restored) {
     const entry = restored || pushEntry({ t: 'agent', agent, who, text: '', pending: true, docId: '', edits: [], turn: currentTurn });
-    const m = el('div', 'g-msg g-msg-agent' + (agent < 0 ? ' g-msg-rule' : ''));
-    m.style.setProperty('--agent', agent < 0 ? '#80868b' : AGENT_COLORS[agent % AGENT_COLORS.length]);
-    // who: "에이전트 N · 문서 · i/n · 구간 첫 줄" → 머리줄(이름·위치)과 인용 한 줄로 나눠 보여 준다
-    const parts = String(who || '').split(' · ');
+    const m = el('div', 'g-msg g-msg-agent');
+    m.style.setProperty('--agent', AI_COLOR);
+    // who: "문서 · 위치 · 구간 첫 줄" → 머리줄(문서·위치)과 인용 한 줄로 나눠 보여 준다.
+    // 예전 기록의 "에이전트 N"·"맞춤법 규칙" 머리말은 뗀다
+    const parts = String(who || '').replace(/^(에이전트 \d+|맞춤법 규칙) · /, '').split(' · ');
     const head = el('div', 'g-agent-head');
-    head.append(el('span', 'g-avatar', agent < 0 ? '규' : String(agent + 1)), el('span', 'g-agent-name', parts[0] || ''), el('span', 'g-agent-where', parts.slice(1, 3).join(' · ')));
+    head.append(el('span', 'g-avatar', AI_NAME), el('span', 'g-agent-name', parts[0] || ''), el('span', 'g-agent-where', parts.slice(1, 2).join(' · ')));
     m.appendChild(head);
-    if (parts.length > 3) m.appendChild(el('div', 'g-agent-quote', parts.slice(3).join(' · ')));
+    if (parts.length > 2) m.appendChild(el('div', 'g-agent-quote', parts.slice(2).join(' · ')));
     const text = el('div', 'g-bubble-text');
     const typing = el('span', 'g-typing');
     typing.append(el('i'), el('i'), el('i'));
@@ -989,127 +990,6 @@
     }
   }
 
-  // ---------- 맞춤법 규칙(토이타입 규칙 엔진) ----------
-  // 격자 칸은 가볍게 띄우느라 규칙 검사를 하지 않는다. 기계적 검사는 /맞춤법(룰베이스)만 한다.
-  // 일반 지시(전체 교정 등)는 규칙 결과를 쓰지 않는다 — 에이전트는 프롬프트의 하우스 표기 규칙만 따른다.
-  const RULE_CANDIDATES_MAX = 120;
-  let rulesReady = null;
-  function ensureRules() {
-    if (rulesReady) return rulesReady;
-    rulesReady = new Promise(resolve => {
-      const engine = globalThis.TypoEngine;
-      if (!engine) { resolve(false); return; }
-      chrome.runtime.sendMessage({ type: 'typo:getRules' }, res => {
-        if (chrome.runtime.lastError || !res || !res.ok || !res.rules || !Array.isArray(res.rules.categories)) {
-          rulesReady = null;
-          resolve(false);
-          return;
-        }
-        chrome.storage.local.get('settings', items => {
-          // 버블과 같이 설정에서 끈 범주는 빼고, 복사용 문장 제안 범주는 쓰지 않는다
-          const off = (items && items.settings && items.settings.docsCategories) || {};
-          const ids = res.rules.categories.map(c => c.id).filter(id => id !== 'ai-sentence-suggestions' && off[id] !== false);
-          try {
-            engine.init(res.rules, ids);
-            resolve(true);
-          } catch (_) {
-            rulesReady = null;
-            resolve(false);
-          }
-        });
-      });
-    });
-    return rulesReady;
-  }
-
-  async function ruleCandidates(text) {
-    // 엔진 스크립트가 다시 실행돼 초기화가 풀렸으면 다시 불러온다
-    if (rulesReady && globalThis.TypoEngine && !globalThis.TypoEngine.isReady()) rulesReady = null;
-    if (!(await ensureRules())) return [];
-    let result;
-    try { result = globalThis.TypoEngine.scan(text, { limit: RULE_CANDIDATES_MAX }); } catch (_) { return []; }
-    return (result.findings || []).filter(f => f.src !== f.dst).map((f, i) => ({
-      id: i, start: f.start, end: f.end, src: f.src, dst: f.dst, cat: f.cat,
-      context: text.slice(Math.max(0, f.start - 24), f.start) + '⟦' + f.src + '⟧' + text.slice(f.end, f.end + 24)
-    }));
-  }
-
-  // 규칙이 잡은 곳을 수정 제안으로 만든다. 짧은 문구는 위치를 짚게 앞뒤 글자를 붙여 넓히고,
-  // 넓힌 범위가 겹치는 이웃 규칙은 한 수정으로 합친다(따로 적용하면 앞 수정 뒤 원문을 못 찾는다)
-  function buildRuleEdits(task) {
-    const text = task.card.text.slice(task.chunk.start, task.chunk.end);
-    const groups = [];
-    for (const r of task.rules || []) {
-      let a = r.start;
-      let b = r.end;
-      while (b - a < 6 && a > 0 && text[a - 1] !== '\n') a--;
-      while (b - a < 10 && b < text.length && text[b] !== '\n') b++;
-      const last = groups[groups.length - 1];
-      if (last && a < last.b) { last.b = Math.max(last.b, b); last.parts.push(r); }
-      else groups.push({ a, b, parts: [r] });
-    }
-    return groups.map(g => ({
-      src: text.slice(g.a, g.b),
-      dst: ruleDst(text, g.a, g.b, g.parts),
-      reason: '규칙: ' + g.parts.map(r => r.src + ' → ' + r.dst).join(', '),
-      category: '맞춤법',
-      hint: task.chunk.start + g.a,
-      rule: { a: g.a, b: g.b, parts: g.parts.map(r => ({ id: r.id, start: r.start, end: r.end, dst: r.dst })) }
-    }));
-  }
-
-  function ruleDst(text, a, b, parts) {
-    let dst = '';
-    let pos = a;
-    for (const r of parts) { dst += text.slice(pos, r.start) + r.dst; pos = r.end; }
-    return dst + text.slice(pos, b);
-  }
-
-  // 1) 규칙 검사는 기계적이라 바로 끝난다
-  async function scanRules(queues) {
-    for (const q of queues) {
-      for (const t of q) t.rules = await ruleCandidates(t.card.text.slice(t.chunk.start, t.chunk.end));
-    }
-  }
-
-  // 2) 문서마다 AI가 규칙 결과를 거른다: 오탐은 무시, 애매하면 질문, 나머지는 반영
-  async function triageRules(queues, conc) {
-    const jobs = queues.map(q => {
-      const candidates = [];
-      let gid = 0;
-      for (const t of q) {
-        for (const r of t.rules || []) {
-          r.gid = gid++;
-          // 확정은 오탐(코드·고유명사 등)만 거르고, 권장·맥락은 검토해서 애매하면 묻는다
-          r.verdict = 'unchecked';
-          candidates.push({ id: r.gid, level: r.cat === 'fix' || r.cat === 'context' ? r.cat : 'prefer', source: r.src, replacement: r.dst, context: r.context });
-        }
-      }
-      return { q, candidates };
-    }).filter(j => j.candidates.length);
-    if (!jobs.length) return;
-    const wait = systemMsg('맞춤법 규칙 결과를 AI가 거르는 중… (문서 ' + jobs.length + '개)', false, false);
-    let next = 0;
-    const worker = async () => {
-      while (next < jobs.length && !stopRequested) {
-        const job = jobs[next++];
-        const card = job.q[0].card;
-        const requestId = 'grid-triage-' + card.doc.id.slice(0, 8) + '-' + Date.now().toString(36);
-        liveRequests.add(requestId);
-        const res = await send({ type: 'typo:aiBridge', action: 'ruleTriage', requestId, payload: { timeoutMs: 180000, document: { title: card.doc.name, candidates: job.candidates, decisions: decisions() } } });
-        liveRequests.delete(requestId);
-        if (!res || !res.ok) continue; // 거르지 못한 문서는 '검토 안 됨'으로 제안만 한다
-        const ignore = new Set(res.ignore || []);
-        const held = new Set();
-        for (const q of res.questions || []) for (const id of q.ids || []) held.add(id);
-        collectQuestions(res.questions);
-        for (const t of job.q) for (const r of t.rules || []) r.verdict = ignore.has(r.gid) ? 'ignore' : held.has(r.gid) ? 'held' : 'apply';
-      }
-    };
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(conc, jobs.length)) }, worker));
-    wait.remove();
-  }
-
   // 같은 문서에 이전 지시에서 이미 올린 같은 수정이면 다시 올리지 않는다
   function alreadyProposed(card, e) {
     for (const entry of logEntries) {
@@ -1121,73 +1001,7 @@
     return false;
   }
 
-  // 3) 거른 결과 중 반영할 것만 문서마다 한 메시지로 묶어 올린다(바로 적용 모드면 바로 적용)
-  function postRuleEdits(queues, auto) {
-    for (const q of queues) {
-      const card = q[0].card;
-      const all = [];
-      let ignored = 0;
-      let held = 0;
-      let unchecked = false;
-      for (const t of q) {
-        const rules = t.rules || [];
-        ignored += rules.filter(r => r.verdict === 'ignore').length;
-        held += rules.filter(r => r.verdict === 'held').length;
-        if (rules.some(r => r.verdict === 'unchecked')) unchecked = true;
-        t.ruleEdits = buildRuleEdits(Object.assign({}, t, { rules: rules.filter(r => r.verdict === 'apply' || r.verdict === 'unchecked') }))
-          .filter(e => !alreadyProposed(card, e));
-        all.push(...t.ruleEdits);
-      }
-      if (!all.length && !ignored && !held) continue;
-      const msg = agentMsg(-1, '맞춤법 규칙 · ' + card.doc.name);
-      const parts = [];
-      if (all.length) parts.push((auto && !unchecked ? '반영 ' : '고칠 곳 ') + all.length + '개');
-      if (ignored) parts.push('오탐 ' + ignored + '개 무시');
-      if (held) parts.push('질문으로 보류 ' + held + '개');
-      if (unchecked) parts.push('AI가 거르지 못해 검토 필요');
-      msg.text.textContent = parts.join(' · ');
-      Object.assign(msg.entry, { pending: false, docId: card.doc.id, text: msg.text.textContent, edits: all });
-      if (all.length) renderRuleBox(msg, card, all, auto && !unchecked);
-      card.counts.proposed += all.length;
-      updateMeta(card);
-      if (auto && !unchecked) for (const e of all) queueApply(card, e);
-    }
-    saveLog();
-  }
-
-  // 규칙 수정은 하나하나 보이지 않고, 규칙별 개수와 [모두 적용] 하나로 보여 준다(펼치면 하나씩)
-  function renderRuleBox(msg, card, edits, auto) {
-    const box = el('div', 'g-rule-box');
-    const counts = new Map();
-    for (const e of edits) {
-      for (const p of String(e.reason || '').replace(/^규칙: /, '').split(', ')) counts.set(p, (counts.get(p) || 0) + 1);
-    }
-    if (!auto) {
-      const all = el('button', 'g-apply-all g-rule-apply', '모두 적용 (' + edits.length + '개)');
-      all.type = 'button';
-      all.addEventListener('click', () => {
-        all.disabled = true;
-        for (const e of edits) if (e.state === 'proposed' || e.state === 'failed') queueApply(card, e);
-      });
-      box.appendChild(all);
-    }
-    const more = el('details', 'g-rule-more');
-    more.appendChild(el('summary', '', '규칙별 보기 (' + counts.size + '종)'));
-    const pats = el('div', 'g-rule-pats');
-    for (const [p, n] of Array.from(counts).sort((x, y) => y[1] - x[1])) pats.appendChild(el('div', 'g-rule-pat', p + (n > 1 ? '  ×' + n : '')));
-    more.appendChild(pats);
-    const each = el('details', 'g-rule-each');
-    each.appendChild(el('summary', '', '하나씩 보기'));
-    const list = el('div', 'g-edits');
-    for (const e of edits) list.appendChild(buildEditItem(card, e, auto));
-    each.appendChild(list);
-    more.appendChild(each);
-    box.appendChild(more);
-    msg.bubble.appendChild(box);
-    updateApplyAll();
-  }
-
-  function markRuleRejected(edit, text) {
+  function markRejected(edit, text) {
     edit.state = 'rejected';
     edit.item.classList.add('g-rejected');
     edit.stateEl.textContent = text;
@@ -1290,23 +1104,16 @@
     return [{ card: first.card, chunk: { start: first.chunk.start, end: last.chunk.end }, idx: 0, count: 1 }];
   }
 
-  function renderShare(msg, share) {
-    // 에이전트끼리 주고받는 약속이라 접어 두고, 눌러야 펼친다
-    const box = el('details', 'g-share');
-    box.appendChild(el('summary', 'g-share-label', '팀에 공유 ' + share.length + '개'));
-    for (const note of share) box.appendChild(el('div', 'g-share-note', note));
-    msg.bubble.appendChild(box);
-  }
 
   async function leadRequest(action, document, label) {
     const requestId = 'grid-' + action + '-' + Date.now().toString(36);
     liveRequests.add(requestId);
-    const wait = systemMsg('팀장 · ' + label + '…', false, false);
+    const wait = systemMsg('계획 · ' + label + '…', false, false);
     const res = await send({ type: 'typo:aiBridge', action, requestId, payload: { timeoutMs: 180000, document } });
     liveRequests.delete(requestId);
     wait.remove();
     if (!res || !res.ok) {
-      if (!stopRequested) systemMsg('팀장 · ' + label + ' 실패 — 계획 없이 진행합니다 (' + (res && (res.message || res.error) || '오류') + ')', false, false);
+      if (!stopRequested) systemMsg('계획 · ' + label + ' 실패 — 계획 없이 진행합니다 (' + (res && (res.message || res.error) || '오류') + ')', false, false);
       return null;
     }
     return res;
@@ -1353,54 +1160,6 @@
     return queues;
   }
 
-  // /맞춤법(룰베이스): 규칙 엔진으로 기계적으로 검사하고, AI는 결과를 거르기만 한다(오탐 무시·애매하면 질문).
-  // 일반 지시(전체 교정 등)는 이 단계를 거치지 않는다.
-  async function runSpellCheck(extra, opts) {
-    const answered = !!(opts && opts.answered);
-    if (busy) return;
-    const targets = cards.filter(c => c.pick.checked);
-    if (!targets.length) { systemMsg('검사할 문서를 하나 이상 고르세요', true); return; }
-    if (!answered) userMsg('맞춤법(룰베이스)' + (extra ? '\n' + extra : ''));
-    runQuestions = [];
-    askedThisRun = new Set();
-    currentTurn = 'turn-' + Date.now().toString(36);
-    const turn = currentTurn;
-    stopRequested = false;
-    setBusy(true);
-    const auto = $('g-auto').checked;
-    const agents = Number($('g-conc').value) || 3;
-    for (const c of targets) { c.pinned = true; clearTimeout(c.unloadTimer); if (c.unloaded) loadCard(c); }
-    const notReady = targets.filter(c => !c.ready);
-    if (notReady.length) systemMsg('문서가 열리기를 기다리는 중… (' + notReady.length + '개)', false, false);
-    await Promise.all(notReady.map(c => c.readyPromise));
-    const finish = () => { currentTurn = ''; unpinTargets(targets); setBusy(false); };
-    const queues = await readQueues(targets);
-    await scanRules(queues);
-    if (queues.length && !stopRequested) await triageRules(queues, agents);
-    if (stopRequested) { systemMsg('멈췄습니다.'); finish(); return; }
-    // 애매해서 보류한 규칙은 반영하기 전에 묻는다. 답하면 그 결정대로 다시 거른다
-    if (runQuestions.length && !answered) {
-      systemMsg('맞춤법(룰베이스) · 정할 것이 ' + runQuestions.length + '개 있습니다. 답하면 그대로 반영합니다.');
-      finish();
-      showRunQuestions({ kind: 'spell', extra: extra || '', preflight: true });
-      return;
-    }
-    postRuleEdits(queues, auto);
-    if (auto) await Promise.all(targets.map(c => c.applyChain));
-    const total = logEntries.filter(e => e.t === 'agent' && e.turn === turn && Array.isArray(e.edits)).reduce((n, e) => n + e.edits.length, 0);
-    history.push({ instruction: '맞춤법(룰베이스)' + (extra ? ': ' + extra.slice(0, 200) : ''), result: '규칙 수정 ' + total + '곳', notes: [], changes: [] });
-    history = history.slice(-HISTORY_TURNS);
-    if (sessionId) chrome.storage.local.set({ ['grid:' + sessionId + ':history']: history }).catch(() => {});
-    const endMsg = systemMsg('맞춤법(룰베이스) 끝 · 고칠 곳 ' + total + '개');
-    if (pendingEdits(turn).length) {
-      logEntries[logEntries.length - 1].turnApply = turn;
-      attachTurnApply(endMsg, turn);
-      saveLog();
-    }
-    finish();
-    showRunQuestions({ kind: 'spell', extra: extra || '' });
-  }
-
   // opts.answered: 시작 전 질문에 답하고 다시 시작한 것 — 또 묻지 않고(새 질문은 끝에 모아) 바로 작업한다
   async function runInstruction(instruction, opts) {
     const answered = !!(opts && opts.answered);
@@ -1432,8 +1191,7 @@
     const queues = await readQueues(targets);
     // 팀장 단계: 지시와 목차를 보고 손댈 구간을 고르고, 모두가 따를 작업 요령을 정한다.
     // 일관성이 중요한 지시면 원고를 먼저 훑어 규칙을 정하고, 애매한 건 손대기 전에 묻는다.
-    const team = { plan: null, board: [] };
-    // 기계적 맞춤법 검사는 /맞춤법(룰베이스)로 따로 한다. 일반 지시는 규칙 결과를 쓰지 않는다
+    const team = { plan: null };
     const [plan, mentions] = queues.length && !stopRequested
       ? await Promise.all([planWork(instruction, queues), collectFirstMentions(queues).catch(() => new Map())])
       : [null, new Map()];
@@ -1455,18 +1213,18 @@
       team.plan = { brief: plan.brief, rules: [] };
       const picked = planned.reduce((n, q) => n + q.length, 0);
       const all = queues.reduce((n, q) => n + q.length, 0);
-      systemMsg('팀장 · ' + (plan.note || '계획을 세웠습니다') + (plan.scope === 'targeted' ? ' (구간 ' + picked + '/' + all + '개)' : '') + (plan.brief ? '\n작업 요령: ' + plan.brief : ''));
+      systemMsg('계획 · ' + (plan.note || '계획을 세웠습니다') + (plan.scope === 'targeted' ? ' (구간 ' + picked + '/' + all + '개)' : '') + (plan.brief ? '\n작업 요령: ' + plan.brief : ''));
       if (!stopRequested && plan.needsSurvey && planned.length) {
         const survey = await surveyRules(instruction, planned, team.plan);
         if (survey) {
           team.plan.rules = survey.rules;
-          if (survey.rules.length || survey.note) systemMsg('팀장 · ' + (survey.note || '규칙을 정했습니다') + (survey.rules.length ? '\n' + survey.rules.map(r => '· ' + r).join('\n') : ''));
+          if (survey.rules.length || survey.note) systemMsg('계획 · ' + (survey.note || '규칙을 정했습니다') + (survey.rules.length ? '\n' + survey.rules.map(r => '· ' + r).join('\n') : ''));
           collectQuestions(survey.questions);
         }
       }
       // 편집자가 골라야 할 것(계획·규칙 단계에서 나온 질문)은 고치기 전에 묻는다
       if (runQuestions.length && !answered && !stopRequested) {
-        systemMsg('팀장 · 시작 전에 정할 것이 ' + runQuestions.length + '개 있습니다. 답하면 그대로 시작합니다.');
+        systemMsg('계획 · 시작 전에 정할 것이 ' + runQuestions.length + '개 있습니다. 답하면 그대로 시작합니다.');
         currentTurn = '';
         unpinTargets(targets);
         setBusy(false);
@@ -1489,13 +1247,13 @@
     }
     for (const t of tasks) t.team = team;
     if (!tasks.length) {
-      if (plan && plan.scope === 'targeted') systemMsg('팀장 · 이 지시로 손댈 구간이 없다고 판단했습니다');
+      if (plan && plan.scope === 'targeted') systemMsg('계획 · 이 지시로 손댈 구간이 없다고 판단했습니다');
       currentTurn = '';
       unpinTargets(targets);
       setBusy(false);
       return;
     }
-    systemMsg('에이전트 ' + Math.min(agents, tasks.length) + '명이 문서 ' + planned.length + '개를 구간 ' + tasks.length + '개로 나눠 맡습니다' + (auto ? ' · 바로 적용' : ' · 제안 모드'));
+    systemMsg('문서 ' + planned.length + '개를 구간 ' + tasks.length + '개로 나눠 ' + Math.min(agents, tasks.length) + '개씩 동시에 봅니다' + (auto ? ' · 바로 적용' : ' · 제안 모드'));
     setProgress(0, tasks.length);
 
     let next = 0;
@@ -1632,7 +1390,6 @@
         logEntries.push(entry);
         const msg = agentMsg(entry.agent, entry.who, entry);
         msg.text.textContent = entry.text;
-        if (Array.isArray(e.share) && e.share.length) { entry.share = e.share; renderShare(msg, e.share); }
         const card = cards.find(c => c.doc.id === e.docId);
         if (entry.review) renderReviewRows(msg, card, entry.review);
         if (entry.format) renderFormatRows(msg, card, entry.format);
@@ -1641,8 +1398,7 @@
         entry.edits = edits;
         if (card && edits.length) {
           const states = edits.map(x => x.state);
-          if (entry.agent < 0) renderRuleBox(msg, card, edits, false);
-          else renderEdits(msg, card, edits, false);
+          renderEdits(msg, card, edits, false);
           edits.forEach((edit, i) => {
             if (edit.pressedAt > newest) {
               newest = edit.pressedAt;
@@ -1655,7 +1411,7 @@
               edit.applyBtn.disabled = true;
               card.counts.applied++;
             } else if (states[i] === 'rejected') {
-              markRuleRejected(edit, edit.note || '오탐으로 제외');
+              markRejected(edit, edit.note || '제외');
             } else if (states[i] === 'failed') {
               edit.state = 'failed';
               edit.item.classList.add('g-failed');
@@ -1683,13 +1439,13 @@
 
   async function runChunk(task, agent, instruction, auto) {
     const { card, chunk, idx, count } = task;
-    const name = '에이전트 ' + (agent + 1);
+    const name = AI_NAME;
     const where = card.doc.name + ' · ' + (idx + 1) + '/' + count;
     setWorking(card, agent, name);
     // 구간마다 새 에이전트 커서가 문서 안 구간 첫머리에 나타난다(공동 작업자 커서 모양)
-    const cursor = { id: 'agent-' + agent + '-' + idx + '-' + Date.now().toString(36), label: name, color: AGENT_COLORS[agent % AGENT_COLORS.length] };
+    const cursor = { id: 'agent-' + agent + '-' + idx + '-' + Date.now().toString(36), label: name, color: AI_COLOR };
     rpc(card, 'agentCursor', { agent: cursor, start: chunk.start }, 8000);
-    const msg = agentMsg(agent, name + ' · ' + where + ' · ' + firstLine(card.text.slice(chunk.start, chunk.end)));
+    const msg = agentMsg(agent, where + ' · ' + firstLine(card.text.slice(chunk.start, chunk.end)));
     const chunkText = card.text.slice(chunk.start, chunk.end);
     const requestId = 'grid-' + card.doc.id.slice(0, 8) + '-' + idx + '-' + Date.now().toString(36);
     liveRequests.add(requestId);
@@ -1707,7 +1463,6 @@
           history: history.slice(-HISTORY_TURNS),
           decisions: decisions(),
           plan: task.team && task.team.plan,
-          team: task.team ? task.team.board.slice(-24) : [],
           heading: firstLine(chunkText),
           ...firstMentionsFor(task, task.team && task.team.mentions && task.team.mentions.get(card.doc.id)),
           chunkIndex: idx,
@@ -1740,19 +1495,12 @@
       src: f.source, dst: f.replacement, reason: f.reason, category: f.category,
       hint: chunk.start + (Number(f.offset) || 0)
     }));
-    // 이전 지시(/맞춤법(룰베이스) 포함)에서 이미 올린 같은 수정은 뺀다
+    // 이전 지시에서 이미 올린 같은 수정은 뺀다
     for (let i = edits.length - 1; i >= 0; i--) if (alreadyProposed(card, edits[i])) edits.splice(i, 1);
     task.note = res.note || '';
     collectQuestions(res.questions);
     // 작업 중에 나온 질문은 끝까지 기다리지 않고 바로 띄운다 — 답하면 결정이 되어 아직 안 한 구간 요청에 들어간다
     if (runQuestions.length && !stopRequested) showRunQuestions({ kind: 'text', instruction, live: true });
-    // 다른 구간 에이전트에게 알릴 약속을 게시판에 올린다(이후 시작하는 에이전트가 받아 따른다)
-    const share = Array.isArray(res.share) ? res.share.filter(Boolean).slice(0, 3) : [];
-    if (share.length && task.team) {
-      for (const note of share) task.team.board.push({ from: name + ' · ' + where, note });
-      renderShare(msg, share);
-      msg.entry.share = share;
-    }
     msg.text.textContent = res.note || (edits.length ? '고칠 곳 ' + edits.length + '개를 찾았습니다.' : '고칠 곳이 없습니다.');
     msg.entry.text = msg.text.textContent;
     msg.entry.edits = edits;
@@ -1792,7 +1540,6 @@
     }
     const team = tasks[0] && tasks[0].team;
     if (team && team.plan) for (const r of team.plan.rules.slice(0, 3)) if (notes.length < 6) notes.push('규칙: ' + r);
-    if (team) for (const b of team.board.slice(-3)) if (notes.length < 8) notes.push('공유: ' + b.note);
     history.push({
       instruction: instruction.slice(0, 400),
       result: Array.from(byDoc, ([name, n]) => name + ' ' + n + '곳').join(', '),
@@ -2177,9 +1924,9 @@
 
   async function formatCheckDoc(card, agent, instruction) {
     const D = globalThis.ToytypeDocTools;
-    const name = '에이전트 ' + (agent + 1);
+    const name = AI_NAME;
     setWorking(card, agent, name);
-    const msg = agentMsg(agent, name + ' · ' + card.doc.name + ' · 서식 점검');
+    const msg = agentMsg(agent, card.doc.name + ' · 서식 점검');
     msg.entry.docId = card.doc.id;
     const flush = text => {
       msg.text.textContent = text;
@@ -2329,9 +2076,9 @@
   }
 
   async function figureCheckDoc(card, agent, instruction) {
-    const name = '에이전트 ' + (agent + 1);
+    const name = AI_NAME;
     setWorking(card, agent, name);
-    const msg = agentMsg(agent, name + ' · ' + card.doc.name + ' · 도해 점검');
+    const msg = agentMsg(agent, card.doc.name + ' · 도해 점검');
     msg.entry.docId = card.doc.id;
     const done = text => { msg.text.textContent = text; msg.entry.text = text; msg.entry.pending = false; saveLog(); };
     let figures;
@@ -2534,9 +2281,9 @@
   }
 
   async function reviewOneDoc(card, items, agent, instruction) {
-    const name = '에이전트 ' + (agent + 1);
+    const name = AI_NAME;
     setWorking(card, agent, name);
-    const msg = agentMsg(agent, name + ' · ' + card.doc.name + ' · 댓글 반영 · 댓글·제안 ' + items.length + '개');
+    const msg = agentMsg(agent, card.doc.name + ' · 댓글 반영 · 댓글·제안 ' + items.length + '개');
     msg.entry.docId = card.doc.id;
     const lines = [];
     const flush = text => {
@@ -2571,7 +2318,7 @@
       let modelText = '';
       const textRes = await rpc(card, 'getText', {}, 30000);
       if (textRes.ok) modelText = textRes.text;
-      const cursor = { id: 'review-' + agent + '-' + Date.now().toString(36), label: name, color: AGENT_COLORS[agent % AGENT_COLORS.length] };
+      const cursor = { id: 'review-' + agent + '-' + Date.now().toString(36), label: name, color: AI_COLOR };
       let done = 0;
       for (let i = 0; i < items.length; i++) {
         if (stopRequested) {
@@ -2991,7 +2738,6 @@
     // 기능 템플릿은 입력창에 /를 쳐서 부른다. 고른 명령은 입력창 안에 버튼 모양 꼬리표로 들어가고 여러 개 쌓을 수 있다.
     // 보내면(⌘Enter) 꼬리표 명령을 차례로 실행하고, 입력창에 쓴 말은 추가 지시로 함께 넘긴다.
     const COMMANDS = [
-      { name: '맞춤법(룰베이스)', desc: '토이타입 규칙으로 기계적 검사 · AI는 오탐만 거름', kind: 'spell' },
       { name: '서식 점검', desc: '요소별 서식·표기 일관성, 첨자, 코너로 뺄 본문', kind: 'format' },
       { name: '댓글 반영', desc: '문서에 남은 댓글·제안을 골라 반영', kind: 'review' },
       { name: '도해 점검', desc: '그림·그리기 안 글자의 오탈자·용어를 점검 (지적만)', kind: 'figure' }
@@ -3055,7 +2801,6 @@
     const runPicked = async (cmds, extra) => {
       const texts = cmds.filter(c => c.kind === 'text');
       if (texts.length) await runInstruction(texts.map(c => c.text).join('\n') + (extra ? '\n' + extra : ''));
-      if (cmds.some(c => c.kind === 'spell')) await runSpellCheck(texts.length ? '' : extra);
       if (cmds.some(c => c.kind === 'format')) await runFormatCheck(extra);
       if (cmds.some(c => c.kind === 'figure')) await runFigureCheck(extra);
       if (cmds.some(c => c.kind === 'review')) {

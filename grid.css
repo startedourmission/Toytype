@@ -265,17 +265,10 @@ body.g-dragging .g-card { transition: none; }
 .g-msg-lead[open] summary { white-space: normal; }
 .g-msg-lead[open] summary::after { content: ' ▾ 접기'; }
 .g-lead-more { margin-top: 4px; color: #5f6368; }
-.g-share { margin-top: 6px; padding: 5px 8px; border-left: 3px solid var(--agent, var(--accent)); background: #f8f9fa; border-radius: 0 6px 6px 0; font-size: 12px; color: #3c4043; }
-.g-share-label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); cursor: pointer; list-style: none; }
-.g-share-label::-webkit-details-marker { display: none; }
-.g-share-label::after { content: ' ▸'; }
-.g-share[open] .g-share-label { margin-bottom: 2px; }
-.g-share[open] .g-share-label::after { content: ' ▾'; }
 .g-q-own { display: flex; gap: 4px; margin-top: 5px; }
 .g-q-input { flex: 1; min-width: 0; padding: 3px 7px; border: 1px solid #dadce0; border-radius: 6px; font: inherit; font-size: 12px; background: #fff; }
 .g-q-input:focus { outline: none; border-color: var(--accent); }
 .g-q-own[hidden] { display: none; }
-.g-share-note + .g-share-note { margin-top: 2px; }
 .g-msg-agent {
   background: #fff; border: 1px solid var(--line); border-radius: 10px;
   border-left: 3px solid var(--agent, var(--accent));
@@ -406,14 +399,8 @@ body.g-dragging .g-card { transition: none; }
 .g-q-opts .g-target { max-width: 100%; }
 .g-q-go { margin-top: 8px; }
 
-/* 맞춤법 규칙 결과(바로 뜨는 메시지)와 에이전트가 오탐으로 뺀 규칙 수정 */
-.g-msg-rule .g-avatar { font-size: 11px; }
+/* 제외된 수정 */
 .g-edit.g-rejected { opacity: .5; }
 .g-edit.g-rejected del, .g-edit.g-rejected ins { background: none; color: var(--muted); }
-.g-rule-box { margin-top: 6px; }
 .g-rule-apply { margin-bottom: 4px; }
-.g-rule-more > summary, .g-rule-each > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
-.g-rule-pats { margin: 4px 0 4px 4px; font-size: 12px; color: #3c4043; }
-.g-rule-pat { white-space: pre-wrap; }
-.g-rule-each { margin-top: 4px; }
 .g-fig-no { flex: none; margin-right: 4px; padding: 0 5px; border-radius: 4px; background: #e8eaed; color: #5f6368; font-size: 11px; }
