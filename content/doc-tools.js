@@ -170,8 +170,11 @@
     }
     // 덮어 쓴 글자는 선택 첫 글자의 서식을 따르므로 앞 글자를 먼저 빌린다(뒤 글자를 빌리면 지우는 글의 서식을 물려받는다)
     if (before === ' ' && after === ' ') return { src: ' ' + src + ' ', dst: ' ', start: start - 1 };
-    if (before === ' ' && solid(text[start - 2])) return { src: text[start - 2] + ' ' + src, dst: text[start - 2], start: start - 2 };
-    if (solid(before)) return { src: before + src, dst: before, start: start - 1 };
+    // 지우는 글이 앞이나 뒤 공백을 품고 있으면(예: "문장. "), 그 공백이 문장 사이 띄어쓰기였으니
+    // 앞뒤 글자가 붙지 않게 공백 하나를 남긴다("앞. 지울. 뒤" → "앞. 뒤", "앞.뒤" 아님)
+    const keepGap = /^\s|\s$/.test(src) && solid(after) && after !== ' ';
+    if (before === ' ' && solid(text[start - 2])) return { src: text[start - 2] + ' ' + src, dst: text[start - 2] + (keepGap ? ' ' : ''), start: start - 2 };
+    if (solid(before)) return { src: before + src, dst: before + (keepGap ? ' ' : ''), start: start - 1 };
     if (solid(after)) return { src: src + after, dst: after, start };
     return null;
   }

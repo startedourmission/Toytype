@@ -41,6 +41,7 @@ body {
   overflow: auto;
   display: grid;
   grid-template-columns: var(--grid-cols, repeat(var(--cols, 3), minmax(0, 1fr)));
+  grid-template-rows: var(--grid-rows, none);
   grid-auto-rows: var(--card-h, 50%);
   gap: var(--gutter);
   padding: var(--gutter);

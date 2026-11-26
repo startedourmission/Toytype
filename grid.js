@@ -36,9 +36,6 @@
         <label class="g-field" title="한 줄에 놓을 문서 수"><span>열</span>
           <select id="g-cols"><option value="0">자동</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
         </label>
-        <label class="g-field" title="한 번에 같이 보내는 구간 수 (많을수록 빨리 끝남)"><span>동시 처리</span>
-          <select id="g-conc"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
-        </label>
         <label class="g-switch" title="켜면 에이전트가 고친 곳을 문서에 바로 반영합니다. 끄면 제안만 받고 직접 승인합니다.">
           <input type="checkbox" id="g-auto"><span class="g-switch-track" aria-hidden="true"></span><span>바로 적용</span>
         </label>
@@ -71,6 +68,8 @@
 
   // 에이전트는 하나로 보인다 — 여러 구간을 동시에 보내도 같은 색·같은 이름
   const AI_COLOR = '#1a73e8';
+  // 한 번에 같이 보내는 구간·문서 수(고정)
+  const CONCURRENCY = 3;
   const AI_NAME = 'AI';
   const DOCS_ORIGIN = 'https://docs.google.com';
   const CHUNK_MIN = 1500;
@@ -350,12 +349,12 @@
     const sizeCol = el('div', 'g-size g-size-col');
     sizeCol.title = '끌어서 열 너비 조절 · 두 번 누르면 원래대로';
     const sizeRow = el('div', 'g-size g-size-row');
-    sizeRow.title = '끌어서 칸 높이 조절 · 두 번 누르면 원래대로';
+    sizeRow.title = '끌어서 이 줄 높이 조절 · 두 번 누르면 원래대로';
     root.append(head, wrap, sizeCol, sizeRow);
     sizeCol.addEventListener('pointerdown', ev => startColDrag(ev, card));
     sizeCol.addEventListener('dblclick', () => { ui.colFr = {}; layout(); saveUi(); });
     sizeRow.addEventListener('pointerdown', ev => startRowDrag(ev, card));
-    sizeRow.addEventListener('dblclick', () => { ui.rowH = 0; layout(); saveUi(); });
+    sizeRow.addEventListener('dblclick', () => { setRowH(rowOf(card), 0); layout(); saveUi(); });
     Object.assign(card, { root, pick, badge, meta, frame, dot, fullBtn: full });
     return card;
   }
@@ -541,7 +540,7 @@
           note: x.state === 'rejected' || x.reviewed ? (x.stateEl && x.stateEl.textContent || x.note || '') : undefined
         }))
       });
-      const options = { auto: $('g-auto').checked, conc: $('g-conc').value, unchecked: cards.filter(c => !c.pick.checked).map(c => c.doc.id), full: cards.filter(c => c.full).map(c => c.doc.id) };
+      const options = { auto: $('g-auto').checked, unchecked: cards.filter(c => !c.pick.checked).map(c => c.doc.id), full: cards.filter(c => c.full).map(c => c.doc.id) };
       chrome.storage.local.set({
         ['grid:' + sessionId + ':log']: { entries, options },
         ['grid:' + sessionId]: Object.assign(session, { touchedAt: Date.now() })
@@ -973,7 +972,6 @@
     updateApplyAll();
     $('g-send').disabled = on;
     $('g-stop').hidden = !on;
-    $('g-conc').disabled = on;
     for (const chip of document.querySelectorAll('.g-chip')) chip.disabled = on;
     // 질문 카드 버튼은 작업 중에 꺼 두므로, 작업이 끝나면 다시 계산한다
     for (const q of document.querySelectorAll('.g-msg-question')) if (q.syncQuestion) q.syncQuestion();
@@ -1177,7 +1175,7 @@
     stopRequested = false;
     setBusy(true);
     const auto = $('g-auto').checked;
-    const agents = Number($('g-conc').value) || 3;
+    const agents = CONCURRENCY;
     // 맡긴 칸은 화면 밖이어도 내리지 않고, 내려 둔 칸은 다시 불러온다
     for (const c of targets) {
       c.pinned = true;
@@ -1431,7 +1429,6 @@
   function applyOptions(o) {
     o = o || {};
     if (typeof o.auto === 'boolean') $('g-auto').checked = o.auto;
-    if (o.conc) $('g-conc').value = String(o.conc);
     for (const c of cards) if ((o.unchecked || []).includes(c.doc.id)) c.pick.checked = false;
     for (const c of cards) if ((o.full || []).includes(c.doc.id)) setFullEditor(c, true, true);
     renderTargets();
@@ -2148,7 +2145,7 @@
     stopRequested = false;
     setBusy(true);
     for (const c of targets) { c.pinned = true; clearTimeout(c.unloadTimer); if (c.unloaded) loadCard(c); }
-    const agents = Math.min(Number($('g-conc').value) || 3, targets.length);
+    const agents = Math.min(CONCURRENCY, targets.length);
     let next = 0;
     let total = 0;
     let finished = 0;
@@ -2183,7 +2180,7 @@
     stopRequested = false;
     setBusy(true);
     for (const c of targets) { c.pinned = true; clearTimeout(c.unloadTimer); }
-    const agents = Math.min(Number($('g-conc').value) || 3, targets.length);
+    const agents = Math.min(CONCURRENCY, targets.length);
     let next = 0;
     let total = 0;
     let finished = 0;
@@ -2383,7 +2380,7 @@
     setBusy(true);
     const queue = Array.from(byCard.entries());
     for (const [c] of queue) { c.pinned = true; clearTimeout(c.unloadTimer); }
-    const agents = Math.min(Number($('g-conc').value) || 3, queue.length);
+    const agents = Math.min(CONCURRENCY, queue.length);
     let next = 0;
     let done = 0;
     let total = 0;
@@ -2590,7 +2587,7 @@
   // ---------- 크기 조절 ----------
   // 채팅창 너비, 열 수, 열마다 너비 비율, 칸 높이를 끌어서 바꾸고 다음에 열 때도 그대로 쓴다.
   const UI_KEY = 'gridLayout';
-  let ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0 };
+  let ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0, rowHs: {} };
   let uiSaveTimer = 0;
 
   function saveUi() {
@@ -2617,12 +2614,16 @@
     root.setProperty('--cols', String(cols));
     root.setProperty('--grid-cols', colFractions(cols).map(f => 'minmax(0, ' + f.toFixed(3) + 'fr)').join(' '));
     // 두 줄까지는 화면을 꽉 채우고, 그보다 많으면 칸 높이를 고정하고 스크롤한다 — 직접 정한 높이가 있으면 그것을 쓴다
-    root.setProperty('--card-h', ui.rowH ? ui.rowH + 'px' : rows <= 2 ? 'calc((100% - ' + (rows - 1) * 6 + 'px) / ' + rows + ')' : '46vh');
+    // 줄마다 직접 정한 높이가 있으면 그 줄만 그 높이를 쓴다(열 수마다 따로 기억)
+    const base = ui.rowH ? ui.rowH + 'px' : rows <= 2 ? 'calc((100% - ' + (rows - 1) * 6 + 'px) / ' + rows + ')' : '46vh';
+    root.setProperty('--card-h', base);
+    const own = (ui.rowHs && ui.rowHs[cols]) || {};
+    root.setProperty('--grid-rows', Array.from({ length: rows }, (_, i) => own[i] ? own[i] + 'px' : base).join(' '));
     if (ui.chatW) root.setProperty('--chat-w', ui.chatW + 'px');
     else root.removeProperty('--chat-w');
     cards.forEach((c, i) => c.root.classList.toggle('g-last-col', i % cols === cols - 1 || i === n - 1));
     const reset = $('g-reset');
-    if (reset) reset.disabled = !(ui.chatW || ui.cols || ui.rowH || Object.keys(ui.colFr || {}).length);
+    if (reset) reset.disabled = !(ui.chatW || ui.cols || ui.rowH || Object.keys(ui.colFr || {}).length || Object.keys(ui.rowHs || {}).length);
   }
 
   // 끄는 동안 문서 iframe이 마우스를 가로채지 않게 화면 전체를 덮는다
@@ -2664,12 +2665,29 @@
     });
   }
 
+  function rowOf(card) {
+    return Math.floor(cards.indexOf(card) / colCount());
+  }
+
+  function setRowH(row, h) {
+    const cols = colCount();
+    const own = Object.assign({}, (ui.rowHs && ui.rowHs[cols]) || {});
+    if (h) own[row] = h;
+    else delete own[row];
+    const all = Object.assign({}, ui.rowHs);
+    if (Object.keys(own).length) all[cols] = own;
+    else delete all[cols];
+    ui.rowHs = all;
+  }
+
+  // 끄는 줄만 높이가 바뀐다(다른 줄은 그대로)
   function startRowDrag(ev, card) {
     ev.preventDefault();
     const h0 = card.root.getBoundingClientRect().height;
     const y0 = ev.clientY;
+    const row = rowOf(card);
     dragSession('row-resize', e => {
-      ui.rowH = Math.round(Math.max(180, Math.min(window.innerHeight * 1.5, h0 + e.clientY - y0)));
+      setRowH(row, Math.round(Math.max(180, Math.min(window.innerHeight * 1.5, h0 + e.clientY - y0))));
       layout();
     });
   }
@@ -2686,7 +2704,7 @@
 
   async function initLayoutControls() {
     const saved = (await chrome.storage.local.get(UI_KEY).catch(() => ({})))[UI_KEY];
-    if (saved && typeof saved === 'object') ui = Object.assign(ui, saved, { colFr: Object.assign({}, saved.colFr) });
+    if (saved && typeof saved === 'object') ui = Object.assign(ui, saved, { colFr: Object.assign({}, saved.colFr), rowHs: Object.assign({}, saved.rowHs) });
     const sel = $('g-cols');
     sel.value = String(ui.cols || 0);
     sel.addEventListener('change', () => {
@@ -2695,7 +2713,7 @@
       saveUi();
     });
     $('g-reset').addEventListener('click', () => {
-      ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0 };
+      ui = { chatW: 0, cols: 0, colFr: {}, rowH: 0, rowHs: {} };
       sel.value = '0';
       layout();
       saveUi();
@@ -2893,7 +2911,6 @@
       systemMsg('문서 ' + cards.length + '개를 열었습니다. 지시를 쓰거나 아래 버튼을 누르세요. 기본은 제안 모드라 문서는 승인한 곳만 바뀝니다.', false, false);
     }
     $('g-auto').addEventListener('change', saveLog);
-    $('g-conc').addEventListener('change', saveLog);
 
     // 예전 판에서 session에 있던 세션은 local로 옮겨 다음부터 유지되게 한다
     chrome.storage.local.set({ ['grid:' + id]: Object.assign(session, { touchedAt: Date.now() }), ['grid:' + id + ':history']: history }).catch(() => {});
