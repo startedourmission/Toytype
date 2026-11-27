@@ -55,9 +55,9 @@
         <div class="g-cmds" id="g-cmds" hidden></div>
         <textarea id="g-input" rows="2" placeholder="에이전트에게 지시하세요 · /로 기능 부르기 (/서식 점검, /전체 교정, /댓글 반영 …)"></textarea>
         </div>
-        <button type="submit" class="g-send" id="g-send" title="보내기 (⌘Enter)" aria-label="보내기">↑</button>
+        <button type="submit" class="g-send" id="g-send" title="보내기 (Enter)" aria-label="보내기">↑</button>
       </form>
-      <div class="g-hint">⌘Enter로 보내기 · /로 기능 부르기${grid ? ' · @all로 전부 선택' : ''}</div>
+      <div class="g-hint">Enter로 보내기 · Shift+Enter 줄바꿈 · /로 기능 부르기${grid ? ' · @all로 전부 선택' : ''}</div>
     </footer>`;
   }
 
@@ -548,7 +548,7 @@
       show.type = 'button';
       show.title = '문서에서 이 문구를 선택합니다';
       show.addEventListener('click', async () => {
-        if (edit.drw) { revealCard(card); rpc(card, 'revealObject', { pos: edit.drw.pos }, 15000); return; }
+        if (edit.drw) { revealCard(card); rpc(card, 'revealObject', { pos: edit.drw.pos, anchor: edit.drw.anchor, after: edit.drw.after }, 15000).then(r => { if (!r.ok) flashState(edit, '문서에서 그리기 자리를 찾지 못함'); }); return; }
         // 적용됐으면 고친 문구부터, 아니면 원문부터 찾는다(적용 실패로 보였지만 실제로 바뀐 경우도 찾게 둘 다 보낸다)
         const first = edit.state === 'applied' ? edit.dst : edit.src;
         const second = edit.state === 'applied' ? edit.src : edit.dst;
@@ -653,7 +653,7 @@
         card.applying = (card.applying || 0) + 1;
         // 서식 수정은 글자를 바꾸지 않고 그 문구를 골라 서식만 바꾼다
         const res = edit.drw
-          ? await rpc(card, 'drawingEdit', { pos: edit.drw.pos, changes: edit.drw.changes }, 120000)
+          ? await rpc(card, 'drawingEdit', { pos: edit.drw.pos, anchor: edit.drw.anchor, after: edit.drw.after, changes: edit.drw.changes }, 120000)
           : edit.fmt
           ? await applyFormatFix(card, { find: edit.src, hint: edit.hint, fix: { type: 'style', style: edit.fmt } }).then(r => ({ ok: r.ok, error: r.why }))
           : await rpc(card, 'applyEdit', { src: edit.src, dst: edit.dst, hint: edit.hint, agent: agentCursor || null }, 45000);
@@ -1558,7 +1558,7 @@
       extra.value = reviewInstruction;
       extra.addEventListener('input', () => { reviewInstruction = extra.value; });
       extra.addEventListener('keydown', ev => {
-        if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && !ev.isComposing && ev.keyCode !== 229 && !go.disabled) { ev.preventDefault(); go.click(); }
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && !go.disabled) { ev.preventDefault(); go.click(); }
       });
       go.addEventListener('click', () => {
         const picked = new Set(chosen);
@@ -1842,7 +1842,7 @@
             const sh = (d.shapes || []).find(x => x.id === id);
             if (sh) orig.push({ ids: [id], fill: sh.fill || 'none', line: sh.line || undefined, weight: sh.weight || undefined });
           }
-          edits.push({ src: '그림 ' + n + (d.before ? ' (' + d.before.slice(0, 24) + '…)' : ''), dst: '', drw: { pos: d.pos, did: d.did, changes, orig }, reason: changes[0].reason || '', category: '도해', hint: d.pos });
+          edits.push({ src: '그림 ' + n + (d.before ? ' (' + d.before.slice(0, 24) + '…)' : ''), dst: '', drw: { pos: d.pos, anchor: d.anchor, after: d.after, did: d.did, changes, orig }, reason: changes[0].reason || '', category: '도해', hint: d.pos });
         }
         if (!edits.length) continue;
         const msg = agentMsg(0, card.doc.name + ' · 도해 서식');
@@ -2474,7 +2474,7 @@
       const input = $('g-input');
       // ---------- / 명령 ----------
       // 기능 템플릿은 입력창에 /를 쳐서 부른다. 고른 명령은 입력창 안에 버튼 모양 꼬리표로 들어가고 여러 개 쌓을 수 있다.
-      // 보내면(⌘Enter) 꼬리표 명령을 차례로 실행하고, 입력창에 쓴 말은 추가 지시로 함께 넘긴다.
+      // 보내면(Enter) 꼬리표 명령을 차례로 실행하고, 입력창에 쓴 말은 추가 지시로 함께 넘긴다.
       const COMMANDS = [
         { name: '서식 점검', desc: '요소별 서식·표기 일관성, 첨자, 코너로 뺄 본문', kind: 'format' },
         { name: '댓글 반영', desc: '문서에 남은 댓글·제안을 골라 반영', kind: 'review' },
@@ -2588,7 +2588,8 @@
           renderPills();
           return;
         }
-        if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+        // Enter로 보낸다(Shift+Enter는 줄바꿈). 한글 조합 중 Enter는 위에서 이미 걸렀다
+        if (ev.key === 'Enter' && !ev.shiftKey) {
           ev.preventDefault();
           $('g-compose').requestSubmit();
         }

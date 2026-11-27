@@ -1070,6 +1070,11 @@
     aside.id = 'g-chat';
     aside.innerHTML = engine.markup({ title: '에이전트', extraHead: '<button type="button" class="g-ghost trd-chat-back" id="g-close" title="검사 목록으로">닫기</button>' });
     chatWrap.appendChild(aside);
+    // 구글 문서 단축키가 대화창 입력을 가로채지 않게 키·붙여넣기 이벤트를 대화창 안에서 끝낸다.
+    // (안 막으면 ⌘Enter로 보낼 때 문서 커서 자리에 페이지 나누기가 들어갔다)
+    for (const type of ['keydown', 'keypress', 'keyup', 'paste', 'cut', 'copy', 'input']) {
+      chatWrap.addEventListener(type, ev => ev.stopPropagation());
+    }
     shadowRoot.append(style, chatWrap);
     aside.querySelector('#g-close').addEventListener('click', () => setChatOpen(false));
 
@@ -7694,15 +7699,25 @@
   // 탭이 여럿이면 지금 탭 id가 적힌 조각의 te만 쓴다. 문서를 연 뒤 글이 바뀌었으면 가까운 '*'로 바로잡는다.
   const DRAW_PT = 508;
 
-  function modelChunkTexts() {
-    return Array.from(document.scripts).map(sc => sc.textContent || '').filter(t => t.includes('DOCS_modelChunk')).map(t => t.replace(/\\"/g, '"'));
+  // 문서 모델 조각. 페이지에 박힌 것은 연 순간 것이라 그 뒤 고친 만큼 위치가 밀린다 — 편집 페이지를 새로 받아 지금 것을 쓴다
+  async function modelChunkTexts() {
+    const pick = list => list.filter(t => t.includes('DOCS_modelChunk')).map(t => t.replace(/\\"/g, '"'));
+    try {
+      const res = await fetch(location.origin + location.pathname + location.search, { credentials: 'include' });
+      if (res.ok) {
+        const html = await res.text();
+        const fresh = pick((html.match(/<script[^>]*>[\s\S]*?<\/script>/g) || []));
+        if (fresh.length) return fresh;
+      }
+    } catch (_) { /* 페이지에 박힌 것으로 */ }
+    return pick(Array.from(document.scripts).map(sc => sc.textContent || ''));
   }
 
   async function scanDrawings() {
     const clip = globalThis.ToytypeDrawingClip;
     const docId = getDocId();
     const tab = new URLSearchParams(location.search).get('tab') || '';
-    const chunks = modelChunkTexts();
+    const chunks = await modelChunkTexts();
     const dids = new Map();
     for (const t of chunks) {
       for (const m of t.matchAll(/"ty":"ae","et":"inline","id":"(kix\.[a-z0-9]+)"/g)) {
@@ -7753,7 +7768,8 @@
           const res = await fetch('https://docs.google.com/drawings/u/0/d/' + encodeURIComponent(it.did) + '/embeddednewedit?parent=' + encodeURIComponent(docId), { credentials: 'include' });
           if (res.ok) shapes = drawingShapes(clip.extractEditorCommands(await res.text()));
         } catch (_) { /* 못 읽은 그리기는 도형 없이 둔다 */ }
-        out[i] = { n: i + 1, pos: it.pos, did: it.did, before, shapes };
+        // 앞뒤 글(위치 다시 찾기용): 글이 바뀌어 위치 번호가 밀려도 이 글로 지금 자리를 찾는다
+        out[i] = { n: i + 1, pos: it.pos, did: it.did, before, anchor: text.slice(Math.max(0, it.pos - 40), it.pos), after: text.slice(it.pos + 1, it.pos + 41), shapes };
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
@@ -7781,6 +7797,28 @@
     return Array.from(byId.values()).map(s => Object.assign(s, { text: s.text.replace(/\s+/g, ' ').trim().slice(0, 40) }));
   }
 
+  // 그리기 자리 다시 찾기: 저장해 둔 위치에 '*'가 있고 앞 글이 같으면 그대로, 아니면 앞 글(또는 뒤 글)을 예전 위치 가까이에서 찾아 그 옆 '*'.
+  async function resolveObjectPos(args) {
+    const pos = Number(args.pos);
+    const anchor = String(args.anchor || '');
+    const after = String(args.after || '');
+    const text = (await fetchModelText(getDocId(), 20000)).text;
+    if (text[pos] === '*' && (!anchor || text.slice(pos - anchor.length, pos) === anchor)) return pos;
+    for (const len of [anchor.length, 24, 12]) {
+      const a = anchor.slice(-len);
+      if (a.length < 6) continue;
+      const i = nearestIndexOf(text, a, pos - a.length);
+      if (i >= 0 && text[i + a.length] === '*') return i + a.length;
+    }
+    for (const len of [after.length, 24, 12]) {
+      const b = after.slice(0, len);
+      if (b.length < 6) continue;
+      const i = nearestIndexOf(text, b, pos + 1);
+      if (i > 0 && text[i - 1] === '*') return i - 1;
+    }
+    return -1;
+  }
+
   // 바꾼 도해를 클립보드에 담는다(편집장이 그리기 창에 직접 붙여 넣게). 그리기 데이터는 편집창 페이지에서 읽는다.
   async function copyRestyledDrawing(args) {
     const clip = globalThis.ToytypeDrawingClip;
@@ -7800,9 +7838,10 @@
   // 바꿀 도형의 채우기·선 색·굵기를 바꿔 지우고 같은 자리에 붙여 넣는다. 그리고 [저장 후 닫기].
   // changes: [{ ids:[도형 id], fill:'#RRGGBB'|'none', line:'#RRGGBB', weight: pt }]
   async function editDrawing(args) {
-    const pos = Number(args.pos);
     const changes = Array.isArray(args.changes) ? args.changes : [];
-    if (!Number.isFinite(pos) || !changes.length) return { ok: false, error: 'bad_args' };
+    if (!Number.isFinite(Number(args.pos)) || !changes.length) return { ok: false, error: 'bad_args' };
+    const pos = await resolveObjectPos(args);
+    if (pos < 0) return { ok: false, error: '그리기 자리를 찾지 못함(앞뒤 글이 바뀜?)' };
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const until = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await wait(150); } return null; };
     const visible = node => !!(node && node.offsetParent !== null);
@@ -7957,8 +7996,9 @@
       return copyRestyledDrawing(args);
     }
     if (op === 'revealObject') {
-      const pos = Number(args.pos);
-      if (!Number.isFinite(pos)) return { ok: false, error: 'bad_pos' };
+      if (!Number.isFinite(Number(args.pos))) return { ok: false, error: 'bad_pos' };
+      const pos = await resolveObjectPos(args);
+      if (pos < 0) return { ok: false, error: 'not_found' };
       await selectDocsModelRange(pos, pos + 1);
       return { ok: true };
     }
