@@ -142,3 +142,19 @@ test('구간 교정: 앞뒤 글을 맥락으로 받고, 지적(flags)은 그림�
   assert.match(p, /flags: only for problems inside attached figure images/);
   assert.doesNotMatch(buildProofreadChunkPrompt({ text: '본문' }), /BEFORE_SECTION/);
 });
+
+test('서식 수정: 서식 묶음을 프롬프트에 넣고, format 수정은 원문과 같아도 받는다', async () => {
+  const { buildProofreadChunkPrompt, parseProofreadChunkFindings } = await import('../tools/toytype_ai_bridge.mjs');
+  const text = '스택은 LIFO 구조입니다. 큐는 FIFO입니다.';
+  const p = buildProofreadChunkPrompt({ text, instruction: '하이라이트 배경색 해제', formatRuns: [{ text: 'LIFO 구조', at: 4, highlight: '#ffff00' }] });
+  assert.match(p, /FORMATTING:/);
+  assert.match(p, /"highlight":"#ffff00"/);
+  const out = parseProofreadChunkFindings(JSON.stringify({ findings: [
+    { source: 'LIFO 구조', replacement: 'LIFO 구조', reason: '배경색 해제', category: '서식', format: { highlight: 'none', size: 99 } },
+    { source: 'FIFO', replacement: 'FIFO', reason: 'x', category: '기타' },
+    { source: '큐는', replacement: '큐는', format: { highlight: 'yellow' } }
+  ] }), text);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].format, { highlight: 'none' });
+  assert.doesNotMatch(buildProofreadChunkPrompt({ text }), /FORMATTING:/);
+});

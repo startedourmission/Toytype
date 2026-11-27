@@ -837,6 +837,9 @@
     closeFindingContextMenu();
     if (host) host.remove();
     host = shadowRoot = shadowView = null;
+    if (chatApi) chatApi.flushLog();
+    chatWrap = chatApi = null;
+    chatOpen = false;
     expanded = false;
     nativeControlInteractionUntil = 0;
     deferredRenderOptions = null;
@@ -1000,6 +1003,101 @@
     return btn;
   }
 
+  // ---------- 에이전트 대화 ----------
+  // 격자 보기의 채팅을 이 문서 하나에 붙인다. 엔진(content/agent-chat.js)과 스타일(grid.css)은 격자와 같이 쓴다.
+  // 패널은 자주 다시 그려지므로 대화창은 패널 밖(같은 섀도 루트)에 따로 두고, 열면 패널 대신 보인다.
+  let chatWrap = null;
+  let chatApi = null;
+  let chatOpen = false;
+
+  function chatIcon() {
+    return strokedSvg(['M10 3.5l1.7 4.8 4.8 1.7-4.8 1.7L10 16.5l-1.7-4.8L3.5 10l4.8-1.7z', 'M18 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z', 'M17.5 3.5l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5z'], 'trd-svg-icon');
+  }
+
+  function buildChatButton() {
+    const btn = el('button', 'trd-btn trd-icon-btn trd-chat-btn');
+    btn.type = 'button';
+    btn.appendChild(chatIcon());
+    btn.setAttribute('aria-label', '에이전트 대화');
+    btn.title = '에이전트 대화 — 이 문서에 지시하고 고칠 곳을 [위치]·[적용]으로 받기';
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openChat();
+    });
+    return btn;
+  }
+
+  function setChatOpen(on) {
+    chatOpen = !!on;
+    if (chatWrap) chatWrap.hidden = !chatOpen;
+    if (shadowView) shadowView.style.display = chatOpen ? 'none' : '';
+  }
+
+  async function openChat() {
+    if (!shadowRoot) return;
+    if (!chatWrap) await buildChat();
+    if (!chatWrap) return;
+    setChatOpen(true);
+    const input = chatWrap.querySelector('#g-input');
+    if (input) input.focus({ preventScroll: true });
+  }
+
+  async function buildChat() {
+    const engine = globalThis.ToytypeAgentChat;
+    const docId = getDocId();
+    if (!engine || !docId) return;
+    let css = '';
+    try {
+      const res = await fetch(chrome.runtime.getURL('grid.css'));
+      // 격자 페이지 전체용 규칙(:root 변수)은 섀도 루트에서는 :host에 걸어야 먹는다
+      if (res.ok) css = (await res.text()).replace(/:root/g, ':host');
+    } catch (_) { /* 스타일 없이라도 연다 */ }
+    const style = document.createElement('style');
+    style.textContent = css + `
+.trd-chat-wrap { position: fixed; right: 24px; bottom: 24px; width: min(440px, calc(100vw - 48px)); height: min(760px, calc(100vh - 48px));
+  display: flex; flex-direction: column; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 6px 28px rgba(0,0,0,.28);
+  color: var(--ink); font: 13px/1.55 "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif; }
+.trd-chat-wrap[hidden] { display: none; }
+.trd-chat-wrap .g-chat { flex: 1; width: 100%; min-height: 0; }
+.trd-chat-back { margin-left: auto; }
+`;
+    chatWrap = document.createElement('div');
+    chatWrap.className = 'trd-chat-wrap';
+    chatWrap.hidden = true;
+    const aside = document.createElement('aside');
+    aside.className = 'g-chat';
+    aside.id = 'g-chat';
+    aside.innerHTML = engine.markup({ title: '에이전트', extraHead: '<button type="button" class="g-ghost trd-chat-back" id="g-close" title="검사 목록으로">닫기</button>' });
+    chatWrap.appendChild(aside);
+    shadowRoot.append(style, chatWrap);
+    aside.querySelector('#g-close').addEventListener('click', () => setChatOpen(false));
+
+    const name = (document.title || '').replace(/\s*-\s*Google (문서|Docs)\s*$/i, '').trim() || '이 문서';
+    // 이 문서 하나가 격자의 칸 하나 역할을 한다
+    const card = {
+      doc: { id: docId, name },
+      text: '', ready: true, readyPromise: Promise.resolve(true), visible: true, full: true,
+      counts: { proposed: 0, applied: 0 }, pick: { checked: true }, applyChain: Promise.resolve(),
+      root: document.createElement('div')
+    };
+    const key = 'docchat:' + docId;
+    const stored = await chrome.storage.local.get([key, key + ':history', key + ':log']).catch(() => ({}));
+    const m = location.pathname.match(/\/document\/u\/(\d+)\//);
+    const session = Object.assign({ docs: [{ id: docId, name }], pool: [], decisions: [] }, stored[key] || {}, { authuser: m ? Number(m[1]) : 0 });
+    chatApi = engine.create({
+      root: aside,
+      rpc: (c, op, args, timeoutMs) => Promise.race([
+        handleGridRpc(op, args || {}).catch(error => ({ ok: false, error: error && error.message ? error.message : String(error) })),
+        new Promise(resolve => setTimeout(() => resolve({ ok: false, error: 'timeout' }), timeoutMs || 30000))
+      ])
+    });
+    chatApi.setSession(key, session, stored[key + ':history']);
+    chatApi.setCards([card]);
+    chatApi.load(stored[key + ':log'], '이 문서에 지시하세요. 고칠 곳은 [위치]·[적용]으로 올라오고, 기본은 제안 모드라 승인한 곳만 바뀝니다.');
+    window.addEventListener('pagehide', () => chatApi && chatApi.flushLog());
+  }
+
   function buildDiagramsButton() {
     const btn = el('button', 'trd-btn trd-icon-btn trd-diagrams-btn' + (diagramsViewOpen ? ' trd-on' : ''));
     btn.type = 'button';
@@ -1156,7 +1254,7 @@
     const wrap = el('div', 'trd-foot-actions');
     // 자리가 모자라 AI 기능이 켜져 있으면 설정 대신 사실 검증 버튼을 둔다(설정은 툴바 팝업에서 연다)
     wrap.append(externalFeaturesEnabled() ? buildFactsButton() : buildSettingsButton(), buildTermsButton(), buildCharPresetButton());
-    if (externalFeaturesEnabled()) wrap.append(buildSuggestionsButton(), buildDiagramsButton());
+    if (externalFeaturesEnabled()) wrap.append(buildSuggestionsButton(), buildDiagramsButton(), buildChatButton());
     wrap.appendChild(buildAddonsButton());
     return wrap;
   }
@@ -7525,6 +7623,29 @@
         ? { op: 'fontSize', sizePt: Number(fix.value), docId: getDocId(), timeoutMs: 15000 }
         : { op: 'fontFamily', fontName: String(fix.value), docId: getDocId(), timeoutMs: 15000 });
       return res && res.ok ? { ok: true } : { ok: false, error: (res && (res.errorMessage || res.error)) || 'format_failed' };
+    }
+    if (fix.type === 'style') {
+      // 찾은 문구만 정확히 골라 서식을 바꾼다: 배경색 없애기, 굵게·기울임·밑줄 켜고 끄기, 글자 색
+      const st = fix.style || {};
+      if (!document.querySelector('#docs-toolbar, #boldButton')) return { ok: false, error: 'need_full' };
+      mark('select');
+      await selectDocsModelRange(start, start + find.length);
+      const op = async payload => {
+        const res = await requestDocsModel('stylePresetOp', Object.assign({ docId: getDocId(), timeoutMs: 15000 }, payload));
+        if (!res || !res.ok) throw new Error((res && (res.errorMessage || res.error)) || 'style_failed');
+      };
+      if (st.highlight === 'none') { mark('highlight'); await op({ op: 'clearHighlight' }); }
+      for (const [key, buttonId] of [['bold', 'boldButton'], ['italic', 'italicButton'], ['underline', 'underlineButton']]) {
+        if (typeof st[key] === 'boolean') { mark(key); await op({ op: 'toggle', buttonId, want: st[key] }); }
+      }
+      if (Number(st.size) > 0) { mark('fontSize'); await op({ op: 'fontSize', sizePt: Number(st.size) }); }
+      if (st.font) { mark('fontFamily'); await op({ op: 'fontFamily', fontName: String(st.font) }); }
+      if (/^#[0-9a-f]{6}$/i.test(st.color || '')) {
+        mark('color');
+        const n = parseInt(st.color.slice(1), 16);
+        await op({ op: 'color', colorRgb: 'rgb(' + (n >> 16) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ')' });
+      }
+      return { ok: true };
     }
     if (fix.type === 'script') {
       const para = model.text.slice(start, end);

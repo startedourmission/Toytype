@@ -4133,6 +4133,30 @@
     return { colorRgb };
   }
 
+  // 선택 영역의 강조(배경) 색을 없앤다: 툴바 강조 색 버튼 → 팔레트의 '없음'
+  async function styleClearHighlight() {
+    const btn = document.getElementById('bgColorButton')
+      || Array.prototype.slice.call(document.querySelectorAll('[role="button"][aria-label]'))
+        .find(node => /강조 색|highlight color/i.test(node.getAttribute('aria-label') || ''));
+    if (!btn) throw new Error('강조 색 버튼을 찾지 못했습니다');
+    styleSynthOpen(btn);
+    let none = null;
+    for (let i = 0; i < 10 && !none; i++) {
+      await delay(120);
+      none = Array.prototype.slice.call(document.querySelectorAll('.docs-material-colorpalette [role="button"], .docs-material-colorpalette-cell-none, .goog-menu [role="menuitem"], .goog-menu [role="button"], .docs-material-colorpalette div'))
+        .filter(node => node.offsetParent !== null)
+        .find(node => /^(없음|none)$/i.test((node.textContent || '').trim()) || /^(없음|none)$/i.test((node.getAttribute('aria-label') || '').trim()));
+    }
+    if (!none) {
+      styleDismissMenus();
+      throw new Error('강조 색 팔레트에서 없음을 찾지 못했습니다');
+    }
+    styleSynthAct(none);
+    await delay(300);
+    styleDismissMenus();
+    return { cleared: true };
+  }
+
   // 현재 커서 위치에 Enter로 새 문단을 만들고 임시 텍스트를 타이핑한다.
   async function styleInsertTempText(text) {
     const target = styleKeyboardTarget();
@@ -4199,6 +4223,7 @@
     if (op === 'fontFamily') return styleSetFontFamily(String(data.fontName || ''));
     if (op === 'lineSpacing') return styleSetLineSpacing(String(data.spacing || ''));
     if (op === 'color') return styleSetTextColor(String(data.colorRgb || ''));
+    if (op === 'clearHighlight') return styleClearHighlight();
     if (op === 'insertTemp') return styleInsertTempText(String(data.text || ''));
     if (op === 'typeText') return styleTypePlainText(String(data.text || ''));
     if (op === 'backspace') return styleSendBackspace();

@@ -45,12 +45,12 @@
     {
       "matches": ["https://docs.google.com/document/*"],
       "all_frames": true,
-      "js": ["engine.js", "content/doc-tools.js", "content/hwpx-export.js", "content/drawing-clip.js", "content/docs.js"],
+      "js": ["engine.js", "content/doc-tools.js", "content/hwpx-export.js", "content/drawing-clip.js", "content/agent-chat.js", "content/docs.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://docs.google.com/document/toytype-grid*"],
-      "js": ["content/doc-tools.js", "grid.js"],
+      "js": ["content/doc-tools.js", "content/agent-chat.js", "grid.js"],
       "css": ["grid.css"],
       "run_at": "document_end"
     },
@@ -62,7 +62,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["content/docs-panel.css", "content/docs-page-bridge.js"],
+      "resources": ["content/docs-panel.css", "content/docs-page-bridge.js", "grid.css"],
       "matches": ["https://docs.google.com/*"]
     }
   ]
