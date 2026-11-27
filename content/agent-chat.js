@@ -161,7 +161,7 @@
           flags: Array.isArray(e.flags) && e.flags.length ? e.flags : undefined,
           turn: e.turn || undefined,
           edits: (e.edits || []).map(x => ({
-            src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0, refs: x.refs || undefined, fmt: x.fmt || undefined,
+            src: x.src, dst: x.dst, reason: x.reason, category: x.category, hint: x.hint, pressedAt: x.pressedAt || 0, refs: x.refs || undefined, fmt: x.fmt || undefined, drw: x.drw || undefined,
             state: x.state === 'applied' ? 'applied' : x.state === 'failed' ? 'failed' : x.state === 'rejected' ? 'rejected' : 'proposed',
             note: x.state === 'rejected' || x.reviewed ? (x.stateEl && x.stateEl.textContent || x.note || '') : undefined
           }))
@@ -533,7 +533,8 @@
     function buildEditItem(card, edit, auto) {
       const item = el('div', 'g-edit');
       const diff = el('div', 'g-edit-diff');
-      if (edit.fmt) diff.append(el('span', 'g-fmt-src', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', fmtLabel(edit.fmt)));
+      if (edit.drw) diff.append(el('span', 'g-fmt-src', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', drwLabel(edit.drw)));
+      else if (edit.fmt) diff.append(el('span', 'g-fmt-src', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', fmtLabel(edit.fmt)));
       else diff.append(el('del', '', edit.src), el('span', 'g-edit-arrow', '→'), el('ins', '', edit.dst || '(삭제)'));
       item.appendChild(diff);
       if (edit.reason) {
@@ -547,6 +548,7 @@
       show.type = 'button';
       show.title = '문서에서 이 문구를 선택합니다';
       show.addEventListener('click', async () => {
+        if (edit.drw) { revealCard(card); rpc(card, 'revealObject', { pos: edit.drw.pos }, 15000); return; }
         // 적용됐으면 고친 문구부터, 아니면 원문부터 찾는다(적용 실패로 보였지만 실제로 바뀐 경우도 찾게 둘 다 보낸다)
         const first = edit.state === 'applied' ? edit.dst : edit.src;
         const second = edit.state === 'applied' ? edit.src : edit.dst;
@@ -571,6 +573,19 @@
       apply.type = 'button';
       apply.addEventListener('click', () => queueApply(card, edit));
       row.append(state, show, apply);
+      // 도해 제안은 바꾼 그리기를 클립보드로도 받을 수 있다(그리기 창에 직접 붙여 넣기)
+      if (edit.drw) {
+        const copy = el('button', 'g-link', '복사');
+        copy.type = 'button';
+        copy.title = '바꾼 도해를 클립보드에 담습니다 · 그리기 창에서 붙여 넣으세요';
+        copy.addEventListener('click', async () => {
+          copy.disabled = true;
+          const res = await rpc(card, 'drawingClip', { did: edit.drw.did, changes: edit.drw.changes }, 30000);
+          copy.disabled = false;
+          flashState(edit, res.ok ? '복사됨 · 그리기 창에 붙여 넣으세요' : '복사 실패 · ' + (res.error || '오류'));
+        });
+        row.insertBefore(copy, apply);
+      }
       item.appendChild(row);
       Object.assign(edit, { item, stateEl: state, applyBtn: apply, state: 'proposed' });
       return item;
@@ -589,7 +604,8 @@
       edit.item.classList.remove('g-failed');
       edit.item.classList.add('g-applied');
       edit.stateEl.textContent = '✓ 적용됨';
-      edit.applyBtn.disabled = true;
+      // 적용된 뒤에도 [다시 적용]을 누를 수 있게 둔다(잘못 되돌렸을 때)
+      edit.applyBtn.textContent = '다시 적용';
       card.counts.applied++;
       updateMeta(card);
       saveLog();
@@ -597,7 +613,10 @@
     }
 
     function queueApply(card, edit, agentCursor) {
-      if (edit.state === 'applied' || edit.state === 'applying' || edit.state === 'queued') return Promise.resolve();
+      if (edit.state === 'applying' || edit.state === 'queued') return Promise.resolve();
+      // 이미 적용된 것은 사람이 [다시 적용]을 눌렀을 때만 다시 한다(바로 적용·모두 적용은 건너뜀)
+      if (edit.state === 'applied' && agentCursor) return Promise.resolve();
+      const wasApplied = edit.state === 'applied';
       // 사람이 누른 [적용]만 '최근 적용'으로 기억한다(바로 적용 모드의 자동 적용은 빼고)
       if (!agentCursor) {
         lastAppliedItem = edit.item;
@@ -619,11 +638,13 @@
         edit.stateEl.textContent = '적용 중…';
         card.applying = (card.applying || 0) + 1;
         // 서식 수정은 글자를 바꾸지 않고 그 문구를 골라 서식만 바꾼다
-        const res = edit.fmt
+        const res = edit.drw
+          ? await rpc(card, 'drawingEdit', { pos: edit.drw.pos, changes: edit.drw.changes }, 120000)
+          : edit.fmt
           ? await applyFormatFix(card, { find: edit.src, hint: edit.hint, fix: { type: 'style', style: edit.fmt } }).then(r => ({ ok: r.ok, error: r.why }))
           : await rpc(card, 'applyEdit', { src: edit.src, dst: edit.dst, hint: edit.hint, agent: agentCursor || null }, 45000);
         let ok = res.ok;
-        if (!ok && !edit.fmt && edit.dst && edit.dst !== edit.src) {
+        if (!ok && !edit.fmt && !edit.drw && edit.dst && edit.dst !== edit.src) {
           // 시간 초과나 검증 실패여도 실제로는 바뀌었을 수 있다 — 원문은 사라지고 고친 문구가 그 자리에 있으면 적용된 것이다
           const probe = await rpc(card, 'probe', { src: edit.src, dst: edit.dst, hint: edit.hint }, 15000);
           ok = !!(probe.ok && probe.dst && !probe.src);
@@ -632,14 +653,16 @@
           edit.state = 'applied';
           edit.item.classList.remove('g-failed');
           edit.item.classList.add('g-applied');
-          edit.stateEl.textContent = '✓ 적용됨';
-          card.counts.applied++;
+          edit.stateEl.textContent = '✓ 적용됨' + (res.note ? ' · ' + res.note : '');
+          edit.applyBtn.disabled = false;
+          edit.applyBtn.textContent = '다시 적용';
+          if (!wasApplied) card.counts.applied++;
           updateMeta(card);
         } else {
           edit.state = 'failed';
           edit.item.classList.add('g-failed');
           edit.applyBtn.disabled = false;
-          edit.stateEl.textContent = res.error === 'not_found' ? '문서에서 찾지 못함(이미 바뀜?)' : edit.fmt && res.error ? '적용 실패 · ' + res.error : '적용 실패 · 다시 시도';
+          edit.stateEl.textContent = res.error === 'not_found' ? '문서에서 찾지 못함(이미 바뀜?)' : (edit.fmt || edit.drw) && res.error ? '적용 실패 · ' + res.error : '적용 실패 · 다시 시도';
         }
         updateJump();
         card.applying = Math.max(0, (card.applying || 1) - 1);
@@ -918,6 +941,13 @@
 
       const queues = await readQueues(targets);
       // 강조(배경) 색 해제는 글자 교정이 아니라 서식 작업이다 — AI 없이 문서에서 칠해진 곳을 찾아 바로 다룬다
+      if (isDrawingStyle(instruction)) {
+        await runDrawingStyle(targets, instruction, auto);
+        currentTurn = '';
+        unpinTargets(targets);
+        setBusy(false);
+        return;
+      }
       if (HIGHLIGHT_CLEAR_RE.test(instruction)) {
         await runHighlightClear(targets, auto);
         currentTurn = '';
@@ -1186,7 +1216,7 @@
                 edit.state = 'applied';
                 edit.item.classList.add('g-applied');
                 edit.stateEl.textContent = '✓ 적용됨';
-                edit.applyBtn.disabled = true;
+                edit.applyBtn.textContent = '다시 적용';
                 card.counts.applied++;
               } else if (states[i] === 'rejected') {
                 markRejected(edit, edit.note || '제외');
@@ -1719,6 +1749,74 @@
           t.formatRuns = runs.filter(r => r.at >= t.chunk.start && r.at < t.chunk.end).slice(0, 150)
             .map(r => Object.assign({}, r, { at: r.at - t.chunk.start, text: r.text.slice(0, 120) }));
         }
+      }
+    }
+
+    // ---------- 그리기(도해) 도형 서식 ----------
+    // "도해의 형광 도형을 흰 바탕·빨간 테두리로"처럼 그리기 속 도형 서식을 바꾸라는 지시.
+    // 문서에서 그리기마다 도형 목록을 읽고(채우기·선 색·굵기·글자), AI가 바꿀 도형을 고르면 그리기마다 [위치]·[적용] 제안 하나.
+    // [적용]은 문서에서 그 그리기 편집창을 열어 도형만 바꾸고 [저장 후 닫기]까지 한다.
+    function isDrawingStyle(instruction) {
+      return /도해|그림|도형|그리기|다이어그램|diagram|drawing/i.test(instruction) && /색|테두리|채우기|배경|굵기|형광|투명|선\s*(색|굵|두께)|color|fill|border|outline/i.test(instruction);
+    }
+
+    function drwLabel(d) {
+      const c = (d.changes || [])[0] || {};
+      const out = [];
+      if (c.fill === 'none') out.push('채우기 없음');
+      else if (c.fill) out.push('채우기 ' + c.fill);
+      if (c.line) out.push('테두리 ' + c.line);
+      if (c.weight) out.push('굵기 ' + c.weight + 'pt');
+      const n = (d.changes || []).reduce((k, x) => k + (x.ids || []).length, 0);
+      return '도형 ' + n + '개 · ' + (out.join(' · ') || '서식');
+    }
+
+    async function runDrawingStyle(targets, instruction, auto) {
+      let total = 0;
+      for (const card of targets) {
+        if (stopRequested) break;
+        const wait = systemMsg(card.doc.name + ' · 그리기 읽는 중…', false, false);
+        const res = await rpc(card, 'drawings', {}, 180000);
+        wait.remove();
+        if (!res.ok) { systemMsg(card.doc.name + ' · 그리기를 읽지 못했습니다 (' + (res.error || '오류') + ')', true); continue; }
+        const drawings = (res.drawings || []).filter(d => d.shapes && d.shapes.length);
+        if (!drawings.length) continue;
+        const think = systemMsg(card.doc.name + ' · 그리기 ' + drawings.length + '개에서 바꿀 도형 고르는 중…', false, false);
+        const requestId = 'grid-drawing-' + card.doc.id.slice(0, 8) + '-' + Date.now().toString(36);
+        liveRequests.add(requestId);
+        const ai = await send({ type: 'typo:aiBridge', action: 'drawingStyle', requestId, payload: { timeoutMs: 180000, document: { instruction, drawings: drawings.map(d => ({ n: d.n, before: d.before, shapes: d.shapes })) } } });
+        liveRequests.delete(requestId);
+        think.remove();
+        if (!ai || !ai.ok) { systemMsg(card.doc.name + ' · AI가 도형을 고르지 못했습니다 (' + (ai && (ai.message || ai.error) || '오류') + ')', true); continue; }
+        const byDrawing = new Map();
+        for (const c of ai.changes || []) {
+          if (!byDrawing.has(c.drawing)) byDrawing.set(c.drawing, []);
+          byDrawing.get(c.drawing).push({ ids: c.ids, fill: c.fill, line: c.line, weight: c.weight, reason: c.reason });
+        }
+        const edits = [];
+        for (const [n, changes] of byDrawing) {
+          const d = drawings.find(x => x.n === n);
+          if (!d) continue;
+          edits.push({ src: '그림 ' + n + (d.before ? ' (' + d.before.slice(0, 24) + '…)' : ''), dst: '', drw: { pos: d.pos, did: d.did, changes }, reason: changes[0].reason || '', category: '도해', hint: d.pos });
+        }
+        if (!edits.length) continue;
+        const msg = agentMsg(0, card.doc.name + ' · 도해 서식');
+        Object.assign(msg.entry, { pending: false, docId: card.doc.id, text: '고칠 곳 ' + edits.length + '개', edits });
+        msg.text.textContent = msg.entry.text;
+        renderEdits(msg, card, edits, auto);
+        card.counts.proposed += edits.length;
+        updateMeta(card);
+        total += edits.length;
+        // 그리기 편집창은 하나씩 열어야 하므로 차례로 적용한다
+        if (auto) for (const e of edits) await queueApply(card, e, true);
+      }
+      saveLog();
+      const turn = currentTurn;
+      const endMsg = systemMsg(total ? '끝 · 고칠 그리기 ' + total + '개' : '지시에 맞는 도형을 찾지 못했습니다');
+      if (total && !auto) {
+        logEntries[logEntries.length - 1].turnApply = turn;
+        attachTurnApply(endMsg, turn);
+        saveLog();
       }
     }
 

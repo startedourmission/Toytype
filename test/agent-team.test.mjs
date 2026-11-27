@@ -158,3 +158,16 @@ test('서식 수정: 서식 묶음을 프롬프트에 넣고, format 수정은 �
   assert.deepEqual(out[0].format, { highlight: 'none' });
   assert.doesNotMatch(buildProofreadChunkPrompt({ text }), /FORMATTING:/);
 });
+
+test('도해 도형 서식: 아는 그리기·도형만, 색은 #RRGGBB만 받는다', async () => {
+  const { buildDrawingStylePrompt, parseDrawingStyle } = await import('../tools/toytype_ai_bridge.mjs');
+  const drawings = [{ n: 1, before: '01단계', shapes: [{ id: 'g1', type: 8, fill: '#FFFF00', line: '#000000', weight: 0.75, text: '3' }, { id: 'g2', type: 6, fill: '#FFFFFF' }] }];
+  const p = buildDrawingStylePrompt({ instruction: '형광 도형은 흰 바탕에 빨간 테두리', drawings });
+  assert.match(p, /"fill":"#FFFF00"/);
+  const out = parseDrawingStyle(JSON.stringify({ changes: [
+    { drawing: 1, ids: ['g1', 'nope'], fill: '#ffffff', line: '#ff0000', reason: '형광' },
+    { drawing: 9, ids: ['g1'], fill: '#FFFFFF' },
+    { drawing: 1, ids: ['g2'], fill: 'white' }
+  ] }), drawings);
+  assert.deepEqual(out, [{ drawing: 1, ids: ['g1'], reason: '형광', fill: '#FFFFFF', line: '#FF0000' }]);
+});

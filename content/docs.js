@@ -7687,6 +7687,189 @@
     }
   }
 
+  // ---------- 문서 안 그리기(도해) 읽고 고치기 ----------
+  // 본문 글자에서 그리기는 '*' 한 글자다. 문서 모델 조각(DOCS_modelChunk 스크립트)에 그리기마다
+  //   ae(개체 추가: kix id → d_id) + te(자리: kix id → spi = 본문 글자 위치)
+  // 가 있다. d_id로 그리기 편집창 페이지를 받으면 도형 목록(채우기 15·선 색 19·선 굵기 22 …)이 들어 있다.
+  // 탭이 여럿이면 지금 탭 id가 적힌 조각의 te만 쓴다. 문서를 연 뒤 글이 바뀌었으면 가까운 '*'로 바로잡는다.
+  const DRAW_PT = 508;
+
+  function modelChunkTexts() {
+    return Array.from(document.scripts).map(sc => sc.textContent || '').filter(t => t.includes('DOCS_modelChunk')).map(t => t.replace(/\\"/g, '"'));
+  }
+
+  async function scanDrawings() {
+    const clip = globalThis.ToytypeDrawingClip;
+    const docId = getDocId();
+    const tab = new URLSearchParams(location.search).get('tab') || '';
+    const chunks = modelChunkTexts();
+    const dids = new Map();
+    for (const t of chunks) {
+      for (const m of t.matchAll(/"ty":"ae","et":"inline","id":"(kix\.[a-z0-9]+)"/g)) {
+        // 이 개체 정의 안(다음 명령 전까지)에서만 d_id를 찾는다 — 사진(d_id 없음)이 옆 그리기 id를 가져가지 않게
+        const from = m.index + m[0].length;
+        const nextCmd = t.indexOf('"ty":"', from);
+        const d = /"d_id":"([A-Za-z0-9_-]+)"/.exec(t.slice(from, nextCmd < 0 ? from + 6000 : nextCmd));
+        if (d) dids.set(m[1], d[1]);
+      }
+    }
+    const mine = chunks.filter(t => tab ? t.includes('"' + tab + '"') : true);
+    const use = mine.some(t => /"ty":"te"/.test(t)) ? mine : chunks.filter(t => !/"t\.[a-z0-9]{8,}"/.test(t));
+    const model = await fetchModelText(docId, 20000);
+    const text = model.text;
+    const seen = new Set();
+    const list = [];
+    for (const t of use) {
+      for (const m of t.matchAll(/"ty":"te","id":"(kix\.[a-z0-9]+)","spi":(\d+)/g)) {
+        const did = dids.get(m[1]);
+        if (!did || seen.has(m[1])) continue;
+        seen.add(m[1]);
+        let pos = Number(m[2]);
+        if (text[pos] !== '*') {
+          // 연 뒤 글이 바뀌었으면 가까운 '*'
+          let best = -1;
+          for (let d = 1; d < 400 && best < 0; d++) {
+            if (text[pos - d] === '*') best = pos - d;
+            else if (text[pos + d] === '*') best = pos + d;
+          }
+          if (best < 0) continue;
+          pos = best;
+        }
+        list.push({ pos, did, kix: m[1] });
+      }
+    }
+    list.sort((a, b) => a.pos - b.pos);
+    // 앞 문단(위치 설명)과 도형 목록
+    const out = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const i = next++;
+        const it = list[i];
+        const lineStart = text.lastIndexOf('\n', it.pos - 1);
+        const before = text.slice(text.lastIndexOf('\n', lineStart - 1) + 1, lineStart).trim().slice(-80);
+        let shapes = [];
+        try {
+          const res = await fetch('https://docs.google.com/drawings/u/0/d/' + encodeURIComponent(it.did) + '/embeddednewedit?parent=' + encodeURIComponent(docId), { credentials: 'include' });
+          if (res.ok) shapes = drawingShapes(clip.extractEditorCommands(await res.text()));
+        } catch (_) { /* 못 읽은 그리기는 도형 없이 둔다 */ }
+        out[i] = { n: i + 1, pos: it.pos, did: it.did, before, shapes };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    return out.filter(Boolean);
+  }
+
+  // 명령 목록 → 도형 [{id, type, fill, line, weight(pt), text}]
+  function drawingShapes(cmds) {
+    const byId = new Map();
+    for (const c of cmds || []) {
+      if (c[0] === 3 && Array.isArray(c[4])) {
+        const p = new Map();
+        for (let i = 0; i + 1 < c[4].length; i += 2) p.set(c[4][i], c[4][i + 1]);
+        byId.set(c[1], {
+          id: c[1], type: c[2],
+          fill: p.get(14) === 0 ? null : (p.get(15) || null),
+          line: p.get(18) === 0 ? null : (p.get(19) || null),
+          weight: typeof p.get(22) === 'number' ? Math.round(p.get(22) / DRAW_PT * 100) / 100 : null,
+          text: ''
+        });
+      } else if (c[0] === 15 && byId.has(c[1])) {
+        byId.get(c[1]).text += String(c[4] || '');
+      }
+    }
+    return Array.from(byId.values()).map(s => Object.assign(s, { text: s.text.replace(/\s+/g, ' ').trim().slice(0, 40) }));
+  }
+
+  // 바꾼 도해를 클립보드에 담는다(편집장이 그리기 창에 직접 붙여 넣게). 그리기 데이터는 편집창 페이지에서 읽는다.
+  async function copyRestyledDrawing(args) {
+    const clip = globalThis.ToytypeDrawingClip;
+    const did = String(args.did || '');
+    if (!clip || !/^[A-Za-z0-9_-]{20,}$/.test(did)) return { ok: false, error: '그리기 id가 없음 · 지시를 다시 보내세요' };
+    const res = await fetch('https://docs.google.com/drawings/u/0/d/' + encodeURIComponent(did) + '/embeddednewedit?parent=' + encodeURIComponent(getDocId()), { credentials: 'include' });
+    if (!res.ok) return { ok: false, error: '그리기를 읽지 못함 (' + res.status + ')' };
+    const cmds = clip.extractEditorCommands(await res.text());
+    if (!cmds.length) return { ok: false, error: '도형을 읽지 못함' };
+    clip.restyleCommands(cmds, Array.isArray(args.changes) ? args.changes : []);
+    const ok = clip.writeDrawingClipboard(clip.payloadFromCommands(cmds));
+    return ok ? { ok: true } : { ok: false, error: '클립보드에 쓰지 못함' };
+  }
+
+  // 그리기 하나 고치기: 본문에서 그 그리기를 골라 [수정]으로 편집창을 열고, 도형을 모두 골라 복사한 뒤
+  // 바꿀 도형의 채우기·선 색·굵기를 바꿔 지우고 같은 자리에 붙여 넣는다. 그리고 [저장 후 닫기].
+  // changes: [{ ids:[도형 id], fill:'#RRGGBB'|'none', line:'#RRGGBB', weight: pt }]
+  async function editDrawing(args) {
+    const pos = Number(args.pos);
+    const changes = Array.isArray(args.changes) ? args.changes : [];
+    if (!Number.isFinite(pos) || !changes.length) return { ok: false, error: 'bad_args' };
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const until = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await wait(150); } return null; };
+    const visible = node => !!(node && node.offsetParent !== null);
+    await selectDocsModelRange(pos, pos + 1);
+    const editBtn = await until(() => Array.from(document.querySelectorAll('[aria-label="내장 항목"] button, [aria-label="Embedded item"] button'))
+      .find(b => visible(b) && /^(수정|Edit)$/.test((b.textContent || '').trim())), 4000);
+    if (!editBtn) return { ok: false, error: '그리기를 고르지 못함(수정 버튼 없음)' };
+    editBtn.click();
+    const frame = await until(() => Array.from(document.querySelectorAll('iframe')).find(f => /\/drawings\//.test(f.src || '') && visible(f)), 10000);
+    if (!frame) return { ok: false, error: '편집창이 열리지 않음' };
+    const saveClose = () => Array.from(document.querySelectorAll('button')).find(b => visible(b) && /저장 후 닫기|Save and close/.test(b.textContent || ''));
+    let td = null;
+    const tf = await until(() => {
+      try {
+        const f = frame.contentDocument && frame.contentDocument.querySelector('iframe.docs-texteventtarget-iframe');
+        td = f && f.contentDocument;
+        return td && td.body ? f : null;
+      } catch (_) { return null; }
+    }, 15000);
+    if (!tf) return { ok: false, error: '편집창을 다루지 못함' };
+    const MD = 'application/x-vnd.google-docs-drawings-object+wrapped';
+    const target = () => (td.activeElement && td.activeElement !== td.body ? td.activeElement : td.body);
+    const key = (k, code, keyCode, meta) => {
+      const mac = /Mac/.test(navigator.platform || '');
+      for (const type of ['keydown', 'keyup']) target().dispatchEvent(new KeyboardEvent(type, { key: k, code, keyCode, which: keyCode, metaKey: !!meta && mac, ctrlKey: !!meta && !mac, bubbles: true, cancelable: true }));
+    };
+    const close = async () => { const b = saveClose(); if (b) b.click(); await wait(1500); };
+    // 편집창이 다 뜰 때까지 전체 선택 + 복사를 몇 번 시도한다
+    let copied = null;
+    for (let k = 0; k < 12 && !copied; k++) {
+      await wait(500);
+      key('a', 'KeyA', 65, true);
+      await wait(250);
+      const onCopy = ev => { try { copied = ev.clipboardData.getData(MD) || null; } catch (_) { copied = null; } };
+      tf.contentWindow.addEventListener('copy', onCopy, false);
+      try { td.execCommand('copy'); } catch (_) { /* 다음에 다시 */ }
+      tf.contentWindow.removeEventListener('copy', onCopy, false);
+    }
+    if (!copied) { await close(); return { ok: false, error: '도형을 복사하지 못함' }; }
+    let outer;
+    let inner;
+    try { outer = JSON.parse(copied); inner = JSON.parse(outer.data); } catch (_) { await close(); return { ok: false, error: '도형 형식을 읽지 못함' }; }
+    const setProp = (p, k, v) => { for (let i = 0; i + 1 < p.length; i += 2) if (p[i] === k) { p[i + 1] = v; return; } p.push(k, v); };
+    let hit = 0;
+    for (const c of inner.resolved || []) {
+      if (c[0] !== 3 || !Array.isArray(c[4])) continue;
+      for (const ch of changes) {
+        if (!(ch.ids || []).includes(c[1])) continue;
+        if (ch.fill === 'none') setProp(c[4], 14, 0);
+        else if (/^#[0-9a-f]{6}$/i.test(ch.fill || '')) { setProp(c[4], 14, 1); setProp(c[4], 15, ch.fill.toUpperCase()); setProp(c[4], 16, 1); }
+        if (/^#[0-9a-f]{6}$/i.test(ch.line || '')) { setProp(c[4], 18, 1); setProp(c[4], 19, ch.line.toUpperCase()); }
+        if (Number(ch.weight) > 0) setProp(c[4], 22, Math.round(Number(ch.weight) * DRAW_PT));
+        hit++;
+      }
+    }
+    if (!hit) { await close(); return { ok: false, error: '바꿀 도형을 찾지 못함(이미 바뀜?)' }; }
+    outer.data = JSON.stringify(inner);
+    key('Delete', 'Delete', 46, false);
+    await wait(600);
+    const dt = new DataTransfer();
+    dt.setData(MD, JSON.stringify(outer));
+    dt.setData('text/plain', '');
+    target().dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await wait(1500);
+    await close();
+    return visible(frame) ? { ok: false, error: '저장 후 닫기를 누르지 못함' } : { ok: true, shapes: hit };
+  }
+
   function handleGridRpc(op, args) {
     if (!SELECTION_OPS.has(op)) return runGridOp(op, args);
     const work = KEEP_VIEW_OPS.has(op) && !(args && args.reveal) ? () => keepView(() => runGridOp(op, args)) : () => runGridOp(op, args);
@@ -7748,6 +7931,21 @@
         return i !== -1 && Math.abs(i - hint) <= 300;
       };
       return { ok: true, src: near(String(args.src || '')), dst: near(String(args.dst || '')) };
+    }
+    if (op === 'drawings') {
+      return { ok: true, drawings: await scanDrawings() };
+    }
+    if (op === 'drawingEdit') {
+      return editDrawing(args);
+    }
+    if (op === 'drawingClip') {
+      return copyRestyledDrawing(args);
+    }
+    if (op === 'revealObject') {
+      const pos = Number(args.pos);
+      if (!Number.isFinite(pos)) return { ok: false, error: 'bad_pos' };
+      await selectDocsModelRange(pos, pos + 1);
+      return { ok: true };
     }
     if (op === 'locate') {
       // 원문을 먼저 찾고, 이미 고쳐졌으면 고친 문구를, 그것도 없으면 원래 자리 근처에 커서를 둔다

@@ -382,6 +382,7 @@ function aiBridgePath(action) {
     proofreadChunk: '/ai/proofread-chunk',
     planWork: '/ai/plan-work',
     figureTextCheck: '/ai/figure-text-check',
+    drawingStyle: '/ai/drawing-style',
     surveyRules: '/ai/survey-rules',
     reviewComments: '/ai/review-comments',
     formatCheck: '/ai/format-check',

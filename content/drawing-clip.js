@@ -567,6 +567,34 @@
     return { custom, text, commandCount: cmds.length };
   }
 
+  // 기존 그리기의 명령 목록(편집창 페이지에서 뽑은 것)을 그대로 클립보드 형식으로 싼다 — 그리기 창에 붙여 넣으면 같은 도해가 된다.
+  // 도형·글자·글자 스타일(3/15/17)만 담는다(페이지 설정 같은 다른 명령은 붙여넣기에 필요 없다).
+  function payloadFromCommands(cmds) {
+    const resolved = (Array.isArray(cmds) ? cmds : []).filter(c => Array.isArray(c) && (c[0] === 3 || c[0] === 15 || c[0] === 17));
+    const wrap = { dct: 'sketchy', ds: false, cses: false, sm: 'other' };
+    const data = { resolved, autotext_content: {}, did_remove_empty_picture_placeholders: false, copy_source_supports_inheritance_via_master: false };
+    const text = resolved.filter(c => c[0] === 15).map(c => cleanText(c[4])).filter(Boolean).join('\n');
+    return { custom: { [MIME_DRAWING]: J(Object.assign({}, wrap, { data: J(data) })), [MIME_CLIP_ID]: uuid() }, text, commandCount: resolved.length };
+  }
+
+  // 도형 서식 바꾸기(채우기·선 색·굵기). changes: [{ ids, fill:'#RRGGBB'|'none', line, weight(pt) }] → 바꾼 도형 수
+  function restyleCommands(cmds, changes) {
+    const setProp = (p, k, v) => { for (let i = 0; i + 1 < p.length; i += 2) if (p[i] === k) { p[i + 1] = v; return; } p.push(k, v); };
+    let hit = 0;
+    for (const c of cmds || []) {
+      if (!Array.isArray(c) || c[0] !== 3 || !Array.isArray(c[4])) continue;
+      for (const ch of changes || []) {
+        if (!(ch.ids || []).includes(c[1])) continue;
+        if (ch.fill === 'none') setProp(c[4], 14, 0);
+        else if (/^#[0-9a-f]{6}$/i.test(ch.fill || '')) { setProp(c[4], 14, 1); setProp(c[4], 15, ch.fill.toUpperCase()); setProp(c[4], 16, 1); }
+        if (/^#[0-9a-f]{6}$/i.test(ch.line || '')) { setProp(c[4], 18, 1); setProp(c[4], 19, ch.line.toUpperCase()); }
+        if (Number(ch.weight) > 0) setProp(c[4], 22, Math.round(Number(ch.weight) * PT));
+        hit++;
+      }
+    }
+    return hit;
+  }
+
   // 위치가 하나도 없으면 자동 배치, 일부만 없으면(기존 그리기에 AI가 노드를 추가한 경우) 기존 도형 아래에 한 줄로 놓는다.
   function positionDiagramItems(spec) {
     const items = spec.items || [];
@@ -1076,6 +1104,8 @@
   }
 
   globalThis.ToytypeDrawingClip = {
+    payloadFromCommands,
+    restyleCommands,
     buildDrawingPayload,
     buildPreviewSvg,
     previewModel,
