@@ -7790,7 +7790,8 @@
     if (!res.ok) return { ok: false, error: '그리기를 읽지 못함 (' + res.status + ')' };
     const cmds = clip.extractEditorCommands(await res.text());
     if (!cmds.length) return { ok: false, error: '도형을 읽지 못함' };
-    clip.restyleCommands(cmds, Array.isArray(args.changes) ? args.changes : []);
+    // original이면 바꾸기 전 그대로 담는다
+    if (!args.original) clip.restyleCommands(cmds, Array.isArray(args.changes) ? args.changes : []);
     const ok = clip.writeDrawingClipboard(clip.payloadFromCommands(cmds));
     return ok ? { ok: true } : { ok: false, error: '클립보드에 쓰지 못함' };
   }
@@ -7805,12 +7806,17 @@
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const until = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await wait(150); } return null; };
     const visible = node => !!(node && node.offsetParent !== null);
+    const openDrawingFrame = () => Array.from(document.querySelectorAll('iframe')).find(f => /\/drawings\//.test(f.src || '') && visible(f));
+    // 앞 그리기 편집창이 아직 닫히는 중이면 다 닫힐 때까지 기다린다(전체 적용 때 겹치지 않게)
+    if (await until(() => !openDrawingFrame(), 15000) === null) return { ok: false, error: '앞 그리기 편집창이 닫히지 않음' };
+    await wait(400);
     await selectDocsModelRange(pos, pos + 1);
+    await wait(300);
     const editBtn = await until(() => Array.from(document.querySelectorAll('[aria-label="내장 항목"] button, [aria-label="Embedded item"] button'))
       .find(b => visible(b) && /^(수정|Edit)$/.test((b.textContent || '').trim())), 4000);
     if (!editBtn) return { ok: false, error: '그리기를 고르지 못함(수정 버튼 없음)' };
     editBtn.click();
-    const frame = await until(() => Array.from(document.querySelectorAll('iframe')).find(f => /\/drawings\//.test(f.src || '') && visible(f)), 10000);
+    const frame = await until(openDrawingFrame, 10000);
     if (!frame) return { ok: false, error: '편집창이 열리지 않음' };
     const saveClose = () => Array.from(document.querySelectorAll('button')).find(b => visible(b) && /저장 후 닫기|Save and close/.test(b.textContent || ''));
     let td = null;
@@ -7829,45 +7835,54 @@
       for (const type of ['keydown', 'keyup']) target().dispatchEvent(new KeyboardEvent(type, { key: k, code, keyCode, which: keyCode, metaKey: !!meta && mac, ctrlKey: !!meta && !mac, bubbles: true, cancelable: true }));
     };
     const close = async () => { const b = saveClose(); if (b) b.click(); await wait(1500); };
-    // 편집창이 다 뜰 때까지 전체 선택 + 복사를 몇 번 시도한다
-    let copied = null;
-    for (let k = 0; k < 12 && !copied; k++) {
-      await wait(500);
+    // 전체 선택 + 복사로 지금 그리기의 도형 데이터를 읽는다
+    const copyAll = async () => {
       key('a', 'KeyA', 65, true);
       await wait(250);
-      const onCopy = ev => { try { copied = ev.clipboardData.getData(MD) || null; } catch (_) { copied = null; } };
+      let got = null;
+      const onCopy = ev => { try { got = ev.clipboardData.getData(MD) || null; } catch (_) { got = null; } };
       tf.contentWindow.addEventListener('copy', onCopy, false);
       try { td.execCommand('copy'); } catch (_) { /* 다음에 다시 */ }
       tf.contentWindow.removeEventListener('copy', onCopy, false);
+      return got;
+    };
+    const shapeCount = raw => { try { return (JSON.parse(JSON.parse(raw).data).resolved || []).filter(c => c[0] === 3).length; } catch (_) { return -1; } };
+    // 편집창이 다 뜰 때까지 몇 번 시도한다
+    let copied = null;
+    for (let k = 0; k < 12 && !copied; k++) {
+      await wait(500);
+      copied = await copyAll();
     }
     if (!copied) { await close(); return { ok: false, error: '도형을 복사하지 못함' }; }
     let outer;
     let inner;
     try { outer = JSON.parse(copied); inner = JSON.parse(outer.data); } catch (_) { await close(); return { ok: false, error: '도형 형식을 읽지 못함' }; }
-    const setProp = (p, k, v) => { for (let i = 0; i + 1 < p.length; i += 2) if (p[i] === k) { p[i + 1] = v; return; } p.push(k, v); };
-    let hit = 0;
-    for (const c of inner.resolved || []) {
-      if (c[0] !== 3 || !Array.isArray(c[4])) continue;
-      for (const ch of changes) {
-        if (!(ch.ids || []).includes(c[1])) continue;
-        if (ch.fill === 'none') setProp(c[4], 14, 0);
-        else if (/^#[0-9a-f]{6}$/i.test(ch.fill || '')) { setProp(c[4], 14, 1); setProp(c[4], 15, ch.fill.toUpperCase()); setProp(c[4], 16, 1); }
-        if (/^#[0-9a-f]{6}$/i.test(ch.line || '')) { setProp(c[4], 18, 1); setProp(c[4], 19, ch.line.toUpperCase()); }
-        if (Number(ch.weight) > 0) setProp(c[4], 22, Math.round(Number(ch.weight) * DRAW_PT));
-        hit++;
-      }
-    }
+    const before = (inner.resolved || []).filter(c => c[0] === 3).length;
+    const hit = globalThis.ToytypeDrawingClip.restyleCommands(inner.resolved || [], changes);
     if (!hit) { await close(); return { ok: false, error: '바꿀 도형을 찾지 못함(이미 바뀜?)' }; }
     outer.data = JSON.stringify(inner);
-    key('Delete', 'Delete', 46, false);
-    await wait(600);
     const dt = new DataTransfer();
     dt.setData(MD, JSON.stringify(outer));
     dt.setData('text/plain', '');
+    // 지우기와 붙여 넣기 사이에 저장되면 빈 그리기가 남으므로 기다리지 않고 바로 잇는다
+    key('Delete', 'Delete', 46, false);
     target().dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    await wait(1500);
+    await wait(1200);
+    // 붙여 넣은 뒤 도형 수가 원래와 같은지 본다. 다르면 실행 취소로 되돌리고 실패로 알린다
+    const after = shapeCount(await copyAll());
+    if (after !== before) {
+      key('z', 'KeyZ', 90, true);
+      await wait(800);
+      if (shapeCount(await copyAll()) !== before) {
+        key('z', 'KeyZ', 90, true);
+        await wait(800);
+      }
+      await close();
+      return { ok: false, error: '붙여 넣기가 안 돼 원래대로 되돌림 (도형 ' + before + '→' + after + ')' };
+    }
     await close();
-    return visible(frame) ? { ok: false, error: '저장 후 닫기를 누르지 못함' } : { ok: true, shapes: hit };
+    if (await until(() => !visible(frame), 8000) === null) return { ok: false, error: '저장 후 닫기를 누르지 못함' };
+    return { ok: true, shapes: hit };
   }
 
   function handleGridRpc(op, args) {

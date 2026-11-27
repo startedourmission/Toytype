@@ -420,3 +420,4 @@ body.g-dragging .g-card { transition: none; }
 .g-msg-system.g-msg-summary { align-self: stretch; max-width: none; padding: 6px 10px; border-radius: 8px; text-align: left; }
 .g-flag-issue { flex: 1; min-width: 0; color: #b06000; font-size: 12px; }
 .g-fmt-src { background: #fff3c4; border-radius: 3px; padding: 0 2px; }
+.g-apply-all.g-apply-stop { background: var(--err); }

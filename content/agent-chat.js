@@ -585,6 +585,17 @@
           flashState(edit, res.ok ? '복사됨 · 그리기 창에 붙여 넣으세요' : '복사 실패 · ' + (res.error || '오류'));
         });
         row.insertBefore(copy, apply);
+        // 바꾸기 전 원본 도해 복사 — 카드 왼쪽 아래
+        const orig = el('button', 'g-link g-copy-orig', '원본 복사');
+        orig.type = 'button';
+        orig.title = '바꾸기 전 원본 도해를 클립보드에 담습니다';
+        orig.addEventListener('click', async () => {
+          orig.disabled = true;
+          const res = await rpc(card, 'drawingClip', edit.drw.orig ? { did: edit.drw.did, changes: edit.drw.orig } : { did: edit.drw.did, original: true }, 30000);
+          orig.disabled = false;
+          flashState(edit, res.ok ? '원본 복사됨 · 그리기 창에 붙여 넣으세요' : '복사 실패 · ' + (res.error || '오류'));
+        });
+        row.insertBefore(orig, row.firstChild);
       }
       item.appendChild(row);
       Object.assign(edit, { item, stateEl: state, applyBtn: apply, state: 'proposed' });
@@ -626,12 +637,15 @@
       edit.state = 'queued';
       edit.applyBtn.disabled = true;
       edit.stateEl.textContent = '적용 대기';
+      updateApplyAll();
       const gen = stopGen;
       const run = card.applyChain.then(async () => {
         if (gen !== stopGen) {
-          edit.state = 'proposed';
+          // 멈춤: 다시 적용하려던 것은 적용됨으로, 나머지는 제안으로 돌린다
+          edit.state = wasApplied ? 'applied' : 'proposed';
           edit.applyBtn.disabled = false;
-          edit.stateEl.textContent = '멈춤';
+          edit.stateEl.textContent = wasApplied ? '✓ 적용됨' : '멈춤';
+          updateApplyAll();
           return;
         }
         edit.state = 'applying';
@@ -1104,6 +1118,21 @@
 
     // ---------- 전체 적용 ----------
     // 이 대화에서 아직 적용 안 된 제안(제안 상태·실패)을 문서마다 차례로 전부 적용한다.
+    function queuedCount() {
+      let n = 0;
+      for (const entry of logEntries) for (const e of entry.edits || []) if (e.state === 'queued' || e.state === 'applying') n++;
+      return n;
+    }
+
+    // 줄 서 있는 적용을 멈춘다(지금 문서에 들어가고 있는 한 곳은 끝까지 하고, 나머지는 제안으로 돌아간다)
+    function stopApplying() {
+      const q = queuedCount();
+      if (!q) return;
+      stopGen++;
+      systemMsg('적용을 멈췄습니다 · 진행 중인 한 곳만 마치고 나머지 ' + Math.max(0, q - 1) + '곳은 제안으로 남깁니다', false, false);
+      updateApplyAll();
+    }
+
     function pendingEdits(turn) {
       const out = [];
       for (const entry of logEntries) {
@@ -1121,11 +1150,21 @@
     function updateApplyAll() {
       const btn = $('g-apply-all');
       if (!btn) return;
-      const n = pendingEdits().length;
-      btn.hidden = n === 0;
-      btn.textContent = '전체 적용 ' + n;
-      // 적용은 문서마다 줄을 세워 차례로 하므로 에이전트가 도는 중에도 누를 수 있다
-      btn.disabled = applyingAll;
+      // 적용이 줄 서 있거나 도는 중이면 이 버튼이 [적용 멈춤]이 된다(전체 적용·모두 적용·하나씩 누른 것 모두)
+      const q = queuedCount();
+      if (q > 0) {
+        btn.hidden = false;
+        btn.disabled = false;
+        btn.textContent = '적용 멈춤 · 남은 ' + q;
+        btn.classList.add('g-apply-stop');
+      } else {
+        const n = pendingEdits().length;
+        btn.hidden = n === 0;
+        btn.textContent = '전체 적용 ' + n;
+        btn.classList.remove('g-apply-stop');
+        // 적용은 문서마다 줄을 세워 차례로 하므로 에이전트가 도는 중에도 누를 수 있다
+        btn.disabled = applyingAll;
+      }
       for (const b of root.querySelectorAll('.g-turn-apply')) {
         const k = pendingEdits(b.dataset.turn).length;
         b.hidden = k === 0;
@@ -1797,7 +1836,13 @@
         for (const [n, changes] of byDrawing) {
           const d = drawings.find(x => x.n === n);
           if (!d) continue;
-          edits.push({ src: '그림 ' + n + (d.before ? ' (' + d.before.slice(0, 24) + '…)' : ''), dst: '', drw: { pos: d.pos, did: d.did, changes }, reason: changes[0].reason || '', category: '도해', hint: d.pos });
+          // 바꾸기 전 서식(원본 복사용): 적용한 뒤에도 원본을 되살려 담을 수 있게 읽어 둔 값을 남긴다
+          const orig = [];
+          for (const c of changes) for (const id of c.ids || []) {
+            const sh = (d.shapes || []).find(x => x.id === id);
+            if (sh) orig.push({ ids: [id], fill: sh.fill || 'none', line: sh.line || undefined, weight: sh.weight || undefined });
+          }
+          edits.push({ src: '그림 ' + n + (d.before ? ' (' + d.before.slice(0, 24) + '…)' : ''), dst: '', drw: { pos: d.pos, did: d.did, changes, orig }, reason: changes[0].reason || '', category: '도해', hint: d.pos });
         }
         if (!edits.length) continue;
         const msg = agentMsg(0, card.doc.name + ' · 도해 서식');
@@ -2552,7 +2597,7 @@
       $('g-log').addEventListener('scroll', updateJump, { passive: true });
       $('g-jump').addEventListener('click', () => jumpToBottom(true));
       $('g-top').addEventListener('click', jumpToTop);
-      $('g-apply-all').addEventListener('click', applyAllPending);
+      $('g-apply-all').addEventListener('click', () => { if (queuedCount() > 0) stopApplying(); else applyAllPending(); });
       updateApplyAll();
       $('g-last').addEventListener('click', jumpToLastApplied);
       $('g-review').addEventListener('click', ev => {
